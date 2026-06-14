@@ -26,6 +26,10 @@ use super::validate_handle;
 const TOOL_NAME: &str = "read";
 const MAX_READ_RESPONSE_BYTES: usize = 512 * 1024;
 
+#[cfg(test)]
+#[path = "read_tests.rs"]
+mod tests;
+
 #[derive(Deserialize, JsonSchema)]
 struct ReadArgs {
     package: String,
@@ -61,6 +65,8 @@ impl ToolExecutor<ToolCall> for ReadTool {
     fn handle(&self, call: ToolCall) -> ToolExecutorFuture<'_> {
         Box::pin(async move {
             let args: ReadArgs = parse_args(&call)?;
+            let response_byte_budget =
+                MAX_READ_RESPONSE_BYTES.min((call.truncation_policy * 1.2).byte_budget());
             validate_handle("package", &args.package, MAX_HANDLE_BYTES)?;
             if let Some(resource) = args.resource.as_deref() {
                 validate_handle("resource", resource, MAX_HANDLE_BYTES)?;
@@ -176,7 +182,12 @@ impl ToolExecutor<ToolCall> for ReadTool {
                     "skills.read cursor is invalid".to_string(),
                 ));
             }
-            let response = page_response(result.resource.as_str(), &result.contents, start)?;
+            let response = page_response(
+                result.resource.as_str(),
+                &result.contents,
+                start,
+                response_byte_budget,
+            )?;
             skill_json_output(&response, output_authority)
         })
     }
@@ -186,6 +197,7 @@ fn page_response(
     resource: &str,
     contents: &str,
     start: usize,
+    max_response_bytes: usize,
 ) -> Result<ReadResponse, FunctionCallError> {
     let response = |end, next_cursor| ReadResponse {
         resource: resource.to_string(),
@@ -193,7 +205,7 @@ fn page_response(
         next_cursor,
     };
     let complete = response(contents.len(), None);
-    if serialized_len(&complete)? <= MAX_READ_RESPONSE_BYTES {
+    if serialized_len(&complete)? <= max_response_bytes {
         return Ok(complete);
     }
 
@@ -203,8 +215,11 @@ fn page_response(
         while !contents.is_char_boundary(end) {
             end -= 1;
         }
+        if end == start {
+            break;
+        }
         let candidate = response(end, Some(pagination_cursor(contents, end)));
-        if serialized_len(&candidate)? <= MAX_READ_RESPONSE_BYTES {
+        if serialized_len(&candidate)? <= max_response_bytes {
             return Ok(candidate);
         }
     }
