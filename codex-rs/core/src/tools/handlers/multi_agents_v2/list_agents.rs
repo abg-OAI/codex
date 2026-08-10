@@ -1,6 +1,6 @@
 use super::*;
-use crate::agent::control::ListedAgent;
 use crate::tools::handlers::multi_agents_spec::create_list_agents_tool;
+use codex_protocol::protocol::AgentStatus;
 use codex_tools::ToolSpec;
 
 pub(crate) struct Handler;
@@ -36,22 +36,21 @@ impl Handler {
             .services
             .agent_control
             .register_session_root(session.thread_id, turn.parent_thread_id);
-        let page = session
+        let agents = session
             .services
             .agent_control
-            .list_agents_page(
-                &turn.session_source,
-                args.path_prefix.as_deref(),
-                args.cursor.as_deref(),
-                args.limit,
-            )
+            .list_agents_canonical(&turn.session_source, args.path_prefix.as_deref())
             .await
             .map_err(collab_spawn_error)?;
 
         Ok(boxed_tool_output(ListAgentsResult {
-            agents: page.agents,
-            next_cursor: page.next_cursor,
-            total_count: page.total_count,
+            agents: agents
+                .into_iter()
+                .map(|agent| CanonicalListedAgent {
+                    agent_name: agent.agent_name,
+                    agent_status: agent.agent_status,
+                })
+                .collect(),
         }))
     }
 }
@@ -66,15 +65,18 @@ impl CoreToolRuntime for Handler {
 #[serde(deny_unknown_fields)]
 struct ListAgentsArgs {
     path_prefix: Option<String>,
-    cursor: Option<String>,
-    limit: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ListAgentsResult {
-    agents: Vec<ListedAgent>,
-    next_cursor: Option<String>,
-    total_count: usize,
+    agents: Vec<CanonicalListedAgent>,
+}
+
+/// Pinned-upstream list projection over Frodex authoritative current membership.
+#[derive(Debug, Serialize)]
+struct CanonicalListedAgent {
+    agent_name: String,
+    agent_status: AgentStatus,
 }
 
 impl ToolOutput for ListAgentsResult {

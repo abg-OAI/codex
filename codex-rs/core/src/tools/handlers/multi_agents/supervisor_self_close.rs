@@ -53,7 +53,7 @@ async fn handle_close_self(
     let parent_thread = state
         .get_thread(parent_thread_id)
         .await
-        .map_err(|err| collab_agent_error(parent_thread_id, err))?;
+        .map_err(|err| frodex_agent_error(parent_thread_id, err))?;
     let message = args.message.filter(|message| !message.trim().is_empty());
     let agent_paths = if message.is_some() {
         let receiver_agent = session
@@ -102,7 +102,7 @@ async fn handle_close_self(
                 Some(turn.sub_id.clone()),
             )
             .await
-            .map_err(|err| collab_agent_error(parent_thread_id, err))?;
+            .map_err(|err| frodex_agent_error(parent_thread_id, err))?;
     }
     Ok(SupervisorSelfCloseResult {
         completed: goal.is_some(),

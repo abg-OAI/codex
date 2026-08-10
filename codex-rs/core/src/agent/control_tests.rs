@@ -5807,24 +5807,47 @@ while True:
         child_body["parallel_tool_calls"], parent_body["parallel_tool_calls"],
         "goal supervisor helpers must keep the same parallel tool-call setting as their parent"
     );
-    assert_eq!(
-        child_body["tools"], parent_body["tools"],
-        "goal supervisor helpers must keep the same serialized tool definitions, order, namespaces, and schemas as their parent"
-    );
     let parent_tool_signatures = request_tool_signatures(&parent_body);
     let child_tool_signatures = request_tool_signatures(&child_body);
+    let non_agent_tools = |body: &serde_json::Value| {
+        body["tools"]
+            .as_array()
+            .expect("tools should be an array")
+            .iter()
+            .filter(|tool| {
+                !matches!(
+                    tool.get("name").and_then(serde_json::Value::as_str),
+                    Some("collaboration" | "frodex")
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        child_tool_signatures, parent_tool_signatures,
-        "goal supervisor helpers are internal full-history forks and must keep the same eager tool surface as their parent so request prefixes stay cacheable"
+        non_agent_tools(&child_body),
+        non_agent_tools(&parent_body),
+        "goal supervisor helpers must keep the same non-agent serialized tool definitions as their parent"
     );
-    for expected_tool in [
+    for expected_parent_tool in [
         "collaboration.spawn_agent",
         "collaboration.send_message",
         "collaboration.followup_task",
         "collaboration.wait_agent",
         "collaboration.list_agents",
         "collaboration.interrupt_agent",
+    ] {
+        assert!(
+            parent_tool_signatures.contains(expected_parent_tool),
+            "expected root request to expose `{expected_parent_tool}`; tools={parent_tool_signatures:#?}"
+        );
+        assert!(
+            !child_tool_signatures.contains(expected_parent_tool),
+            "an unsupported internal subagent must follow upstream collaboration availability for `{expected_parent_tool}`; tools={child_tool_signatures:#?}"
+        );
+    }
+    for expected_tool in [
         "supervisor.close_self",
+        "supervisor.followup_parent",
         "supervisor.snooze",
         "supervisor.compact_parent_context",
     ] {

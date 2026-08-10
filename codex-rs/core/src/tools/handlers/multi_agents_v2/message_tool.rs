@@ -68,36 +68,16 @@ pub(crate) async fn handle_message_string_tool(
         source,
         ..
     } = invocation;
-    let target_is_parent = target == "parent";
-    let direct_parent_thread_id = direct_parent_thread_id(&turn.session_source);
-    let receiver_thread_id = if target_is_parent {
-        direct_parent_thread_id.ok_or_else(|| {
-            FunctionCallError::RespondToModel(
-                "target `parent` is only available from a spawned agent.".to_string(),
-            )
-        })?
-    } else {
-        resolve_agent_target(&session, &turn, &target).await?
+    // Persisted pre-validation paths can exceed current AgentPath limits. The direct parent ID is
+    // authoritative for `parent`, so it remains routable without reparsing the persisted path.
+    let receiver_thread_id = match resolve_agent_target(&session, &turn, &target).await {
+        Ok(receiver_thread_id) => receiver_thread_id,
+        Err(_) if target == "parent" => direct_parent_thread_id(&turn.session_source)
+            .ok_or_else(|| FunctionCallError::RespondToModel("agent not found".to_string()))?,
+        Err(err) => return Err(err),
     };
-    let is_direct_parent = direct_parent_thread_id == Some(receiver_thread_id);
-    let is_goal_supervisor_parent = session
-        .services
-        .agent_control
-        .goal_supervisor_parent_for_helper(session.thread_id)
-        .await
-        == Some(receiver_thread_id);
-    if mode == MessageDeliveryMode::QueueOnly && is_goal_supervisor_parent {
-        return Err(FunctionCallError::RespondToModel(
-            "supervisor check-in threads must use followup_task with target `parent` to message their parent."
-                .to_string(),
-        ));
-    }
-    if mode == MessageDeliveryMode::TriggerTurn && target_is_parent && !is_goal_supervisor_parent {
-        return Err(FunctionCallError::RespondToModel(
-            "Only supervisor check-in threads can use followup_task with target `parent`; use send_message for parent updates."
-                .to_string(),
-        ));
-    }
+    let is_direct_parent =
+        direct_parent_thread_id(&turn.session_source) == Some(receiver_thread_id);
     let receiver_agent = if is_direct_parent {
         session
             .services
@@ -116,7 +96,6 @@ pub(crate) async fn handle_message_string_tool(
             .agent_path
             .as_ref()
             .is_some_and(AgentPath::is_root)
-        && !is_goal_supervisor_parent
     {
         return Err(FunctionCallError::RespondToModel(
             "Follow-up tasks can't target the root agent".to_string(),
@@ -156,7 +135,6 @@ pub(crate) async fn handle_message_string_tool(
     // completion receipt queued into that same turn. Canonical mailbox submission removes the
     // turn ID again when the communication does not trigger a turn.
     let parent_turn_id = Some(turn.sub_id.clone());
-    let delivered_communication = communication;
     let result = match resume_config {
         Some(resume_config) => {
             session
@@ -165,10 +143,10 @@ pub(crate) async fn handle_message_string_tool(
                 .deliver_inter_agent_communication_to_agent(
                     resume_config,
                     receiver_thread_id,
-                    delivered_communication.clone(),
+                    communication,
                     context,
                     AgentInputDelivery::Queue,
-                    parent_turn_id.clone(),
+                    parent_turn_id,
                 )
                 .await
         }
@@ -178,7 +156,7 @@ pub(crate) async fn handle_message_string_tool(
                 .agent_control
                 .send_inter_agent_communication(
                     receiver_thread_id,
-                    delivered_communication.clone(),
+                    communication,
                     context,
                     parent_turn_id,
                 )
@@ -198,27 +176,8 @@ pub(crate) async fn handle_message_string_tool(
         },
     )
     .await;
-    if mode == MessageDeliveryMode::TriggerTurn && is_goal_supervisor_parent {
-        session
-            .services
-            .agent_control
-            .record_goal_supervisor_followup_action(receiver_thread_id, &delivered_communication)
-            .await
-            .map_err(|err| collab_agent_error(receiver_thread_id, err))?;
-        session
-            .services
-            .agent_control
-            .finish_goal_supervisor_helper_after_followup(session.thread_id)
-            .await
-            .map_err(|err| collab_agent_error(receiver_thread_id, err))?;
-    }
 
-    let output = FunctionToolOutput::from_text(String::new(), Some(true));
-    if mode == MessageDeliveryMode::TriggerTurn && is_goal_supervisor_parent {
-        Ok(output.into_terminal_no_response())
-    } else {
-        Ok(output)
-    }
+    Ok(FunctionToolOutput::from_text(String::new(), Some(true)))
 }
 
 fn direct_parent_thread_id(session_source: &SessionSource) -> Option<ThreadId> {

@@ -23,12 +23,18 @@ impl ToolExecutor<ToolInvocation> for Handler {
     }
 
     fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
-        Box::pin(async move { handle_close_agent(invocation).await.map(boxed_tool_output) })
+        Box::pin(async move {
+            let result = handle_close_agent(invocation, CloseAgentContract::Canonical).await?;
+            Ok(boxed_tool_output(CanonicalCloseAgentResult {
+                previous_status: result.previous_status,
+            }))
+        })
     }
 }
 
-async fn handle_close_agent(
+pub(crate) async fn handle_close_agent(
     invocation: ToolInvocation,
+    contract: CloseAgentContract,
 ) -> Result<CloseAgentResult, FunctionCallError> {
     let ToolInvocation {
         session,
@@ -83,7 +89,34 @@ async fn handle_close_agent(
         Err(err) if matches!(err.details(), CodexErrorDetails::ThreadNotFound(_)) => {
             session.services.agent_control.get_status(agent_id).await
         }
-        Err(_) => session.services.agent_control.get_status(agent_id).await,
+        Err(_err) if contract == CloseAgentContract::Frodex => {
+            session.services.agent_control.get_status(agent_id).await
+        }
+        Err(err) => {
+            let status = session.services.agent_control.get_status(agent_id).await;
+            session
+                .emit_turn_item_completed(
+                    &turn,
+                    TurnItem::CollabAgentToolCall(CollabAgentToolCallItem {
+                        id: call_id.clone(),
+                        tool: CollabAgentTool::CloseAgent,
+                        status: collab_tool_call_status(&status, Some(agent_id)),
+                        sender_thread_id: session.thread_id(),
+                        receiver_thread_ids: vec![agent_id],
+                        receiver_agents: vec![CollabAgentRef {
+                            thread_id: agent_id,
+                            agent_nickname: receiver_agent.agent_nickname.clone(),
+                            agent_role: receiver_agent.agent_role.clone(),
+                        }],
+                        prompt: None,
+                        model: None,
+                        reasoning_effort: None,
+                        agents_states: [(agent_id, status)].into_iter().collect(),
+                    }),
+                )
+                .await;
+            return Err(collab_agent_error(agent_id, err));
+        }
     };
     let result = Box::pin(
         session
@@ -92,7 +125,10 @@ async fn handle_close_agent(
             .close_agent_subtree(session.thread_id, agent_id),
     )
     .await
-    .map_err(|err| collab_agent_error(agent_id, err));
+    .map_err(|err| match contract {
+        CloseAgentContract::Canonical => collab_agent_error(agent_id, err),
+        CloseAgentContract::Frodex => frodex_agent_error(agent_id, err),
+    });
     session
         .emit_turn_item_completed(
             &turn,
@@ -128,6 +164,13 @@ async fn handle_close_agent(
     })
 }
 
+/// Selects pinned collaboration serialization or the separate Frodex lifecycle result.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CloseAgentContract {
+    Canonical,
+    Frodex,
+}
+
 impl CoreToolRuntime for Handler {
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
@@ -147,6 +190,29 @@ pub(crate) struct CloseAgentResult {
 }
 
 impl ToolOutput for CloseAgentResult {
+    fn log_preview(&self) -> String {
+        tool_output_json_text(self, "close_agent")
+    }
+
+    fn success_for_logging(&self) -> bool {
+        true
+    }
+
+    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
+        tool_output_response_item(call_id, payload, self, Some(true), "close_agent")
+    }
+
+    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+        tool_output_code_mode_result(self, "close_agent")
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct CanonicalCloseAgentResult {
+    previous_status: AgentStatus,
+}
+
+impl ToolOutput for CanonicalCloseAgentResult {
     fn log_preview(&self) -> String {
         tool_output_json_text(self, "close_agent")
     }

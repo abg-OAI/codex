@@ -60,10 +60,12 @@ fn spawn_agent_tool_v2_hides_thread_adoption_by_default() {
         .expect("spawn_agent should use object params");
 
     assert!(properties.contains_key("task_name"));
-    assert_eq!(
-        serde_json::to_value(&parameters).expect("serialize spawn_agent schema")["properties"]["task_name"]
-            ["maxLength"],
-        json!(AgentPath::MAX_SEGMENT_BYTES)
+    assert!(
+        serde_json::to_value(&parameters).expect("serialize spawn_agent schema")["properties"]
+            ["task_name"]
+            .get("maxLength")
+            .is_none(),
+        "the reserved collaboration.spawn_agent contract must match upstream"
     );
     assert!(properties.contains_key("message"));
     assert!(!properties.contains_key("existing_thread_id"));
@@ -511,6 +513,7 @@ fn followup_task_tool_requires_message_and_has_no_output_schema() {
 fn supervisor_tools_do_not_mark_parameters_encrypted() {
     for tool in [
         create_supervisor_close_self_tool(),
+        create_supervisor_followup_parent_tool(),
         create_supervisor_compact_parent_context_tool(),
         create_supervisor_snooze_tool(),
     ] {
@@ -642,27 +645,22 @@ fn list_agents_tool_includes_path_prefix_and_agent_fields() {
         .as_ref()
         .expect("list_agents should use object params");
     assert!(properties.contains_key("path_prefix"));
+    assert!(!properties.contains_key("cursor"));
+    assert!(!properties.contains_key("limit"));
     assert_eq!(
         properties
             .get("path_prefix")
             .and_then(|schema| schema.description.as_deref()),
-        Some(
-            "Task-path prefix filter without a trailing slash. Omit to list all current subagents."
-        )
+        Some("Task-path prefix filter without a trailing slash. Omit to list all live agents.")
     );
     assert_eq!(
         output_schema.expect("list_agents output schema")["properties"]["agents"]["items"]["required"],
-        json!([
-            "agent_id",
-            "parent_agent_id",
-            "agent_name",
-            "agent_status",
-            "last_task_message"
-        ])
+        json!(["agent_name", "agent_status"])
     );
-    assert!(description.contains("registered ephemeral agents"));
-    assert!(description.contains("excludes the root thread"));
-    assert!(description.contains("cold historical persisted-open descendants"));
+    assert_eq!(
+        description,
+        "List live agents in the current root thread tree. Optionally filter by task-path prefix."
+    );
 }
 
 #[test]

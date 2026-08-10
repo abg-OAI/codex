@@ -14495,6 +14495,8 @@ async fn goal_supervisor_role_prompt_includes_deadline_aware_polling() {
     assert!(prompt.contains("next actual occurrence in the requested timezone"));
     assert!(prompt.contains("Keep a perpetual or recurring goal active"));
     assert!(prompt.contains("If any authorized part of the goal can proceed now"));
+    assert!(prompt.contains("call `supervisor.followup_parent`"));
+    assert!(!prompt.contains("`followup_task` with `\"target\":\"parent\"`"));
     assert!(prompt.contains("A running subagent does not block independent work"));
     assert!(
         prompt.contains("An `active` or `inProgress` status alone does not establish progress")

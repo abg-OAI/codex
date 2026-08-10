@@ -46,7 +46,7 @@ async fn handle_promote_agent(
         .agent_control
         .promote_agent(thread_id)
         .await
-        .map_err(|err| collab_agent_error(thread_id, err))?;
+        .map_err(|err| frodex_agent_error(thread_id, err))?;
     Ok(PromoteAgentResult { thread_id })
 }
 

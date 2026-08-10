@@ -124,9 +124,9 @@ pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions) -> ToolSpec {
         JsonSchema::string(Some(
             "Task name for the new agent. Use lowercase letters, digits, and underscores."
                 .to_string(),
-        ))
-        .with_max_length(AgentPath::MAX_SEGMENT_BYTES),
+        )),
     );
+
     ToolSpec::Function(ResponsesApiTool {
         name: "spawn_agent".to_string(),
         description: spawn_agent_tool_description_v2(
@@ -319,7 +319,7 @@ pub fn create_resume_agent_tool() -> ToolSpec {
         tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
             name: "resume_agent".to_string(),
             description:
-                "Reload an owned open agent by id so it can receive send_input and wait_agent calls. Permanently closed agents cannot be resumed."
+                "Resume a previously closed agent by id so it can receive send_input and wait_agent calls."
                     .to_string(),
             strict: false,
             defer_loading: None,
@@ -358,32 +358,18 @@ pub fn create_wait_agent_tool_v2(options: WaitAgentTimeoutOptions) -> ToolSpec {
 }
 
 pub fn create_list_agents_tool() -> ToolSpec {
-    let properties = BTreeMap::from([
-        (
-            "path_prefix".to_string(),
-            JsonSchema::string(Some(
-                "Task-path prefix filter without a trailing slash. Omit to list all current subagents."
-                    .to_string(),
-            )),
-        ),
-        (
-            "cursor".to_string(),
-            JsonSchema::string(Some(
-                "Opaque cursor returned by a previous list_agents call.".to_string(),
-            )),
-        ),
-        (
-            "limit".to_string(),
-            JsonSchema::number(Some(
-                "Maximum agents to return. Values above 25 are clamped to 25.".to_string(),
-            )),
-        ),
-    ]);
+    let properties = BTreeMap::from([(
+        "path_prefix".to_string(),
+        JsonSchema::string(Some(
+            "Task-path prefix filter without a trailing slash. Omit to list all live agents."
+                .to_string(),
+        )),
+    )]);
 
     ToolSpec::Function(ResponsesApiTool {
         name: "list_agents".to_string(),
         description:
-            "List subagents currently registered in this root's membership. This includes registered ephemeral agents and excludes the root thread, cold historical persisted-open descendants, permanently closed agents, and unrelated fork history. Optionally filter by task-path prefix."
+            "List live agents in the current root thread tree. Optionally filter by task-path prefix."
                 .to_string(),
         strict: false,
         defer_loading: None,
@@ -403,11 +389,11 @@ pub fn create_close_agent_tool_v1() -> ToolSpec {
         description: MULTI_AGENT_V1_NAMESPACE_DESCRIPTION.to_string(),
         tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
             name: "close_agent".to_string(),
-            description: "Permanently close an owned descendant subtree and return the target agent's previous status. This closes persisted descendant edges, stops loaded runtimes, pauses Goals, clears queued input, and prevents the subtree from being resumed.".to_string(),
+            description: "Close an agent and any open descendants when they are no longer needed, and return the target agent's previous status before shutdown was requested. Completed agents remain open and count toward the concurrency limit until closed. Don't keep agents open for too long if they are not needed anymore.".to_string(),
             strict: false,
             defer_loading: None,
             parameters: JsonSchema::object(properties, Some(vec!["target".to_string()]), Some(false.into())),
-            output_schema: Some(close_agent_output_schema(
+            output_schema: Some(agent_previous_status_output_schema(
                 "The agent status observed before shutdown was requested.",
             )),
         })],
@@ -439,6 +425,39 @@ pub fn create_supervisor_close_self_tool() -> ToolSpec {
                 }
             },
             "required": ["completed"],
+            "additionalProperties": false
+        })),
+    })
+}
+
+pub fn create_supervisor_followup_parent_tool() -> ToolSpec {
+    let properties = BTreeMap::from([(
+        "message".to_string(),
+        JsonSchema::string(Some(
+            "Actionable guidance to send to the supervised parent thread.".to_string(),
+        )),
+    )]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "followup_parent".to_string(),
+        description: "Supervisor-only: send actionable guidance to the supervised parent, trigger its next turn, and end this supervisor check-in immediately."
+            .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["message".to_string()]),
+            Some(false.into()),
+        ),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "delivered": {
+                    "type": "boolean",
+                    "description": "Whether the guidance was delivered to the supervised parent."
+                }
+            },
+            "required": ["delivered"],
             "additionalProperties": false
         })),
     })
@@ -681,44 +700,18 @@ fn list_agents_output_schema() -> Value {
                             "type": "string",
                             "description": "Canonical task name for the agent when available, otherwise the agent id."
                         },
-                        "agent_id": {
-                            "type": "string",
-                            "description": "Thread id for the agent."
-                        },
-                        "parent_agent_id": {
-                            "type": ["string", "null"],
-                            "description": "Immediate owner thread id."
-                        },
                         "agent_status": {
                             "description": "Last known status of the agent.",
                             "allOf": [agent_status_output_schema()]
-                        },
-                        "last_task_message": {
-                            "type": ["string", "null"],
-                            "description": "Bounded preview of the agent's latest assigned task."
                         }
                     },
-                    "required": [
-                        "agent_id",
-                        "parent_agent_id",
-                        "agent_name",
-                        "agent_status",
-                        "last_task_message"
-                    ],
+                    "required": ["agent_name", "agent_status"],
                     "additionalProperties": false
                 },
-                "description": "Subagents currently registered in the root membership, including registered ephemeral agents and excluding the root thread and cold historical persisted-open descendants."
-            },
-            "next_cursor": {
-                "type": ["string", "null"],
-                "description": "Cursor for the next page, or null when this is the final page."
-            },
-            "total_count": {
-                "type": "integer",
-                "description": "Total current subagents matching the request."
+                "description": "Live agents visible in the current root thread tree."
             }
         },
-        "required": ["agents", "next_cursor", "total_count"],
+        "required": ["agents"],
         "additionalProperties": false
     })
 }
@@ -1025,6 +1018,7 @@ fn spawn_agent_tool_description_v2(
 ) -> String {
     let agent_role_guidance = available_models_description.unwrap_or_default();
     let inherited_model_guidance = inherited_model_guidance.unwrap_or_default();
+
     let tool_description = format!(
         r#"
         {agent_role_guidance}

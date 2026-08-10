@@ -186,17 +186,12 @@ where
 #[derive(Debug, Deserialize)]
 struct ListAgentsResult {
     agents: Vec<ListedAgentResult>,
-    next_cursor: Option<String>,
-    total_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
 struct ListedAgentResult {
-    agent_id: ThreadId,
-    parent_agent_id: Option<ThreadId>,
     agent_name: String,
     agent_status: serde_json::Value,
-    last_task_message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1014,6 +1009,28 @@ async fn multi_agent_v2_spawn_requires_task_name() {
 }
 
 #[tokio::test]
+async fn multi_agent_v2_spawn_rejects_adoption_fields() {
+    let (session, turn) = make_session_and_context().await;
+    let invocation = invocation(
+        Arc::new(session),
+        Arc::new(turn),
+        "spawn_agent",
+        function_payload(json!({
+            "message": "inspect this repo",
+            "task_name": "worker",
+            "existing_thread_id": ThreadId::new(),
+        })),
+    );
+
+    let Err(FunctionCallError::RespondToModel(message)) =
+        SpawnAgentHandlerV2::default().handle(invocation).await
+    else {
+        panic!("canonical spawn_agent must reject adoption-only fields");
+    };
+    assert!(message.contains("unknown field `existing_thread_id`"));
+}
+
+#[tokio::test]
 async fn multi_agent_v2_adoption_rejects_existing_threads_when_disabled() {
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
@@ -1148,12 +1165,10 @@ async fn multi_agent_v2_adoption_rejects_fork_and_configuration_overrides() {
             .err()
             .expect("adoption must reject fork and configuration overrides");
 
-        assert_eq!(
-            err,
-            FunctionCallError::RespondToModel(
-                "existing_thread_id cannot be combined with fork, agent type, model, reasoning effort, or service tier overrides".to_string()
-            )
-        );
+        let FunctionCallError::RespondToModel(message) = err else {
+            panic!("adoption overrides must surface as model-facing errors");
+        };
+        assert!(message.contains("unknown field"));
     }
 }
 
@@ -1486,9 +1501,7 @@ async fn multi_agent_v2_send_message_does_not_wait_for_its_queued_legacy_complet
     };
     assert_eq!(
         err,
-        FunctionCallError::RespondToModel(format!(
-            "agent {child_thread_id} completed during this parent turn; process its completion notification before sending more input"
-        ))
+        FunctionCallError::RespondToModel("collab manager unavailable".to_string())
     );
 
     finish_parent.notify_one();
@@ -1914,18 +1927,13 @@ async fn multi_agent_v2_list_agents_returns_completed_status() {
         .iter()
         .map(|agent| agent.agent_name.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(agent_names, vec!["/root/worker"]);
+    assert_eq!(agent_names, vec!["/root", "/root/worker"]);
     let worker = result
         .agents
         .iter()
         .find(|agent| agent.agent_name == "/root/worker")
         .expect("worker agent should be listed");
     assert_eq!(worker.agent_status, json!({"completed": "done"}));
-    assert_eq!(worker.agent_id, agent_id);
-    assert_eq!(worker.parent_agent_id, Some(root.thread_id));
-    assert_eq!(worker.last_task_message, None);
-    assert_eq!(result.next_cursor, None);
-    assert_eq!(result.total_count, 1);
     assert_eq!(success, Some(true));
 }
 
@@ -2070,9 +2078,8 @@ async fn multi_agent_v2_list_agents_omits_closed_agents() {
     let result: ListAgentsResult =
         serde_json::from_str(&content).expect("list_agents result should be json");
 
-    assert!(result.agents.is_empty());
-    assert_eq!(result.next_cursor, None);
-    assert_eq!(result.total_count, 0);
+    assert_eq!(result.agents.len(), 1);
+    assert_eq!(result.agents[0].agent_name, "/root");
 }
 
 #[tokio::test]
@@ -2142,8 +2149,9 @@ async fn multi_agent_v2_list_agents_keeps_interrupted_resident_agents() {
     let result: ListAgentsResult =
         serde_json::from_str(&content).expect("list_agents result should be json");
 
-    assert_eq!(result.agents.len(), 1);
-    assert_eq!(result.agents[0].agent_name, agent_path.as_str());
+    assert_eq!(result.agents.len(), 2);
+    assert_eq!(result.agents[0].agent_name, "/root");
+    assert_eq!(result.agents[1].agent_name, agent_path.as_str());
 }
 
 #[tokio::test]
@@ -5259,7 +5267,8 @@ async fn multi_agent_v2_interrupt_agent_accepts_unloaded_task_name_target() {
     let (content, _) = expect_text_output(output);
     let result: ListAgentsResult =
         serde_json::from_str(&content).expect("list_agents result should be json");
-    assert!(result.agents.is_empty());
+    assert_eq!(result.agents.len(), 1);
+    assert_eq!(result.agents[0].agent_name, "/root");
 }
 
 #[tokio::test]
@@ -5577,9 +5586,13 @@ async fn tool_handlers_permanently_close_subtree_and_reject_resume() {
         .await
         .expect("close_agent should close the child subtree");
     let (close_content, close_success) = expect_text_output(close_output);
-    let close_result: close_agent::CloseAgentResult =
+    let close_result: serde_json::Value =
         serde_json::from_str(&close_content).expect("close_agent result should be json");
-    assert_ne!(close_result.previous_status, AgentStatus::NotFound);
+    assert_ne!(
+        close_result["previous_status"],
+        serde_json::to_value(AgentStatus::NotFound).expect("status should serialize")
+    );
+    assert_eq!(close_result.as_object().map(serde_json::Map::len), Some(1));
     assert_eq!(close_success, Some(true));
     assert_eq!(
         manager.agent_control().get_status(child_thread_id).await,
@@ -5633,11 +5646,16 @@ async fn tool_handlers_permanently_close_subtree_and_reject_resume() {
         .await
         .expect("close_agent should be repeatable for the child subtree");
     let (close_again_content, close_again_success) = expect_text_output(close_again_output);
-    let close_again_result: close_agent::CloseAgentResult =
-        serde_json::from_str(&close_again_content)
-            .expect("second close_agent result should be json");
-    assert_eq!(close_again_result.previous_status, AgentStatus::NotFound);
-    assert_eq!(close_again_result.newly_closed_edges, 0);
+    let close_again_result: serde_json::Value = serde_json::from_str(&close_again_content)
+        .expect("second close_agent result should be json");
+    assert_eq!(
+        close_again_result["previous_status"],
+        serde_json::to_value(AgentStatus::NotFound).expect("status should serialize")
+    );
+    assert_eq!(
+        close_again_result.as_object().map(serde_json::Map::len),
+        Some(1)
+    );
     assert_eq!(close_again_success, Some(true));
     assert_eq!(
         manager.agent_control().get_status(child_thread_id).await,

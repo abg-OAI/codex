@@ -1,5 +1,6 @@
 use super::*;
-use crate::tools::handlers::multi_agents::CloseAgentHandler;
+use crate::tools::handlers::multi_agents::close_agent::CloseAgentContract;
+use crate::tools::handlers::multi_agents::close_agent::handle_close_agent;
 use crate::tools::handlers::multi_agents_spec::create_close_agent_tool_v2;
 use codex_protocol::ThreadId;
 use codex_tools::ToolSpec;
@@ -63,7 +64,9 @@ impl ToolExecutor<ToolInvocation> for Handler {
             invocation.payload = ToolPayload::Function {
                 arguments: serde_json::json!({ "target": agent_id.to_string() }).to_string(),
             };
-            CloseAgentHandler.handle(invocation).await
+            handle_close_agent(invocation, CloseAgentContract::Frodex)
+                .await
+                .map(boxed_tool_output)
         })
     }
 }

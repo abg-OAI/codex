@@ -102,6 +102,21 @@ pub(crate) fn collab_agent_error(agent_id: ThreadId, err: CodexErr) -> FunctionC
         CodexErrorDetails::InternalAgentDied => {
             FunctionCallError::RespondToModel(format!("agent with id {agent_id} is closed"))
         }
+        CodexErrorDetails::UnsupportedOperation(_) => {
+            FunctionCallError::RespondToModel("collab manager unavailable".to_string())
+        }
+        _ => FunctionCallError::RespondToModel(format!("collab tool failed: {err}")),
+    }
+}
+
+pub(crate) fn frodex_agent_error(agent_id: ThreadId, err: CodexErr) -> FunctionCallError {
+    match err.details() {
+        CodexErrorDetails::ThreadNotFound(id) => {
+            FunctionCallError::RespondToModel(format!("agent with id {id} not found"))
+        }
+        CodexErrorDetails::InternalAgentDied => {
+            FunctionCallError::RespondToModel(format!("agent with id {agent_id} is closed"))
+        }
         CodexErrorDetails::UnsupportedOperation(message) if message == "thread manager dropped" => {
             FunctionCallError::RespondToModel("collab manager unavailable".to_string())
         }

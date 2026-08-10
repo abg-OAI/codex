@@ -94,18 +94,23 @@ async fn handle_agent_start(
     } = invocation;
     let turn = &step_context.turn;
     let arguments = function_arguments(payload)?;
-    let args: SpawnAgentArgs = parse_arguments(&arguments)?;
+    let (args, fork_mode) = match operation {
+        AgentStartOperation::Spawn => {
+            let args = parse_arguments::<SpawnAgentArgs>(&arguments)?;
+            let fork_mode = args.fork_mode()?;
+            (AgentStartArgs::from(args), fork_mode)
+        }
+        AgentStartOperation::Adopt => (
+            AgentStartArgs::from(parse_arguments::<AdoptAgentArgs>(&arguments)?),
+            None,
+        ),
+    };
     if matches!(operation, AgentStartOperation::Adopt)
         && !turn.config.multi_agent_v2.enable_thread_adoption
     {
         return Err(FunctionCallError::RespondToModel(
             "Thread adoption is disabled. Set `[features.multi_agent_v2] enable_thread_adoption = true` in config.toml to enable it."
                 .to_string(),
-        ));
-    }
-    if matches!(operation, AgentStartOperation::Spawn) && args.existing_thread_id.is_some() {
-        return Err(FunctionCallError::RespondToModel(
-            "existing_thread_id is only accepted by frodex.adopt_agent".to_string(),
         ));
     }
     let is_adoption = matches!(operation, AgentStartOperation::Adopt);
@@ -117,12 +122,6 @@ async fn handle_agent_start(
         })?)
     } else {
         None
-    };
-    let fork_mode = if is_adoption {
-        args.validate_adoption_options()?;
-        None
-    } else {
-        args.fork_mode()?
     };
     let message = message_content(args.message)?;
     let role_name = args
@@ -231,7 +230,7 @@ async fn handle_agent_start(
                         fork_mode,
                         parent_thread_id: Some(session.thread_id),
                         parent_turn_id: Some(turn.sub_id.clone()),
-                        environments: Some(step_context.environments.to_spawn_selections()),
+                        environments: Some(step_context.environments.to_selections()),
                         initial_task_message: None,
                     },
                 ),
@@ -296,7 +295,6 @@ impl CoreToolRuntime for AdoptHandler {
 struct SpawnAgentArgs {
     message: String,
     task_name: String,
-    existing_thread_id: Option<ThreadId>,
     agent_type: Option<String>,
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
@@ -306,22 +304,6 @@ struct SpawnAgentArgs {
 }
 
 impl SpawnAgentArgs {
-    fn validate_adoption_options(&self) -> Result<(), FunctionCallError> {
-        if self.fork_turns.is_some()
-            || self.fork_context.is_some()
-            || self.agent_type.is_some()
-            || self.model.is_some()
-            || self.reasoning_effort.is_some()
-            || self.service_tier.is_some()
-        {
-            return Err(FunctionCallError::RespondToModel(
-                "existing_thread_id cannot be combined with fork, agent type, model, reasoning effort, or service tier overrides".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-
     fn fork_mode(&self) -> Result<Option<SpawnAgentForkMode>, FunctionCallError> {
         if self.fork_context.is_some() {
             return Err(FunctionCallError::RespondToModel(
@@ -355,6 +337,52 @@ impl SpawnAgentArgs {
         }
 
         Ok(Some(SpawnAgentForkMode::LastNTurns(last_n_turns)))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdoptAgentArgs {
+    message: String,
+    task_name: String,
+    existing_thread_id: ThreadId,
+}
+
+struct AgentStartArgs {
+    message: String,
+    task_name: String,
+    existing_thread_id: Option<ThreadId>,
+    agent_type: Option<String>,
+    model: Option<String>,
+    reasoning_effort: Option<ReasoningEffort>,
+    service_tier: Option<String>,
+}
+
+impl From<SpawnAgentArgs> for AgentStartArgs {
+    fn from(args: SpawnAgentArgs) -> Self {
+        Self {
+            message: args.message,
+            task_name: args.task_name,
+            existing_thread_id: None,
+            agent_type: args.agent_type,
+            model: args.model,
+            reasoning_effort: args.reasoning_effort,
+            service_tier: args.service_tier,
+        }
+    }
+}
+
+impl From<AdoptAgentArgs> for AgentStartArgs {
+    fn from(args: AdoptAgentArgs) -> Self {
+        Self {
+            message: args.message,
+            task_name: args.task_name,
+            existing_thread_id: Some(args.existing_thread_id),
+            agent_type: None,
+            model: None,
+            reasoning_effort: None,
+            service_tier: None,
+        }
     }
 }
 
