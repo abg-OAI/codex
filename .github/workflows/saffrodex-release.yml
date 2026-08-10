@@ -1,10 +1,9 @@
-name: frodex-release
+name: saffrodex-release
 
 on:
   push:
     tags:
-      - "frodex-v*"
-  workflow_dispatch:
+      - "saffrodex-v*"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,31 +56,21 @@ jobs:
         shell: bash
         run: rustup target add ${{ matrix.target }}
 
-      - name: Validate Frodex tag
-        if: ${{ startsWith(github.ref_name, 'frodex-v') }}
+      - name: Validate Saffrodex tag
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#frodex-v}"
-          if [[ ! "${version}" =~ ^(.+)\+frodex\.([0-9]+)$ ]]; then
-            echo "Frodex tags must have the form frodex-v<upstream-tag>+frodex.<release-number>." >&2
-            exit 1
-          fi
-
-          upstream_version="${BASH_REMATCH[1]}"
-          if ! git ls-remote --exit-code --tags https://github.com/openai/codex.git \
-            "refs/tags/rust-v${upstream_version}" >/dev/null
-          then
-            echo "Frodex tags must reuse an existing upstream Codex release version exactly: rust-v${upstream_version} was not found." >&2
+          version="${GITHUB_REF_NAME#saffrodex-v}"
+          if [[ ! "${version}" =~ ^(.+)\+frodex\.([0-9]+)\.saffrodex\.([0-9]+)$ ]]; then
+            echo "Saffrodex tags must have the form saffrodex-v<codex-version>+frodex.<frodex-release>.saffrodex.<saffrodex-release>." >&2
             exit 1
           fi
 
       - name: Set package version from tag
-        if: ${{ startsWith(github.ref_name, 'frodex-v') }}
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#frodex-v}"
+          version="${GITHUB_REF_NAME#saffrodex-v}"
           perl -0pi -e 's#^version = "[^"]+"#version = "'"${version}"'"#m' Cargo.toml
           python3 - "$version" <<'PY'
           import re
@@ -144,6 +133,18 @@ jobs:
           cargo test --target ${{ matrix.target }} --release \
             -p codex-code-mode-host --test stdio --no-run
 
+      - name: Verify Saffrodex version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#saffrodex-v}"
+          actual="$(target/${{ matrix.target }}/release/codex --version)"
+          expected="codex-cli ${version}"
+          [[ "$actual" == "$expected" ]] || {
+            echo "expected version '$expected', got '$actual'" >&2
+            exit 1
+          }
+
       - name: Sign and verify macOS code-mode host
         if: ${{ runner.os == 'macOS' }}
         shell: bash
@@ -189,15 +190,15 @@ jobs:
           dest="${GITHUB_WORKSPACE}/dist/${{ matrix.target }}"
           mkdir -p "${dest}"
           tar -C "target/${{ matrix.target }}/release" \
-            -czf "${dest}/frodex-${{ matrix.target }}.tar.gz" \
+            -czf "${dest}/saffrodex-${{ matrix.target }}.tar.gz" \
             codex codex-code-mode-host
 
-          entries="$(tar -tzf "${dest}/frodex-${{ matrix.target }}.tar.gz")"
+          entries="$(tar -tzf "${dest}/saffrodex-${{ matrix.target }}.tar.gz")"
           [[ "$entries" == $'codex\ncodex-code-mode-host' ]]
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: frodex-${{ matrix.target }}
+          name: saffrodex-${{ matrix.target }}
           path: dist/${{ matrix.target }}/*
 
   release:
