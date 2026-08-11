@@ -148,7 +148,7 @@ LEFT JOIN threads ON threads.id = target_edge.child_thread_id
             r#"
 WITH RECURSIVE matching_thread_ids(id) AS MATERIALIZED (
     SELECT id
-    FROM threads INDEXED BY idx_threads_agent_path
+    FROM threads
     WHERE agent_path = ?
 ),
 open_ancestry(target_thread_id, child_thread_id, parent_thread_id, depth, visited) AS (
