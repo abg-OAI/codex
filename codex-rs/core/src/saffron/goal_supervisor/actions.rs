@@ -10,7 +10,6 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ThreadGoal;
-use codex_protocol::protocol::ThreadGoalStatus;
 use codex_protocol::protocol::ThreadGoalUpdatedEvent;
 use tokio::time::Instant;
 
@@ -19,6 +18,7 @@ use super::runtime::Action;
 use super::runtime::Snooze;
 use crate::agent_communication::AgentCommunicationContext;
 use crate::agent_communication::AgentCommunicationKind;
+use crate::saffron::goal_edit::protocol_goal;
 use crate::session::session::Session;
 
 pub(super) async fn followup(
@@ -181,24 +181,4 @@ pub(super) async fn complete(
         .await;
     runtime::commit_action(parent, action).await;
     Ok(goal)
-}
-
-fn protocol_goal(goal: codex_state::ThreadGoal) -> ThreadGoal {
-    ThreadGoal {
-        thread_id: goal.thread_id,
-        objective: goal.objective,
-        status: match goal.status {
-            codex_state::ThreadGoalStatus::Active => ThreadGoalStatus::Active,
-            codex_state::ThreadGoalStatus::Paused => ThreadGoalStatus::Paused,
-            codex_state::ThreadGoalStatus::Blocked => ThreadGoalStatus::Blocked,
-            codex_state::ThreadGoalStatus::UsageLimited => ThreadGoalStatus::UsageLimited,
-            codex_state::ThreadGoalStatus::BudgetLimited => ThreadGoalStatus::BudgetLimited,
-            codex_state::ThreadGoalStatus::Complete => ThreadGoalStatus::Complete,
-        },
-        token_budget: goal.token_budget,
-        tokens_used: goal.tokens_used,
-        time_used_seconds: goal.time_used_seconds,
-        created_at: goal.created_at.timestamp(),
-        updated_at: goal.updated_at.timestamp(),
-    }
 }

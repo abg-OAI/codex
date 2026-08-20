@@ -236,10 +236,9 @@ impl CodexThread {
     /// goal extension can retain its ordinary continuation behavior.
     pub async fn start_saffron_goal_supervisor_checkin(
         &self,
-        goal_id: &str,
-        goal: &codex_protocol::protocol::ThreadGoal,
+        goal: &codex_state::ThreadGoal,
     ) -> Result<bool, String> {
-        crate::saffron::goal_supervisor::start_checkin(&self.session, goal_id, goal).await
+        crate::saffron::goal_supervisor::start_checkin(&self.session, goal).await
     }
 
     /// Clears process-local supervisor state after a goal becomes inactive.
