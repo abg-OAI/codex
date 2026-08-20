@@ -10,6 +10,9 @@
 //! lifecycle reconstructs supervision from the durable active goal.
 
 mod identity;
+mod runtime;
 
 pub(crate) use identity::HELPER_ROLE_NAME;
 pub(crate) use identity::is_helper_source;
+pub(crate) use runtime::start_checkin;
+pub(crate) use runtime::stop;
