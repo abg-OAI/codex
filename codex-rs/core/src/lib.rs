@@ -101,6 +101,7 @@ mod session_startup_prewarm;
 mod skills;
 pub(crate) use skills::maybe_emit_implicit_skill_invocation;
 pub(crate) use skills::skills_load_input_from_config;
+mod saffron;
 mod stream_events_utils;
 pub mod test_support;
 mod unified_exec;
