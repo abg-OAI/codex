@@ -354,6 +354,7 @@ impl Session {
         let agent_execution_guard = self.services.agent_control.execution_guard(
             turn_context.multi_agent_version,
             &turn_context.session_source,
+            self.thread_id,
         );
         let done_clone = Arc::clone(&done);
         let session = Arc::clone(self);

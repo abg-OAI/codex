@@ -145,6 +145,14 @@ pub(crate) fn build_tool_router(
     };
     let mut registry = ToolRegistry::default();
     add_core_tool_sources(&context, &mut registry);
+    if saffron::goal_supervisor::is_helper_source(&turn_context.session_source)
+        && session
+            .services
+            .agent_control
+            .is_hidden_agent(session.thread_id)
+    {
+        saffron::goal_supervisor::register(&mut registry);
+    }
 
     let hosted_specs = if crate::guardian::is_guardian_reviewer_source(&turn_context.session_source)
     {
