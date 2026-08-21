@@ -29,10 +29,10 @@ otherwise port the behavior through the current Codex architecture.
   or unrelated cleanup.
   A Saffrodex task does not authorize an upstream Codex change.
   Ask before preparing or sending upstream work.
-- Never introduce fork-owned database migrations or implicit runtime schema
-  changes.
-  They can collide with Codex migrations and make vanilla Codex unable to read
-  the same state safely.
+- Never change a Codex-owned database schema or migration ledger.
+  Saffrodex may use isolated `saffron_*.sqlite` databases with Saffron-owned
+  schemas and migration ledgers whose versions cannot collide with upstream.
+  Vanilla Codex must remain able to read its own state safely.
 
 ## New Saffrodex code
 
