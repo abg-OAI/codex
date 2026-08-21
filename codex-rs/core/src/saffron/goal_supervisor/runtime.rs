@@ -6,7 +6,8 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
+use chrono::Utc;
 use codex_extension_api::ThreadIdleCause;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
@@ -42,6 +43,15 @@ pub(super) struct Runtime {
     wake_generation: AtomicU64,
 }
 
+impl Runtime {
+    async fn idle_disposition(&self) -> IdleDisposition {
+        // Transitions intentionally clear State while awaiting helper work.
+        // Wait for that transition to settle before interpreting empty State.
+        let _transition = Arc::clone(&self.transition).lock_owned().await;
+        self.state.lock().await.idle_disposition()
+    }
+}
+
 #[derive(Default)]
 struct State {
     goal_id: Option<String>,
@@ -49,6 +59,26 @@ struct State {
     snooze: Option<Snooze>,
     consecutive_failures: u32,
     previous_action: Option<Action>,
+}
+
+impl State {
+    fn idle_disposition(&self) -> IdleDisposition {
+        if self.active.is_some() {
+            return IdleDisposition::ProcessLocalWork;
+        }
+        match self.snooze.as_ref().map(|snooze| snooze.idle_retention) {
+            Some(IdleRetention::Required) => IdleDisposition::ProcessLocalWork,
+            Some(IdleRetention::Reconstructible) => IdleDisposition::ReconstructibleSnooze,
+            None => IdleDisposition::Quiescent,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IdleDisposition {
+    Quiescent,
+    ProcessLocalWork,
+    ReconstructibleSnooze,
 }
 
 struct ActiveHelper {
@@ -70,6 +100,13 @@ enum GoalEditState {
 pub(super) struct Snooze {
     wake: GoalWake,
     pub(super) deadline: Instant,
+    idle_retention: IdleRetention,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IdleRetention {
+    Required,
+    Reconstructible,
 }
 
 impl Snooze {
@@ -84,7 +121,18 @@ impl Snooze {
                 wake_at_ms: Utc::now().timestamp_millis().saturating_add(delay_millis),
             },
             deadline: Instant::now() + delay,
+            idle_retention: IdleRetention::Required,
         }
+    }
+
+    /// Marks an explicit snooze as safe to restore after persistence succeeds.
+    ///
+    /// Automatic failure retries retain the parent instead: their in-memory
+    /// failure count determines the next backoff even though their current
+    /// deadline is also mirrored in durable storage.
+    pub(super) fn reconstructible(mut self) -> Self {
+        self.idle_retention = IdleRetention::Reconstructible;
+        self
     }
 }
 
@@ -178,6 +226,12 @@ pub(crate) async fn start_checkin(
         if state.snooze.take().is_some() {
             runtime.wake_generation.fetch_add(1, Ordering::AcqRel);
         }
+    }
+
+    if let Some(snooze) = restore_persisted_snooze(parent, goal).await? {
+        runtime.state.lock().await.snooze = Some(snooze.clone());
+        schedule_wake(parent, &runtime, snooze);
+        return Ok(true);
     }
 
     match spawn_helper(parent, goal).await {
@@ -411,6 +465,19 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
         .services
         .thread_extension_data
         .get_or_init(Runtime::default)
+}
+
+/// Reports whether unfinished process-local supervision requires retention.
+///
+/// An active helper and an automatic failure retry retain the parent. An
+/// explicit snooze can instead be reconstructed from its persisted deadline.
+pub(crate) async fn should_retain_while_idle(parent: &Session) -> bool {
+    runtime(parent).idle_disposition().await == IdleDisposition::ProcessLocalWork
+}
+
+/// Reports whether the settled snooze can be reconstructed after unloading.
+pub(crate) async fn has_reconstructible_snooze(parent: &Session) -> bool {
+    runtime(parent).idle_disposition().await == IdleDisposition::ReconstructibleSnooze
 }
 
 async fn spawn_helper(
@@ -652,6 +719,46 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
                 .await;
         }
     });
+}
+
+async fn restore_persisted_snooze(
+    parent: &Session,
+    goal: &codex_state::ThreadGoal,
+) -> Result<Option<Snooze>, String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Ok(None);
+    };
+    let store = SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(wake) = store
+        .get_goal_wake(parent.thread_id)
+        .await
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    let now_millis = Utc::now().timestamp_millis();
+    if wake.goal_id != goal.goal_id
+        || wake.goal_objective != goal.objective
+        || wake.goal_updated_at_ms != goal.updated_at.timestamp_millis()
+    {
+        return Ok(None);
+    }
+    if wake.wake_at_ms <= now_millis {
+        store
+            .clear_goal_wake(&wake)
+            .await
+            .map_err(|error| error.to_string())?;
+        return Ok(None);
+    }
+    let remaining_millis =
+        u64::try_from(wake.wake_at_ms - now_millis).map_err(|error| error.to_string())?;
+    Ok(Some(Snooze {
+        wake,
+        deadline: Instant::now() + Duration::from_millis(remaining_millis),
+        idle_retention: IdleRetention::Reconstructible,
+    }))
 }
 
 #[cfg(test)]

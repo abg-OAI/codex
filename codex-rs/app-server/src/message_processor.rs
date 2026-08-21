@@ -68,6 +68,8 @@ use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_code_mode::CodeModeSessionProvider;
+use codex_core::SaffronGoalActivator;
+use codex_core::SaffronGoalSchedulerHandle;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_core::config::ThreadStoreConfig;
@@ -152,6 +154,7 @@ pub(crate) struct MessageProcessor {
     project_processor: ProjectRequestProcessor,
     remote_control_processor: RemoteControlRequestProcessor,
     search_processor: SearchRequestProcessor,
+    saffron_goal_scheduler: Option<SaffronGoalSchedulerHandle>,
     thread_goal_processor: ThreadGoalRequestProcessor,
     thread_queue_processor: ThreadQueueRequestProcessor,
     thread_processor: ThreadRequestProcessor,
@@ -498,6 +501,24 @@ impl MessageProcessor {
             turn_cost_worker.as_ref().map(TurnCostWorker::handle),
             config_warnings,
         );
+        let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
+            && config.features.enabled(codex_features::Feature::Goals)
+        {
+            state_db.as_ref().map(|state_db| {
+                let thread_processor = thread_processor.clone();
+                let activator: SaffronGoalActivator = Arc::new(move |schedule| {
+                    let thread_processor = thread_processor.clone();
+                    Box::pin(async move {
+                        thread_processor
+                            .activate_saffron_goal_schedule(schedule)
+                            .await
+                    })
+                });
+                SaffronGoalSchedulerHandle::start(Arc::clone(state_db), activator)
+            })
+        } else {
+            None
+        };
         let turn_processor = TurnRequestProcessor::new(
             auth_manager,
             Arc::clone(&thread_manager),
@@ -571,6 +592,7 @@ impl MessageProcessor {
             project_processor,
             remote_control_processor,
             search_processor,
+            saffron_goal_scheduler,
             thread_goal_processor,
             thread_queue_processor,
             thread_processor,
@@ -585,6 +607,9 @@ impl MessageProcessor {
         self.apps_processor.shutdown();
         self.models_refresh_worker.shutdown();
         self.skills_watcher.shutdown();
+        if let Some(scheduler) = self.saffron_goal_scheduler.as_ref() {
+            scheduler.stop();
+        }
     }
 
     pub(crate) async fn process_request(

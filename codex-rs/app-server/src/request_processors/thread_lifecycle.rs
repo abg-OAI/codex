@@ -375,6 +375,10 @@ pub(super) async fn ensure_listener_task_running(
                         unloading_state.note_thread_activity_observed();
                         continue;
                     }
+                    if conversation.should_retain_while_idle().await {
+                        unloading_state.note_thread_activity_observed();
+                        continue;
+                    }
                     {
                         let mut pending_thread_unloads = pending_thread_unloads.lock().await;
                         if pending_thread_unloads.contains(&conversation_id) {
@@ -408,6 +412,10 @@ pub(super) async fn ensure_listener_task_running(
     });
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "thread_lifecycle_tests.rs"]
+mod tests;
 
 pub(super) async fn wait_for_thread_shutdown(thread: &Arc<CodexThread>) -> ThreadShutdownResult {
     match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_and_wait()).await {
