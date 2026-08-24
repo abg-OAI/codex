@@ -22,10 +22,12 @@ Repository layout
 -----------------
 
 ```text
+.github/workflows/      Canonical release automation
 layers/NNNN-layer-slug/ Ordered COMMIT_MSG, overlay/, and patches/
 cmd/layerctl/           CLI entry point
 internal/               layerctl domains and adapters
-LAYERCTL.md             Layer maintenance operations
+LAYERCTL.md             Layer maintenance and release operations
+tools/                  Canonical repository operations
 upstream.json           Current exact Codex base
 ```
 
@@ -34,7 +36,18 @@ Their four-digit prefixes are the only ordering mechanism.
 `layers/0000-foundation/` is the required first layer and carries changes
 needed by every generated Saffrodex source tree.
 
-See `LAYERCTL.md` for projection, layer capture, upstream advancement, and
-verification operations.
+See `LAYERCTL.md` for projection, layer capture, upstream advancement,
+verification, and release operations.
+
+The default-branch workflow creates releases from a full projection:
+
+```text
+tools/release.sh [-b RELEASE_NOTES]
+```
+
+The script only dispatches that workflow. The workflow reads `upstream.json`,
+materializes the canonical layers, chooses the next Saffrodex release number,
+publishes the immutable projection tag, builds each platform, and creates the
+GitHub release.
 
 See `AGENTS.md` for the complete repository operating contract.

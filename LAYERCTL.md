@@ -83,10 +83,21 @@ After a successful advance, run
 `layerctl projection delete upstream-advance` to remove its completed local
 worktree and refs before the next advance.
 
-Verification
-------------
+Verification and release
+------------------------
 
-Run `go run ./cmd/layerctl check` before handoff.
+Run `go run ./cmd/layerctl check` before handoff or release.
+
+`layerctl` does not publish releases.
+Run `tools/release.sh [-b RELEASE_NOTES]` to dispatch the release workflow from
+the remote default branch.
+The workflow verifies the exact Codex tag and commit in `upstream.json`, creates
+a full projection, chooses the next available Saffrodex release number, pushes
+the immutable projection tag, builds each platform from that tag, and creates
+the GitHub release.
+Release dispatch does not require or accept a caller-provided projection ref or
+version.
+Never change a published Saffrodex tag.
 
 Implementation
 --------------
