@@ -1,0 +1,9 @@
+Give supervisor check-ins current time
+
+A supervisor wake inherited the prior relative snooze but no current
+clock value, so it could repeat the original delay after that delay had
+already elapsed.
+
+Read the parent session clock for every helper spawn and place the
+resulting UTC instant in the truncation-preserved prompt prefix. This
+leaves deadline interpretation to the supervisor.
