@@ -1,0 +1,120 @@
+diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
+index 1814288fcce819b308529a582209e1f762d7ae20..f482d8a4e0641e37f728c9375f8bfbc711db7e55 100644
+--- a/codex-rs/core/src/lib.rs
++++ b/codex-rs/core/src/lib.rs
+@@ -101,6 +101,7 @@ mod session_startup_prewarm;
+ mod skills;
+ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+ pub(crate) use skills::skills_load_input_from_config;
++mod saffron;
+ mod stream_events_utils;
+ pub mod test_support;
+ mod unified_exec;
+diff --git a/codex-rs/core/src/tools/handlers/unified_exec.rs b/codex-rs/core/src/tools/handlers/unified_exec.rs
+index f6a5bfa5423af952bca4b1f8788fd25760882ad7..a7aebef21875d115445aa949d53fc9c9c225dd6f 100644
+--- a/codex-rs/core/src/tools/handlers/unified_exec.rs
++++ b/codex-rs/core/src/tools/handlers/unified_exec.rs
+@@ -75,7 +75,11 @@ pub(crate) struct ResolvedCommand {
+     pub(crate) shell_type: ShellType,
+ }
+ 
+-fn post_unified_exec_tool_use_payload(
++/// Builds a Bash hook payload using the result's unified-exec identity.
++///
++/// Reusing this adapter lets sibling interactions continue the originating
++/// command's hook lifecycle instead of appearing as unrelated tool calls.
++pub(crate) fn post_unified_exec_tool_use_payload(
+     invocation: &ToolInvocation,
+     result: &dyn ToolOutput,
+ ) -> Option<PostToolUsePayload> {
+diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
+index 2141f3d30b6b977693ecdc28dde02508d507b33f..17344429c24b21720f21ef605617b8bf08ffb513 100644
+--- a/codex-rs/core/src/tools/spec_plan.rs
++++ b/codex-rs/core/src/tools/spec_plan.rs
+@@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
+ use crate::agent::next_thread_spawn_depth;
+ use crate::environment_selection::TurnEnvironmentSnapshot;
+ use crate::image_preparation::unified_image_budget_enabled;
++use crate::saffron;
+ use crate::session::session::Session;
+ use crate::session::turn_context::TurnContext;
+ use crate::tools::code_mode::execute_spec::create_code_mode_tool;
+@@ -989,6 +990,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+                 ),
+             }));
+             registry.add(WriteStdinHandler);
++            registry.add(saffron::await_exec::Handler);
+ 
+             if supports_shell_command {
+                 // Keep the legacy shell tool registered while unified exec is
+diff --git a/codex-rs/core/src/unified_exec/mod.rs b/codex-rs/core/src/unified_exec/mod.rs
+index 77b23625c63351bda9904e15f441956dc2c14c9a..e36d4995bb97e5f36b17ae4f0aae1ebfc422991a 100644
+--- a/codex-rs/core/src/unified_exec/mod.rs
++++ b/codex-rs/core/src/unified_exec/mod.rs
+@@ -62,6 +62,8 @@ pub(crate) use process::NoopSpawnLifecycle;
+ pub(crate) use process::SpawnLifecycle;
+ pub(crate) use process::SpawnLifecycleHandle;
+ pub(crate) use process::UnifiedExecProcess;
++pub(crate) use process_manager::ProcessInteractionAcquisition;
++pub(crate) use process_manager::ProcessWaitReason;
+ 
+ pub(crate) const MIN_YIELD_TIME_MS: u64 = 250;
+ pub(crate) const WINDOWS_INITIAL_EXEC_YIELD_TIME_FLOOR_MS: u64 = 10_000;
+diff --git a/codex-rs/core/src/unified_exec/process.rs b/codex-rs/core/src/unified_exec/process.rs
+index fc93935ada4ee3e4113f3a21b86ff2fdf0f17111..a111cc1e99e0468c17fe693e4c1126a6c59fbca1 100644
+--- a/codex-rs/core/src/unified_exec/process.rs
++++ b/codex-rs/core/src/unified_exec/process.rs
+@@ -194,6 +194,25 @@ impl UnifiedExecProcess {
+         }
+     }
+ 
++    /// Waits for transport-neutral process termination.
++    ///
++    /// Exec-server processes report `Exited` before `Closed` when descendants
++    /// retain inherited output streams. This watches process state rather than
++    /// the output-closure cancellation token so exit-sensitive callers do not
++    /// remain blocked on those descendants.
++    pub(super) async fn wait_for_exit(&self) {
++        if self.has_exited() {
++            return;
++        }
++
++        let mut state = self.state_rx.clone();
++        while state.changed().await.is_ok() {
++            if state.borrow().has_exited {
++                return;
++            }
++        }
++    }
++
+     pub(super) fn exit_code(&self) -> Option<i32> {
+         let state = self.state_rx.borrow().clone();
+         match &self.process_handle {
+diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
+index 9fd8b08a74e87fbedb0b700c9905ab97c0c96017..441046d9fb59455d1c7c718e8363b9c64940e1e0 100644
+--- a/codex-rs/core/src/unified_exec/process_manager.rs
++++ b/codex-rs/core/src/unified_exec/process_manager.rs
+@@ -97,6 +97,11 @@ const NETWORK_ACCESS_DENIED_MESSAGE: &str =
+ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
+ const INTERRUPT: &str = "\u{3}";
+ 
++mod interaction;
++
++pub(crate) use interaction::ProcessInteractionAcquisition;
++pub(crate) use interaction::ProcessWaitReason;
++
+ /// Test-only override for deterministic unified exec process IDs.
+ ///
+ /// In production builds this value should remain at its default (`false`) and
+diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
+index 98032d2087754ff85a88017c4878ca2e5644ac77..61d5df3efb29bfa7f3722cb92214262ce0867566 100644
+--- a/codex-rs/core/tests/suite/mod.rs
++++ b/codex-rs/core/tests/suite/mod.rs
+@@ -132,6 +132,7 @@ mod rollout_budget;
+ mod rollout_list_find;
+ mod safety_buffering;
+ mod safety_check_downgrade;
++mod saffrodex_await_exec;
+ mod search_tool;
+ mod send_user_message_async;
+ mod shell_command;
