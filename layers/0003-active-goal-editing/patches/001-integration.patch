@@ -1,0 +1,573 @@
+diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
+index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe58673f215ca 100644
+--- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
++++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
+@@ -13,6 +13,106 @@ use pretty_assertions::assert_eq;
+ use serde_json::json;
+ use tempfile::TempDir;
+ 
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn root_can_edit_its_active_goal_without_changing_other_goal_state() -> Result<()> {
++    let server = responses::start_mock_server().await;
++    let model_responses = responses::mount_sse_sequence(
++        &server,
++        vec![
++            responses::sse(vec![
++                responses::ev_response_created("create-goal"),
++                responses::ev_function_call(
++                    "create-goal-call",
++                    "create_goal",
++                    &json!({
++                        "objective": "ship the release",
++                        "token_budget": 20_000,
++                    })
++                    .to_string(),
++                ),
++                responses::ev_completed("create-goal"),
++            ]),
++            responses::sse(vec![
++                responses::ev_response_created("edit-goal"),
++                responses::ev_function_call_with_namespace(
++                    "edit-goal-call",
++                    "saffron",
++                    "edit_active_goal",
++                    &json!({ "objective": "ship the release with release notes" }).to_string(),
++                ),
++                responses::ev_completed("edit-goal"),
++            ]),
++            responses::sse(vec![
++                responses::ev_response_created("complete-goal"),
++                responses::ev_function_call(
++                    "complete-goal-call",
++                    "update_goal",
++                    &json!({ "status": "complete" }).to_string(),
++                ),
++                responses::ev_completed("complete-goal"),
++            ]),
++            responses::sse(vec![
++                responses::ev_response_created("root-finished"),
++                responses::ev_assistant_message("root-message", "Release shipped."),
++                responses::ev_completed("root-finished"),
++            ]),
++        ],
++    )
++    .await;
++
++    let codex_home = TempDir::new()?;
++    MockResponsesConfig::new(&server.uri())
++        .enable_feature(Feature::Goals)
++        .write(codex_home.path())?;
++    let mut app_server = TestAppServer::builder()
++        .with_codex_home(codex_home.path())
++        .without_managed_config()
++        .build_initialized()
++        .await?;
++    let thread = app_server
++        .start_thread(ThreadStartParams::default())
++        .await?;
++    let rollout_path = thread.thread.path.clone().context("thread rollout path")?;
++
++    app_server
++        .start_turn_and_wait_for_completion(TurnStartParams {
++            thread_id: thread.thread.id,
++            input: vec![UserInput::Text {
++                text: "Ship the release and keep the goal accurate.".to_string(),
++                text_elements: Vec::new(),
++            }],
++            ..Default::default()
++        })
++        .await?;
++
++    let requests = model_responses.requests();
++    assert_eq!(requests.len(), 4);
++    assert!(
++        requests[1]
++            .tool_by_name("saffron", "edit_active_goal")
++            .is_some(),
++        "the root should receive the active-goal editing tool"
++    );
++    assert!(
++        requests[2]
++            .function_call_output_text("edit-goal-call")
++            .is_some_and(|output| {
++                output.contains("ship the release with release notes")
++                    && output.contains("20000")
++                    && output.contains("active")
++            }),
++        "the edit result should retain the goal budget and active status"
++    );
++
++    let persisted_rollout = std::fs::read_to_string(rollout_path)?;
++    assert!(persisted_rollout.lines().any(|line| {
++        line.contains(r#""type":"thread_goal_updated""#)
++            && line.contains(r#""objective":"ship the release with release notes""#)
++    }));
++
++    Ok(())
++}
++
+ #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+     let server = responses::start_mock_server().await;
+@@ -33,6 +133,29 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+                 responses::ev_assistant_message("parent-message", "Waiting for deployment."),
+                 responses::ev_completed("parent-idle"),
+             ]),
++            responses::sse(vec![
++                responses::ev_response_created("supervisor-edit"),
++                responses::ev_function_call_with_namespace(
++                    "supervisor-edit-call",
++                    "saffron",
++                    "edit_active_goal",
++                    &json!({
++                        "objective": "wait for the deployment and verify production health",
++                    })
++                    .to_string(),
++                ),
++                responses::ev_completed("supervisor-edit"),
++            ]),
++            responses::sse(vec![
++                responses::ev_response_created("supervisor-second-edit"),
++                responses::ev_function_call_with_namespace(
++                    "supervisor-second-edit-call",
++                    "saffron",
++                    "edit_active_goal",
++                    &json!({ "objective": "replace the objective a second time" }).to_string(),
++                ),
++                responses::ev_completed("supervisor-second-edit"),
++            ]),
+             responses::sse(vec![
+                 responses::ev_response_created("supervisor-action"),
+                 responses::ev_function_call_with_namespace(
+@@ -77,7 +200,7 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+         .await?;
+ 
+     tokio::time::timeout(Duration::from_secs(10), async {
+-        while model_responses.requests().len() < 4 {
++        while model_responses.requests().len() < 6 {
+             tokio::task::yield_now().await;
+         }
+     })
+@@ -85,7 +208,7 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+     .context("supervisor did not finish its check-in")?;
+ 
+     let requests = model_responses.requests();
+-    assert_eq!(requests.len(), 4);
++    assert_eq!(requests.len(), 6);
+     assert!(
+         requests[2]
+             .tool_by_name("saffron", "supervisor_snooze")
+@@ -101,9 +224,21 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+     );
+     assert!(
+         requests[3]
++            .function_call_output_text("supervisor-edit-call")
++            .is_some_and(|output| output.contains("verify production health")),
++        "the supervisor should observe the committed replacement objective"
++    );
++    assert!(
++        requests[4]
++            .function_call_output_text("supervisor-second-edit-call")
++            .is_some_and(|output| output.contains("already edited")),
++        "the supervisor should not be able to edit the goal twice"
++    );
++    assert!(
++        requests[5]
+             .function_call_output_text("supervisor-snooze-call")
+             .is_some_and(|output| output.contains("3600")),
+-        "the action should execute before the helper finishes"
++        "the edit should not consume the required disposition action"
+     );
+ 
+     Ok(())
+diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
+index ac8cb0ec1455ff506e4d88c144e795580d8d827c..ba8da1a3e36a960b8759d73bf8751a50ba95b636 100644
+--- a/codex-rs/core/src/codex_thread.rs
++++ b/codex-rs/core/src/codex_thread.rs
+@@ -236,10 +236,9 @@ impl CodexThread {
+     /// goal extension can retain its ordinary continuation behavior.
+     pub async fn start_saffron_goal_supervisor_checkin(
+         &self,
+-        goal_id: &str,
+-        goal: &codex_protocol::protocol::ThreadGoal,
++        goal: &codex_state::ThreadGoal,
+     ) -> Result<bool, String> {
+-        crate::saffron::goal_supervisor::start_checkin(&self.session, goal_id, goal).await
++        crate::saffron::goal_supervisor::start_checkin(&self.session, goal).await
+     }
+ 
+     /// Clears process-local supervisor state after a goal becomes inactive.
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
+index 5a00143dff70e6f0f0306c1379d38a2b1c998b69..9521618d50ad044ec6c655918fb7dde061a60c57 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
++++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
+@@ -10,7 +10,6 @@ use codex_protocol::protocol::EventMsg;
+ use codex_protocol::protocol::InterAgentCommunication;
+ use codex_protocol::protocol::Op;
+ use codex_protocol::protocol::ThreadGoal;
+-use codex_protocol::protocol::ThreadGoalStatus;
+ use codex_protocol::protocol::ThreadGoalUpdatedEvent;
+ use tokio::time::Instant;
+ 
+@@ -19,6 +18,7 @@ use super::runtime::Action;
+ use super::runtime::Snooze;
+ use crate::agent_communication::AgentCommunicationContext;
+ use crate::agent_communication::AgentCommunicationKind;
++use crate::saffron::goal_edit::protocol_goal;
+ use crate::session::session::Session;
+ 
+ pub(super) async fn followup(
+@@ -182,23 +182,3 @@ pub(super) async fn complete(
+     runtime::commit_action(parent, action).await;
+     Ok(goal)
+ }
+-
+-fn protocol_goal(goal: codex_state::ThreadGoal) -> ThreadGoal {
+-    ThreadGoal {
+-        thread_id: goal.thread_id,
+-        objective: goal.objective,
+-        status: match goal.status {
+-            codex_state::ThreadGoalStatus::Active => ThreadGoalStatus::Active,
+-            codex_state::ThreadGoalStatus::Paused => ThreadGoalStatus::Paused,
+-            codex_state::ThreadGoalStatus::Blocked => ThreadGoalStatus::Blocked,
+-            codex_state::ThreadGoalStatus::UsageLimited => ThreadGoalStatus::UsageLimited,
+-            codex_state::ThreadGoalStatus::BudgetLimited => ThreadGoalStatus::BudgetLimited,
+-            codex_state::ThreadGoalStatus::Complete => ThreadGoalStatus::Complete,
+-        },
+-        token_budget: goal.token_budget,
+-        tokens_used: goal.tokens_used,
+-        time_used_seconds: goal.time_used_seconds,
+-        created_at: goal.created_at.timestamp(),
+-        updated_at: goal.updated_at.timestamp(),
+-    }
+-}
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/mod.rs b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
+index 11f2fd6cd0be31e35e6606a004297637d5b19b0d..5559c1b874c5f03559912cbe53828203bf474010 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/mod.rs
++++ b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
+@@ -16,6 +16,10 @@ mod tools;
+ 
+ pub(crate) use identity::HELPER_ROLE_NAME;
+ pub(crate) use identity::is_helper_source;
++pub(super) use runtime::begin_goal_edit;
++pub(super) use runtime::clear_failed_goal_edit;
++pub(super) use runtime::commit_goal_edit;
++pub(super) use runtime::parent_for_helper;
+ pub(crate) use runtime::start_checkin;
+ pub(crate) use runtime::stop;
+ pub(crate) use tools::register;
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/prompt.md b/codex-rs/core/src/saffron/goal_supervisor/prompt.md
+index 8cc5a7a75e3f3bfc706be54a46f5740a4010fd44..b37ee40bcbb20d03f464655b6975199d5bf05a76 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/prompt.md
++++ b/codex-rs/core/src/saffron/goal_supervisor/prompt.md
+@@ -12,6 +12,13 @@ these tools:
+ - `saffron.supervisor_compact_parent_context`: compact an idle parent whose context is the obstacle.
+ - `saffron.supervisor_close_self`: mark the active goal complete, optionally telling the parent why.
+ 
+-Do not perform the parent's work yourself. Do not create sub-agents. Do not
+-call more than one supervisor action. After the action tool returns, end your
+-turn immediately without additional tool calls.
++Before the action, you may call `saffron.edit_active_goal` once when the active
++objective no longer accurately states the user-authorized outcome. The
++replacement must preserve every still-applicable explicit requirement. Do not
++broaden the authorized scope, remove unmet work, or turn the objective into a
++progress log. Make the action consistent with the replacement objective.
++
++The edit is optional and is not the action. Do not perform the parent's work
++yourself. Do not create sub-agents. After any optional edit, call exactly one
++supervisor action. After the action tool returns, end your turn immediately
++without additional tool calls.
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
+index 2f85cb70fa9579bf3ed9be675e0bbfecd7ec2ab5..1c85c1546ec2d35560bdcf2422aa25ce80e0916c 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
++++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
+@@ -14,7 +14,6 @@ use codex_protocol::protocol::Event;
+ use codex_protocol::protocol::EventMsg;
+ use codex_protocol::protocol::SessionSource;
+ use codex_protocol::protocol::SubAgentSource;
+-use codex_protocol::protocol::ThreadGoal;
+ use codex_protocol::protocol::TruncationPolicy;
+ use codex_protocol::protocol::WarningEvent;
+ use codex_protocol::user_input::UserInput;
+@@ -51,10 +50,19 @@ struct State {
+ 
+ struct ActiveHelper {
+     thread_id: ThreadId,
+-    goal_id: String,
++    goal_revision: codex_state::ThreadGoalRevision,
++    edit_state: GoalEditState,
+     action: Option<Action>,
+ }
+ 
++#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
++enum GoalEditState {
++    #[default]
++    Available,
++    InFlight,
++    Committed,
++}
++
+ #[derive(Clone)]
+ pub(super) struct Snooze {
+     pub(super) goal_id: String,
+@@ -87,9 +95,9 @@ impl Default for Runtime {
+ /// idle transition, including any deferred retry.
+ pub(crate) async fn start_checkin(
+     parent: &Arc<Session>,
+-    goal_id: &str,
+-    goal: &ThreadGoal,
++    goal: &codex_state::ThreadGoal,
+ ) -> Result<bool, String> {
++    let goal_id = goal.goal_id.as_str();
+     let parent_source = parent.session_source().await;
+     if matches!(parent_source, SessionSource::SubAgent(_)) {
+         return Ok(false);
+@@ -114,7 +122,7 @@ pub(crate) async fn start_checkin(
+         .await
+         .active
+         .as_ref()
+-        .map(|active| (active.thread_id, active.goal_id.clone()));
++        .map(|active| (active.thread_id, active.goal_revision.goal_id().to_string()));
+     if let Some((helper_id, active_goal_id)) = active {
+         if active_goal_id == goal_id
+             && matches!(
+@@ -153,7 +161,8 @@ pub(crate) async fn start_checkin(
+         Ok(helper_id) => {
+             runtime.state.lock().await.active = Some(ActiveHelper {
+                 thread_id: helper_id,
+-                goal_id: goal_id.to_string(),
++                goal_revision: codex_state::ThreadGoalRevision::capture(goal),
++                edit_state: GoalEditState::Available,
+                 action: None,
+             });
+             watch_helper(Arc::downgrade(parent), helper_id, goal_id.to_string());
+@@ -190,7 +199,9 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
+     }
+ }
+ 
+-pub(super) async fn parent_for_helper(helper: &Session) -> Result<Arc<Session>, String> {
++pub(in crate::saffron) async fn parent_for_helper(
++    helper: &Session,
++) -> Result<Arc<Session>, String> {
+     let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+         parent_thread_id,
+         agent_role: Some(role),
+@@ -232,11 +243,71 @@ pub(super) async fn select_action(
+     if active.action.is_some() {
+         return Err("a supervisor action was already selected for this check-in".to_string());
+     }
++    if active.edit_state == GoalEditState::InFlight {
++        return Err("the supervisor goal edit is still in progress".to_string());
++    }
+     active.action = Some(action.clone());
+-    let goal_id = active.goal_id.clone();
++    let goal_id = active.goal_revision.goal_id().to_string();
+     Ok(goal_id)
+ }
+ 
++/// Reserves the one optional goal edit allowed before a disposition action.
++pub(in crate::saffron) async fn begin_goal_edit(
++    parent: &Arc<Session>,
++    helper_id: ThreadId,
++) -> Result<codex_state::ThreadGoalRevision, String> {
++    let runtime = runtime(parent);
++    let mut state = runtime.state.lock().await;
++    let Some(active) = state
++        .active
++        .as_mut()
++        .filter(|active| active.thread_id == helper_id)
++    else {
++        return Err("this supervisor helper is no longer active".to_string());
++    };
++    if active.action.is_some() {
++        return Err("the supervisor disposition was already selected".to_string());
++    }
++    match active.edit_state {
++        GoalEditState::Available => {
++            active.edit_state = GoalEditState::InFlight;
++            Ok(active.goal_revision.clone())
++        }
++        GoalEditState::InFlight => Err("a supervisor goal edit is already in progress".to_string()),
++        GoalEditState::Committed => {
++            Err("the active goal was already edited during this check-in".to_string())
++        }
++    }
++}
++
++/// Commits the helper's edit reservation without consuming its disposition.
++pub(in crate::saffron) async fn commit_goal_edit(parent: &Session, helper_id: ThreadId) {
++    let runtime = runtime(parent);
++    let mut state = runtime.state.lock().await;
++    if let Some(active) = state
++        .active
++        .as_mut()
++        .filter(|active| active.thread_id == helper_id)
++        && active.edit_state == GoalEditState::InFlight
++    {
++        active.edit_state = GoalEditState::Committed;
++    }
++}
++
++/// Releases an edit reservation when validation or persistence fails.
++pub(in crate::saffron) async fn clear_failed_goal_edit(parent: &Session, helper_id: ThreadId) {
++    let runtime = runtime(parent);
++    let mut state = runtime.state.lock().await;
++    if let Some(active) = state
++        .active
++        .as_mut()
++        .filter(|active| active.thread_id == helper_id)
++        && active.edit_state == GoalEditState::InFlight
++    {
++        active.edit_state = GoalEditState::Available;
++    }
++}
++
+ pub(super) async fn commit_action(parent: &Session, action: Action) {
+     let runtime = runtime(parent);
+     let mut state = runtime.state.lock().await;
+@@ -268,7 +339,10 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
+         .get_or_init(Runtime::default)
+ }
+ 
+-async fn spawn_helper(parent: &Arc<Session>, goal: &ThreadGoal) -> Result<ThreadId, String> {
++async fn spawn_helper(
++    parent: &Arc<Session>,
++    goal: &codex_state::ThreadGoal,
++) -> Result<ThreadId, String> {
+     let mut config = parent.effective_session_config().await;
+     config.ephemeral = true;
+     config.developer_instructions = Some(match config.developer_instructions.take() {
+@@ -321,12 +395,12 @@ fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str)
+     truncate_text(&prompt, TruncationPolicy::Tokens(MAX_CHECKIN_PROMPT_TOKENS))
+ }
+ 
+-async fn continuity(parent: &Session, goal: &ThreadGoal) -> String {
++async fn continuity(parent: &Session, goal: &codex_state::ThreadGoal) -> String {
+     let runtime = runtime(parent);
+     let state = runtime.state.lock().await;
+     serde_json::json!({
+-        "goal_created_at": goal.created_at,
+-        "goal_updated_at": goal.updated_at,
++        "goal_created_at": goal.created_at.timestamp(),
++        "goal_updated_at": goal.updated_at.timestamp(),
+         "tokens_used": goal.tokens_used,
+         "time_used_seconds": goal.time_used_seconds,
+         "previous_action": state.previous_action,
+diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
+index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c066d0a9de1 100644
+--- a/codex-rs/core/src/saffron/mod.rs
++++ b/codex-rs/core/src/saffron/mod.rs
+@@ -6,4 +6,33 @@
+ //! only the integration points that upstream registration needs.
+ 
+ pub(crate) mod await_exec;
++mod goal_edit;
+ pub(crate) mod goal_supervisor;
++
++use crate::session::session::Session;
++use crate::session::turn_context::TurnContext;
++use crate::tools::registry::ToolRegistry;
++
++/// Registers the Saffron tools authorized for the current model step.
++///
++/// Root goal editing follows the goal feature and durable-state lifecycle.
++/// Supervisor tools instead require both the unforgeable hidden-agent marker
++/// and the Saffron helper role before they become model-visible.
++pub(crate) fn register_tools(
++    session: &Session,
++    turn_context: &TurnContext,
++    registry: &mut ToolRegistry,
++) {
++    let is_supervisor = goal_supervisor::is_helper_source(&turn_context.session_source)
++        && session
++            .services
++            .agent_control
++            .is_hidden_agent(session.thread_id);
++    if is_supervisor {
++        goal_edit::register_supervisor(registry);
++        goal_supervisor::register(registry);
++        return;
++    }
++
++    goal_edit::register_root_if_available(session, turn_context, registry);
++}
+diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
+index 1b438e831f9a2fe559239419fa7f52f083f18ef7..5e7b6db9b09c0d35859e5a80507e92a7802bd38a 100644
+--- a/codex-rs/core/src/tools/spec_plan.rs
++++ b/codex-rs/core/src/tools/spec_plan.rs
+@@ -145,14 +145,7 @@ pub(crate) fn build_tool_router(
+     };
+     let mut registry = ToolRegistry::default();
+     add_core_tool_sources(&context, &mut registry);
+-    if saffron::goal_supervisor::is_helper_source(&turn_context.session_source)
+-        && session
+-            .services
+-            .agent_control
+-            .is_hidden_agent(session.thread_id)
+-    {
+-        saffron::goal_supervisor::register(&mut registry);
+-    }
++    saffron::register_tools(session, turn_context, &mut registry);
+ 
+     let hosted_specs = if crate::guardian::is_guardian_reviewer_source(&turn_context.session_source)
+     {
+diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
+index 2a0860b080a0834d377a6c33b46e73b324f6df6f..88ea7a1da9ce01c60370300c6dbecf5a62165585 100644
+--- a/codex-rs/ext/goal/src/runtime.rs
++++ b/codex-rs/ext/goal/src/runtime.rs
+@@ -405,14 +405,10 @@ impl GoalRuntimeHandle {
+             thread.stop_saffron_goal_supervisor().await;
+             return Ok(());
+         }
+-        let goal_id = goal.goal_id.clone();
+-        let goal = protocol_goal_from_state(goal);
+-        if thread
+-            .start_saffron_goal_supervisor_checkin(&goal_id, &goal)
+-            .await?
+-        {
++        if thread.start_saffron_goal_supervisor_checkin(&goal).await? {
+             return Ok(());
+         }
++        let goal = protocol_goal_from_state(goal);
+         let item = continuation_steering_item(&goal);
+ 
+         match thread
+diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
+index 0352333a97a3446d213fa5b0872fb23e64a9687d..61ea4be8563116c87a4149835dc3f576e6243dd9 100644
+--- a/codex-rs/state/src/lib.rs
++++ b/codex-rs/state/src/lib.rs
+@@ -76,6 +76,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
+ pub use runtime::RuntimeDbBackup;
+ pub use runtime::SqliteQueueStore;
+ pub use runtime::ThreadFilterOptions;
++pub use runtime::ThreadGoalRevision;
+ pub use runtime::backup_runtime_db_for_fresh_start;
+ pub use runtime::is_sqlite_corruption_error;
+ pub use runtime::open_thread_history_db;
+diff --git a/codex-rs/state/src/runtime.rs b/codex-rs/state/src/runtime.rs
+index 95765f98f0c0564af22428b2788c018912af2ed7..4d013b4b00c9b220e82ca9f8650c77e672522a9e 100644
+--- a/codex-rs/state/src/runtime.rs
++++ b/codex-rs/state/src/runtime.rs
+@@ -63,6 +63,7 @@ pub use goals::GoalAccountingMode;
+ pub use goals::GoalAccountingOutcome;
+ pub use goals::GoalStore;
+ pub use goals::GoalUpdate;
++pub use goals::ThreadGoalRevision;
+ pub use memories::MemoryStore;
+ pub use queued_items::SqliteQueueStore;
+ pub use recovery::RuntimeDbBackup;
+diff --git a/codex-rs/state/src/runtime/goals.rs b/codex-rs/state/src/runtime/goals.rs
+index ed616e16b7c81d06bcf02302912e16f71ad936f3..c731fd81e25e340eaa3c5e6b4bf49f3a88568f50 100644
+--- a/codex-rs/state/src/runtime/goals.rs
++++ b/codex-rs/state/src/runtime/goals.rs
+@@ -2,6 +2,10 @@ use super::*;
+ use crate::model::ThreadGoalRow;
+ use uuid::Uuid;
+ 
++mod active_goal_objective;
++
++pub use active_goal_objective::ThreadGoalRevision;
++
+ #[derive(Clone)]
+ pub struct GoalStore {
+     pool: Arc<SqlitePool>,
