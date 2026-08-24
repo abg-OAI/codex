@@ -1,0 +1,99 @@
+layerctl
+========
+
+`layerctl` materializes, captures, verifies, and advances the canonical
+Saffrodex layers.
+Run it from this repository with `go run ./cmd/layerctl`.
+
+Projections
+-----------
+
+Named projections use only these local refs:
+
+```text
+refs/layerctl/projections/<name>/base
+refs/layerctl/projections/<name>/head
+```
+
+Projection worktrees are local, caller-selected scratch space.
+Do not encode a machine-specific worktree root in repository files or push
+projection refs.
+`projection delete` is intentionally destructive and deletes the named
+projection without checking whether its work was captured.
+
+Read the projected tree's `AGENTS.md` before changing Codex or Saffron source.
+Use `layerctl layer add` or `layerctl layer refresh` to capture accepted
+projection work instead of hand-editing generated patches.
+
+Create a layer
+--------------
+
+Create new feature work from the generated predecessor:
+
+```text
+go run ./cmd/layerctl projection create <name> \
+  --worktree <path> --through <predecessor>
+# Edit and commit in <path>; the final commit message becomes COMMIT_MSG.
+go run ./cmd/layerctl layer add <NNNN-layer-slug> --from <name>
+go run ./cmd/layerctl projection delete <name>
+```
+
+Choose the next available four-digit layer ID.
+
+Revise a layer
+--------------
+
+Project through the layer, commit the complete desired result, then capture it:
+
+```text
+go run ./cmd/layerctl projection create <name> \
+  --worktree <path> --through <layer>
+# Edit and commit in <path>.
+go run ./cmd/layerctl layer refresh <layer> --from <name>
+go run ./cmd/layerctl projection delete <name>
+```
+
+Capture uses the projection head as the complete desired layer result.
+
+Advance upstream
+----------------
+
+Advance only to exact published `rust-v*` tags.
+Fetch the selected tag directly from OpenAI before starting:
+
+```text
+git fetch --no-tags https://github.com/openai/codex.git \
+  +refs/tags/<tag>:refs/tags/<tag>
+go run ./cmd/layerctl upstream advance <tag> --worktree <path>
+```
+
+`layerctl` resolves the local tag and records its commit in `upstream.json`.
+Clean advances update `upstream.json` only after every layer applies
+successfully.
+
+When a layer conflicts, resolve its complete desired tree in the reported
+`upstream-advance` worktree and run `layerctl upstream continue`.
+The tool commits that resolved layer and directs the required
+`layerctl layer refresh <layer> --from upstream-advance` command.
+Run `layerctl upstream continue` again; it independently reapplies the
+refreshed definition and proceeds only when the generated tree matches.
+Use `layerctl upstream abort` to discard the local advancement state.
+
+After a successful advance, run
+`layerctl projection delete upstream-advance` to remove its completed local
+worktree and refs before the next advance.
+
+Verification
+------------
+
+Run `go run ./cmd/layerctl check` before handoff.
+
+Implementation
+--------------
+
+Keep the Go dependency count low; the intended baseline is the standard
+library plus the system `git` executable.
+Organize code by the domain that owns each operation.
+Keep command parsing and rendering at the CLI boundary.
+Use the standard-library `log` package for diagnostics on standard error, and
+reserve standard output for the requested command result.

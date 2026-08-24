@@ -1,7 +1,7 @@
 # Saffrodex repository
 
-This repository stores the canonical Saffrodex layer definitions that are
-projected onto exact OpenAI Codex releases.
+This repository stores the canonical Saffrodex layer definitions and the
+tooling that projects them onto exact OpenAI Codex releases.
 It is not itself a Codex source checkout.
 
 ## Repository model
@@ -23,13 +23,20 @@ Each layer directory contains:
 A path cannot be both overlay content and a patch target in one layer.
 Later layers may patch files introduced by earlier layers.
 
-Repository-owned guidance does not belong in a generated projection.
+Repository-owned guidance, release tooling, the root `.github/workflows/`
+directory, and `layerctl` do not belong in a generated projection.
 Changes needed in every generated source tree belong in
 `layers/0000-foundation/`.
+
+## Conditional guidance
+
+Before using or changing `layerctl`, working in a generated projection,
+advancing the Codex base, or preparing a release, read `LAYERCTL.md`.
+It owns those workflows, their invariants, and their completion checks.
 
 ## Repository changes
 
 Use ordinary descriptive commit subjects without a repository-name prefix.
-Treat new guidance and layer definitions as maintained product work:
+Treat new code, guidance, and layer definitions as maintained product work:
 design cohesive ownership, document non-obvious contracts, and test observable
 behavior and lifecycle boundaries.
