@@ -11,6 +11,13 @@ The resulting Git history has the upstream release as its ancestor and one
 generated commit for each Saffrodex layer, while the canonical layer history
 remains stable when upstream changes.
 
+The current product layers provide:
+
+- `saffron.await_exec`, an event-driven wait for unified exec sessions;
+- goal supervision and active-goal editing;
+- current-time context for supervisor check-ins; and
+- isolated Saffron persistence and recovery for scheduled supervisor wakes.
+
 Repository layout
 -----------------
 
