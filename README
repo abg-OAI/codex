@@ -1,0 +1,29 @@
+Saffrodex layered fork
+======================
+
+Saffrodex is a small downstream distribution of OpenAI Codex.
+This repository keeps its downstream work as stable canonical layers instead
+of continually rebasing one rolling source branch.
+
+The exact upstream release is recorded in `upstream.json`.
+Lexically ordered layer directories describe a generated Git history with the
+upstream release as its ancestor and one commit for each Saffrodex layer.
+
+Repository layout
+-----------------
+
+```text
+layers/NNNN-layer-slug/  Ordered COMMIT_MSG, overlay/, and patches/
+upstream.json            Current exact Codex base
+```
+
+Layer directory names are applied in lexical order.
+Their four-digit prefixes are the only ordering mechanism.
+`layers/0000-foundation/` is the required first layer and carries changes
+needed by every generated Saffrodex source tree.
+
+Each `COMMIT_MSG` is used verbatim.
+Overlay files introduce new paths, while lexically ordered patches modify or
+delete inherited paths.
+
+See `AGENTS.md` for the repository operating contract.
