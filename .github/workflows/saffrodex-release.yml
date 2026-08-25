@@ -72,11 +72,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Materialization creates local scratch refs. Only the generated head
-          # commit is retained remotely, through the immutable release tag.
-          go run ./cmd/layerctl projection create release
+          # Keep a worktree attached through version stamping so the immutable
+          # tag records the exact source tree used by every platform build.
+          release_worktree="${RUNNER_TEMP}/saffrodex-release"
+          go run ./cmd/layerctl projection create release \
+            --worktree "${release_worktree}"
           release_ref=refs/layerctl/projections/release/head
-          release_commit=$(git rev-parse "${release_ref}^{commit}")
 
           # Derive the next suffix from remote tags so a fresh runner never
           # reuses an already published release number.
@@ -100,8 +101,75 @@ jobs:
           version="${codex_version}+saffrodex.${release_number}"
           release_tag="saffrodex-v${version}"
 
+          (
+            cd "${release_worktree}/codex-rs"
+            python3 - "${version}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          version = sys.argv[1]
+          manifest_path = Path("Cargo.toml")
+          manifest = manifest_path.read_text()
+          manifest = re.sub(
+              r'^version = "[^"]+"$',
+              f'version = "{version}"',
+              manifest,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          manifest_path.write_text(manifest)
+
+          path = Path("Cargo.lock")
+          text = path.read_text()
+
+          def replace_workspace_package_version(match: re.Match[str]) -> str:
+              block = match.group(0)
+              name_match = re.search(r'^name = "([^"]+)"$', block, flags=re.MULTILINE)
+              if name_match is None:
+                  return block
+              name = name_match.group(1)
+              if not (
+                  name.startswith("codex-")
+                  or name in {"app_test_support", "core_test_support"}
+              ):
+                  return block
+              return re.sub(
+                  r'^version = "[^"]+"$',
+                  f'version = "{version}"',
+                  block,
+                  count=1,
+                  flags=re.MULTILINE,
+              )
+
+          text = re.sub(
+              r'(?ms)^\[\[package\]\]\n.*?(?=^\[\[package\]\]\n|\Z)',
+              replace_workspace_package_version,
+              text,
+          )
+          path.write_text(text)
+          PY
+            grep -n "^version = \"${version}\"" Cargo.toml
+          )
+
+          # GitHub's workflow token cannot introduce workflow files through a
+          # pushed tag. Release builds still retain the neighboring actions and
+          # scripts they consume from the generated source tree.
+          git -C "${release_worktree}" rm -r -- .github/workflows
+          git -C "${release_worktree}" add -- \
+            codex-rs/Cargo.toml codex-rs/Cargo.lock
+          git -C "${release_worktree}" commit -m "saffrodex ${version}"
+          release_commit=$(git rev-parse "${release_ref}^{commit}")
+          [[ -z "$(
+            git -C "${release_worktree}" ls-tree -r --name-only \
+              "${release_commit}" -- .github/workflows
+          )" ]] || {
+            echo "${release_tag} still contains GitHub workflow files." >&2
+            exit 1
+          }
+
           # Release notes require an annotated tag; releases without notes use
-          # a lightweight tag. Both forms point at the exact projection commit.
+          # a lightweight tag. Both forms point at the exact release commit.
           if [[ -n "${RELEASE_NOTES}" ]]; then
             message=$(mktemp)
             trap 'rm -f "${message}"' EXIT
@@ -183,11 +251,10 @@ jobs:
         shell: bash
         run: rustup target add ${{ matrix.target }}
 
-      - name: Install sccache
-        uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
-          tool: sccache
-          version: 0.7.5
+          version: v0.16.0
 
       - name: Validate Saffrodex tag and Codex base
         shell: bash
@@ -217,59 +284,6 @@ jobs:
             echo "${CODEX_TAG} (${CODEX_COMMIT}) is not an ancestor of ${RELEASE_TAG}." >&2
             exit 1
           }
-
-      - name: Set package version from tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#saffrodex-v}"
-          python3 - "${version}" <<'PY'
-          import re
-          import sys
-          from pathlib import Path
-
-          version = sys.argv[1]
-          manifest_path = Path("Cargo.toml")
-          manifest = manifest_path.read_text()
-          manifest = re.sub(
-              r'^version = "[^"]+"$',
-              f'version = "{version}"',
-              manifest,
-              count=1,
-              flags=re.MULTILINE,
-          )
-          manifest_path.write_text(manifest)
-
-          path = Path("Cargo.lock")
-          text = path.read_text()
-
-          def replace_workspace_package_version(match: re.Match[str]) -> str:
-              block = match.group(0)
-              name_match = re.search(r'^name = "([^"]+)"$', block, flags=re.MULTILINE)
-              if name_match is None:
-                  return block
-              name = name_match.group(1)
-              if not (
-                  name.startswith("codex-")
-                  or name in {"app_test_support", "core_test_support"}
-              ):
-                  return block
-              return re.sub(
-                  r'^version = "[^"]+"$',
-                  f'version = "{version}"',
-                  block,
-                  count=1,
-                  flags=re.MULTILINE,
-              )
-
-          text = re.sub(
-              r'(?ms)^\[\[package\]\]\n.*?(?=^\[\[package\]\]\n|\Z)',
-              replace_workspace_package_version,
-              text,
-          )
-          path.write_text(text)
-          PY
-          grep -n "^version = \"${version}\"" Cargo.toml
 
       - name: Configure rusty_v8 artifact overrides and verify checksums
         uses: ./.github/actions/setup-rusty-v8
