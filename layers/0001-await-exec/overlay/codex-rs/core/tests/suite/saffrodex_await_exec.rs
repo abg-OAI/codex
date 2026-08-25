@@ -28,7 +28,6 @@ async fn await_exec_returns_when_output_arrives() -> Result<()> {
 
     let server = start_mock_server().await;
     let mut builder = test_codex().with_model("gpt-5.2").with_config(|config| {
-        config.use_experimental_unified_exec_tool = true;
         config
             .features
             .enable(Feature::UnifiedExec)
@@ -116,7 +115,6 @@ async fn await_exec_exit_mode_ignores_output_until_exit() -> Result<()> {
 
     let server = start_mock_server().await;
     let mut builder = test_codex().with_model("gpt-5.2").with_config(|config| {
-        config.use_experimental_unified_exec_tool = true;
         config
             .features
             .enable(Feature::UnifiedExec)
@@ -194,7 +192,6 @@ async fn await_exec_timeout_keeps_the_session_reusable() -> Result<()> {
 
     let server = start_mock_server().await;
     let mut builder = test_codex().with_model("gpt-5.2").with_config(|config| {
-        config.use_experimental_unified_exec_tool = true;
         config
             .features
             .enable(Feature::UnifiedExec)
@@ -270,7 +267,6 @@ async fn await_exec_wakes_on_exit_before_inherited_output_closes() -> Result<()>
 
     let server = start_mock_server().await;
     let mut builder = test_codex().with_model("gpt-5.2").with_config(|config| {
-        config.use_experimental_unified_exec_tool = true;
         config
             .features
             .enable(Feature::UnifiedExec)
