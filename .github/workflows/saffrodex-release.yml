@@ -251,11 +251,10 @@ jobs:
         shell: bash
         run: rustup target add ${{ matrix.target }}
 
-      - name: Install sccache
-        uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
-          tool: sccache
-          version: 0.7.5
+          version: v0.16.0
 
       - name: Validate Saffrodex tag and Codex base
         shell: bash
