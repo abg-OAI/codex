@@ -263,6 +263,15 @@ fn has_model_resume_override(
             .is_some_and(|overrides| overrides.contains_key("model_reasoning_effort"))
 }
 
+fn preserve_unset_persisted_reasoning_effort(
+    config: &mut Config,
+    persisted_metadata: Option<&ThreadMetadata>,
+) {
+    if persisted_metadata.is_some_and(|metadata| metadata.reasoning_effort.is_none()) {
+        config.model_reasoning_effort = None;
+    }
+}
+
 fn has_permission_override(
     request_overrides: Option<&HashMap<String, serde_json::Value>>,
     typesafe_overrides: &ConfigOverrides,
@@ -3713,12 +3722,8 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
-        if !has_explicit_model_resume_override
-            && persisted_metadata
-                .as_ref()
-                .is_some_and(|metadata| metadata.reasoning_effort.is_none())
-        {
-            config.model_reasoning_effort = None;
+        if !has_explicit_model_resume_override {
+            preserve_unset_persisted_reasoning_effort(&mut config, persisted_metadata.as_ref());
         }
 
         let response_history = thread_history.clone();
@@ -6044,6 +6049,8 @@ fn build_thread_from_loaded_snapshot(
         loaded_thread.rollout_path(),
     )
 }
+
+mod saffron_goal_scheduler;
 
 #[cfg(test)]
 #[path = "thread_processor_tests.rs"]

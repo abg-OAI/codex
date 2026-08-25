@@ -104,7 +104,8 @@ pub(super) async fn snooze(
                 runtime::clear_failed_action(parent, helper_id, &action).await;
                 return Err(error);
             }
-        };
+        }
+        .reconstructible();
     if let Err(error) = runtime::set_snooze(parent, snooze.clone()).await {
         runtime::clear_failed_action(parent, helper_id, &action).await;
         return Err(error);
