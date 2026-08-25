@@ -14,7 +14,6 @@ use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::ThreadGoal;
 use codex_protocol::protocol::TruncationPolicy;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
@@ -51,8 +50,17 @@ struct State {
 
 struct ActiveHelper {
     thread_id: ThreadId,
-    goal_id: String,
+    goal_revision: codex_state::ThreadGoalRevision,
+    edit_state: GoalEditState,
     action: Option<Action>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum GoalEditState {
+    #[default]
+    Available,
+    InFlight,
+    Committed,
 }
 
 #[derive(Clone)]
@@ -87,9 +95,9 @@ impl Default for Runtime {
 /// idle transition, including any deferred retry.
 pub(crate) async fn start_checkin(
     parent: &Arc<Session>,
-    goal_id: &str,
-    goal: &ThreadGoal,
+    goal: &codex_state::ThreadGoal,
 ) -> Result<bool, String> {
+    let goal_id = goal.goal_id.as_str();
     let parent_source = parent.session_source().await;
     if matches!(parent_source, SessionSource::SubAgent(_)) {
         return Ok(false);
@@ -114,7 +122,7 @@ pub(crate) async fn start_checkin(
         .await
         .active
         .as_ref()
-        .map(|active| (active.thread_id, active.goal_id.clone()));
+        .map(|active| (active.thread_id, active.goal_revision.goal_id().to_string()));
     if let Some((helper_id, active_goal_id)) = active {
         if active_goal_id == goal_id
             && matches!(
@@ -153,7 +161,8 @@ pub(crate) async fn start_checkin(
         Ok(helper_id) => {
             runtime.state.lock().await.active = Some(ActiveHelper {
                 thread_id: helper_id,
-                goal_id: goal_id.to_string(),
+                goal_revision: codex_state::ThreadGoalRevision::capture(goal),
+                edit_state: GoalEditState::Available,
                 action: None,
             });
             watch_helper(Arc::downgrade(parent), helper_id, goal_id.to_string());
@@ -190,7 +199,9 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
     }
 }
 
-pub(super) async fn parent_for_helper(helper: &Session) -> Result<Arc<Session>, String> {
+pub(in crate::saffron) async fn parent_for_helper(
+    helper: &Session,
+) -> Result<Arc<Session>, String> {
     let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
         parent_thread_id,
         agent_role: Some(role),
@@ -232,9 +243,69 @@ pub(super) async fn select_action(
     if active.action.is_some() {
         return Err("a supervisor action was already selected for this check-in".to_string());
     }
+    if active.edit_state == GoalEditState::InFlight {
+        return Err("the supervisor goal edit is still in progress".to_string());
+    }
     active.action = Some(action.clone());
-    let goal_id = active.goal_id.clone();
+    let goal_id = active.goal_revision.goal_id().to_string();
     Ok(goal_id)
+}
+
+/// Reserves the one optional goal edit allowed before a disposition action.
+pub(in crate::saffron) async fn begin_goal_edit(
+    parent: &Arc<Session>,
+    helper_id: ThreadId,
+) -> Result<codex_state::ThreadGoalRevision, String> {
+    let runtime = runtime(parent);
+    let mut state = runtime.state.lock().await;
+    let Some(active) = state
+        .active
+        .as_mut()
+        .filter(|active| active.thread_id == helper_id)
+    else {
+        return Err("this supervisor helper is no longer active".to_string());
+    };
+    if active.action.is_some() {
+        return Err("the supervisor disposition was already selected".to_string());
+    }
+    match active.edit_state {
+        GoalEditState::Available => {
+            active.edit_state = GoalEditState::InFlight;
+            Ok(active.goal_revision.clone())
+        }
+        GoalEditState::InFlight => Err("a supervisor goal edit is already in progress".to_string()),
+        GoalEditState::Committed => {
+            Err("the active goal was already edited during this check-in".to_string())
+        }
+    }
+}
+
+/// Commits the helper's edit reservation without consuming its disposition.
+pub(in crate::saffron) async fn commit_goal_edit(parent: &Session, helper_id: ThreadId) {
+    let runtime = runtime(parent);
+    let mut state = runtime.state.lock().await;
+    if let Some(active) = state
+        .active
+        .as_mut()
+        .filter(|active| active.thread_id == helper_id)
+        && active.edit_state == GoalEditState::InFlight
+    {
+        active.edit_state = GoalEditState::Committed;
+    }
+}
+
+/// Releases an edit reservation when validation or persistence fails.
+pub(in crate::saffron) async fn clear_failed_goal_edit(parent: &Session, helper_id: ThreadId) {
+    let runtime = runtime(parent);
+    let mut state = runtime.state.lock().await;
+    if let Some(active) = state
+        .active
+        .as_mut()
+        .filter(|active| active.thread_id == helper_id)
+        && active.edit_state == GoalEditState::InFlight
+    {
+        active.edit_state = GoalEditState::Available;
+    }
 }
 
 pub(super) async fn commit_action(parent: &Session, action: Action) {
@@ -268,7 +339,10 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
         .get_or_init(Runtime::default)
 }
 
-async fn spawn_helper(parent: &Arc<Session>, goal: &ThreadGoal) -> Result<ThreadId, String> {
+async fn spawn_helper(
+    parent: &Arc<Session>,
+    goal: &codex_state::ThreadGoal,
+) -> Result<ThreadId, String> {
     let mut config = parent.effective_session_config().await;
     config.ephemeral = true;
     config.developer_instructions = Some(match config.developer_instructions.take() {
@@ -321,12 +395,12 @@ fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str)
     truncate_text(&prompt, TruncationPolicy::Tokens(MAX_CHECKIN_PROMPT_TOKENS))
 }
 
-async fn continuity(parent: &Session, goal: &ThreadGoal) -> String {
+async fn continuity(parent: &Session, goal: &codex_state::ThreadGoal) -> String {
     let runtime = runtime(parent);
     let state = runtime.state.lock().await;
     serde_json::json!({
-        "goal_created_at": goal.created_at,
-        "goal_updated_at": goal.updated_at,
+        "goal_created_at": goal.created_at.timestamp(),
+        "goal_updated_at": goal.updated_at.timestamp(),
         "tokens_used": goal.tokens_used,
         "time_used_seconds": goal.time_used_seconds,
         "previous_action": state.previous_action,
