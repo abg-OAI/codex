@@ -235,8 +235,8 @@ struct CompleteArgs {
 struct Output(JsonValue);
 
 impl ToolOutput for Output {
-    fn log_preview(&self) -> String {
-        JsonToolOutput::new(self.0.clone()).log_preview()
+    fn log_output(&self) -> String {
+        JsonToolOutput::new(self.0.clone()).log_output()
     }
 
     fn success_for_logging(&self) -> bool {

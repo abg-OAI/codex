@@ -77,7 +77,7 @@ async fn cancelled_finalization_leaves_output_for_the_next_interaction() {
         .output_buffer
         .lock()
         .await
-        .push_chunk(b"retained\n".to_vec());
+        .push_chunk(b"retained\n");
     let interaction = match manager
         .begin_process_interaction(PROCESS_ID, /*deadline*/ None)
         .await
