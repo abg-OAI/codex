@@ -330,6 +330,21 @@ impl CodexThread {
         crate::saffron::goal_supervisor::stop(&self.session).await;
     }
 
+    /// Returns whether process-local work requires this idle thread to remain loaded.
+    ///
+    /// An embedding that unloads idle threads must honor this signal so a
+    /// deferred core task is not discarded before its durable state changes.
+    #[doc(hidden)]
+    pub async fn should_retain_while_idle(&self) -> bool {
+        crate::saffron::goal_supervisor::should_retain_while_idle(&self.session).await
+    }
+
+    /// Returns whether the settled snooze can be reconstructed after unloading.
+    #[doc(hidden)]
+    pub async fn has_reconstructible_saffron_goal_snooze(&self) -> bool {
+        crate::saffron::goal_supervisor::has_reconstructible_snooze(&self.session).await
+    }
+
     #[doc(hidden)]
     pub async fn ensure_rollout_materialized(&self) {
         self.session
