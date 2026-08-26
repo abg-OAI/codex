@@ -305,7 +305,6 @@ async fn spawn_helper(parent: &Arc<Session>, goal: &ThreadGoal) -> Result<Thread
                     root_turn_id: None,
                     environments: None,
                     multi_agent_v2_usage_hints: None,
-                    cyber_access_program: None,
                 },
             ),
     )

@@ -81,7 +81,8 @@ async fn deliver_parent_message(
             parent.thread_id,
             communication,
             context,
-            crate::TurnStartOptions::default(),
+            /*parent_turn_id*/ None,
+            /*root_turn_id*/ None,
         )
         .await
         .map(|_| ())
