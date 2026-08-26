@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index f7c636a5b8b34522f6d887f1d22327bb497bf7fa..3f876f53c2739db71dc97bb36639df4e00c838ca 100644
+index 8463ae9e16e997cebd910419f7cf8052b6b97f84..59dae95010867d2aa1bd2ec729cc1dbc1a008e08 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -105,6 +105,7 @@ mod session_startup_prewarm;
+@@ -106,6 +106,7 @@ mod session_startup_prewarm;
  mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
@@ -28,7 +28,7 @@ index f6a5bfa5423af952bca4b1f8788fd25760882ad7..a7aebef21875d115445aa949d53fc9c9
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index f0ab35031995ab1b9e5d37b8b611145da97ebbf5..9bc205b28fc3142783f2e9fe132186ecb7d01c90 100644
+index e159828c63b1555d163c3e2c4ffebfd487d3397b..5062f90d27827bd8814a8d38acecae393a902315 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -39,7 +39,7 @@ index f0ab35031995ab1b9e5d37b8b611145da97ebbf5..9bc205b28fc3142783f2e9fe132186ec
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -983,6 +984,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -997,6 +998,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
          ),
      }));
      registry.add(WriteStdinHandler);
@@ -91,7 +91,7 @@ index 3793927eb4f64e9df2c35a4c313304ff42226c33..6e1d550b25be2fe8ea2630af4c7e1309
          let state = self.state_rx.borrow().clone();
          match &self.process_handle {
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 181551409d2d511a3ff8f027048200beb27606ec..0301b1124de00c0bdeed4919822a650600e9e159 100644
+index ed0da7129750786bfb6eb210bd2a3fd593bfc15c..7a54c4c91b352425f9e23ed54cfa6b55d8446c15 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
 @@ -98,6 +98,11 @@ const NETWORK_ACCESS_DENIED_MESSAGE: &str =
@@ -107,14 +107,14 @@ index 181551409d2d511a3ff8f027048200beb27606ec..0301b1124de00c0bdeed4919822a6506
  ///
  /// In production builds this value should remain at its default (`false`) and
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index 52fcac4bc298e4996638b9d131fb8beca89b37dd..b917f994f2f9753b00ca227155e8237941767f3b 100644
+index 8437a41d5dad7c5822f8a3d3157033bad83bb32e..5340279281fb43c3d4def7b87b5e791bbcf92e7e 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -141,6 +141,7 @@ mod rollout_budget;
+@@ -144,6 +144,7 @@ mod rollout_budget;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;
 +mod saffrodex_await_exec;
  mod search_tool;
  mod send_user_message_async;
- mod shell_snapshot;
+ mod settings_commits;
