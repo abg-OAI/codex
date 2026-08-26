@@ -181,10 +181,10 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
  
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index d1612590fdcc3665a6e2d6ed0beb025f6f09ba19..c7aa3f20a905fcf9a3fc41c6474aa290b43e8052 100644
+index 4861074a23c7567524e3eb75b3c64f2a805b7991..38945bb53a45f4c2f4e324e0d62c0124312abde6 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -320,10 +320,9 @@ impl CodexThread {
+@@ -312,10 +312,9 @@ impl CodexThread {
      /// goal extension can retain its ordinary continuation behavior.
      pub async fn start_saffron_goal_supervisor_checkin(
          &self,
@@ -198,7 +198,7 @@ index d1612590fdcc3665a6e2d6ed0beb025f6f09ba19..c7aa3f20a905fcf9a3fc41c6474aa290
  
      /// Clears process-local supervisor state after a goal becomes inactive.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-index 5a00143dff70e6f0f0306c1379d38a2b1c998b69..9521618d50ad044ec6c655918fb7dde061a60c57 100644
+index 3cb8e8f9c00938ab64e930bb73c849b7246eff60..6d346494c92cd455d636ad18d3897b4ad53e540e 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 @@ -10,7 +10,6 @@ use codex_protocol::protocol::EventMsg;
@@ -217,7 +217,7 @@ index 5a00143dff70e6f0f0306c1379d38a2b1c998b69..9521618d50ad044ec6c655918fb7dde0
  use crate::session::session::Session;
  
  pub(super) async fn followup(
-@@ -182,23 +182,3 @@ pub(super) async fn complete(
+@@ -181,23 +181,3 @@ pub(super) async fn complete(
      runtime::commit_action(parent, action).await;
      Ok(goal)
  }
@@ -278,7 +278,7 @@ index 8cc5a7a75e3f3bfc706be54a46f5740a4010fd44..b37ee40bcbb20d03f464655b6975199d
 +supervisor action. After the action tool returns, end your turn immediately
 +without additional tool calls.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 2f85cb70fa9579bf3ed9be675e0bbfecd7ec2ab5..1c85c1546ec2d35560bdcf2422aa25ce80e0916c 100644
+index 30e721fdbc2851182217ebd9bbbfafbad6b876e3..7fde17392fb149eb22b8e3adc86cb93480e1d354 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -14,7 +14,6 @@ use codex_protocol::protocol::Event;
@@ -437,7 +437,7 @@ index 2f85cb70fa9579bf3ed9be675e0bbfecd7ec2ab5..1c85c1546ec2d35560bdcf2422aa25ce
      let mut config = parent.effective_session_config().await;
      config.ephemeral = true;
      config.developer_instructions = Some(match config.developer_instructions.take() {
-@@ -321,12 +395,12 @@ fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str)
+@@ -322,12 +396,12 @@ fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str)
      truncate_text(&prompt, TruncationPolicy::Tokens(MAX_CHECKIN_PROMPT_TOKENS))
  }
  
@@ -492,7 +492,7 @@ index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c06
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index bd36dba6be3c196a544d7eb23ee6c607fb1d821a..c9a657aa5b143fe1a1828a3d4d09afff6b9a2523 100644
+index 9d09fa14aa743724768ba847ea5a088f37ca588d..ca1a5953c86703e3b3394312332b026a54ba0204 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -141,14 +141,7 @@ pub(crate) fn build_tool_router(
@@ -512,10 +512,10 @@ index bd36dba6be3c196a544d7eb23ee6c607fb1d821a..c9a657aa5b143fe1a1828a3d4d09afff
      let hosted_specs = if crate::guardian::is_basic_session_source(&turn_context.session_source) {
          Vec::new()
 diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
-index 59bc0c1f90e04737784b43b6f073bb09ad324e51..80bd78901ffac8f55b2c3b696850095d9918e0f2 100644
+index 2a0860b080a0834d377a6c33b46e73b324f6df6f..88ea7a1da9ce01c60370300c6dbecf5a62165585 100644
 --- a/codex-rs/ext/goal/src/runtime.rs
 +++ b/codex-rs/ext/goal/src/runtime.rs
-@@ -406,14 +406,10 @@ impl GoalRuntimeHandle {
+@@ -405,14 +405,10 @@ impl GoalRuntimeHandle {
              thread.stop_saffron_goal_supervisor().await;
              return Ok(());
          }
@@ -533,11 +533,11 @@ index 59bc0c1f90e04737784b43b6f073bb09ad324e51..80bd78901ffac8f55b2c3b696850095d
  
          match thread
 diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
-index b2c61b4860a951d9efb1b4791f12112ea9284314..c2fe13ea7a0a2f3b9a476f7fd6938026db95aac4 100644
+index 8176aed59c5d18a95dd3f767f4155b952d99ea96..e774560b8a77e70d7291f3d9a4b31e6950107c9c 100644
 --- a/codex-rs/state/src/lib.rs
 +++ b/codex-rs/state/src/lib.rs
-@@ -81,6 +81,7 @@ pub use runtime::RuntimeDbBackup;
- pub use runtime::SqliteIntegrityCheck;
+@@ -80,6 +80,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
+ pub use runtime::RuntimeDbBackup;
  pub use runtime::SqliteQueueStore;
  pub use runtime::ThreadFilterOptions;
 +pub use runtime::ThreadGoalRevision;
@@ -545,7 +545,7 @@ index b2c61b4860a951d9efb1b4791f12112ea9284314..c2fe13ea7a0a2f3b9a476f7fd6938026
  pub use runtime::is_sqlite_corruption_error;
  pub use runtime::open_thread_history_db;
 diff --git a/codex-rs/state/src/runtime.rs b/codex-rs/state/src/runtime.rs
-index 50ccf8e43e0e176612a13c00e6fdda1032e4b7c0..7815b7df470c506b2f75c8ba7c45e5a5f27a63fd 100644
+index 95765f98f0c0564af22428b2788c018912af2ed7..4d013b4b00c9b220e82ca9f8650c77e672522a9e 100644
 --- a/codex-rs/state/src/runtime.rs
 +++ b/codex-rs/state/src/runtime.rs
 @@ -63,6 +63,7 @@ pub use goals::GoalAccountingMode;
