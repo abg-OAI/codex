@@ -406,14 +406,10 @@ impl GoalRuntimeHandle {
             thread.stop_saffron_goal_supervisor().await;
             return Ok(());
         }
-        let goal_id = goal.goal_id.clone();
-        let goal = protocol_goal_from_state(goal);
-        if thread
-            .start_saffron_goal_supervisor_checkin(&goal_id, &goal)
-            .await?
-        {
+        if thread.start_saffron_goal_supervisor_checkin(&goal).await? {
             return Ok(());
         }
+        let goal = protocol_goal_from_state(goal);
         let item = continuation_steering_item(&goal);
 
         match thread
