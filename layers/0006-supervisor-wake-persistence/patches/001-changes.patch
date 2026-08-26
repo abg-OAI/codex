@@ -82,7 +82,7 @@ index ffbe7a2da37648d4f5bd4883d9a3b885bb6dc9ab..62d35ee5fa3352760eaf20532abb50f8
      parent
          .send_event_raw(Event {
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/mod.rs b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-index 5559c1b874c5f03559912cbe53828203bf474010..03b084d2717c7292a3d921a4b8a7dd8c05b1ceb3 100644
+index 5abe0cfd20922343ae8d50d0ad8893f61d5fb804..645238e88de5f5d222c60560f8e1e14be2c9a801 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/mod.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
 @@ -5,9 +5,9 @@
@@ -97,7 +97,7 @@ index 5559c1b874c5f03559912cbe53828203bf474010..03b084d2717c7292a3d921a4b8a7dd8c
 +//! allowing a new runtime to preserve their absolute wake time.
  
  mod actions;
- mod identity;
+ pub(crate) mod guidance;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 index 71009a3785571f6320ad265d9f7f4c69a49c6e77..4ea68723c6495950e90c63e1ab7c62107aafc82c 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs

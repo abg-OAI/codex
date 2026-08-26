@@ -10,6 +10,7 @@
 //! lifecycle reconstructs supervision from the durable active goal.
 
 mod actions;
+pub(crate) mod guidance;
 mod identity;
 mod runtime;
 mod tools;

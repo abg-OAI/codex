@@ -13,5 +13,10 @@ The helper can resume its parent, snooze with capped retry backoff,
 compact parent context, or complete itself. It retires stale helpers
 and preserves no supervisor state across process restarts.
 
+On app-server turns that mention a goal, guide root agents to activate
+durable goals before yielding deferred work. Describe snoozes as
+token-free waits until the earliest useful check-in without adding
+guidance to unrelated turns.
+
 Cover hidden-helper accounting, authority checks, supervisor runtime
-behavior, and the app-server lifecycle.
+behavior, root guidance, and the app-server lifecycle.

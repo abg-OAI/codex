@@ -164,7 +164,7 @@ impl Kind {
                 "Wake the supervised parent with one concrete next task. Use this when the active goal can make useful progress now."
             }
             Self::Snooze => {
-                "Keep the active goal idle for a bounded interval, then run another supervisor check-in. Use this only when waiting is the next useful action."
+                "Snooze until the earliest useful check-in when no useful work can occur before a future time or slow external change. Use supervisor_followup_parent when the parent can act now."
             }
             Self::Compact => {
                 "Request context compaction for the idle supervised parent. Use this only when context pressure is blocking useful progress."
@@ -192,7 +192,7 @@ impl Kind {
                 BTreeMap::from([(
                     "delay_seconds".to_string(),
                     JsonSchema::integer(Some(format!(
-                        "Whole seconds to wait, from 1 through {MAX_SNOOZE_SECONDS}."
+                        "Whole seconds until the earliest useful check-in, from 1 through {MAX_SNOOZE_SECONDS}."
                     ))),
                 )]),
                 Some(vec!["delay_seconds".to_string()]),
