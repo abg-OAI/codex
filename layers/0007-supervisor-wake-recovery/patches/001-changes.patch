@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 4c7ca2e8de84aa2eda9152d79e3ef5be4e3b338c..e2bb2729920dd714c4d6b1d5cfe7766d1588a48a 100644
+index a4009236a2761c09172e527ba2edd576278fd173..87f150c10fb939a690020ec87f7c02d435a9815f 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
-@@ -68,6 +68,8 @@ use codex_app_server_protocol::JSONRPCResponse;
+@@ -71,6 +71,8 @@ use codex_app_server_protocol::JSONRPCResponse;
  use codex_app_server_protocol::experimental_required_message;
  use codex_arg0::Arg0DispatchPaths;
  use codex_code_mode::CodeModeSessionProvider;
@@ -11,7 +11,7 @@ index 4c7ca2e8de84aa2eda9152d79e3ef5be4e3b338c..e2bb2729920dd714c4d6b1d5cfe7766d
  use codex_core::ThreadManager;
  use codex_core::config::Config;
  use codex_core::config::ThreadStoreConfig;
-@@ -152,6 +154,7 @@ pub(crate) struct MessageProcessor {
+@@ -155,6 +157,7 @@ pub(crate) struct MessageProcessor {
      project_processor: ProjectRequestProcessor,
      remote_control_processor: RemoteControlRequestProcessor,
      search_processor: SearchRequestProcessor,
@@ -19,7 +19,7 @@ index 4c7ca2e8de84aa2eda9152d79e3ef5be4e3b338c..e2bb2729920dd714c4d6b1d5cfe7766d
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -498,6 +501,24 @@ impl MessageProcessor {
+@@ -504,6 +507,24 @@ impl MessageProcessor {
              turn_cost_worker.as_ref().map(TurnCostWorker::handle),
              config_warnings,
          );
@@ -44,7 +44,7 @@ index 4c7ca2e8de84aa2eda9152d79e3ef5be4e3b338c..e2bb2729920dd714c4d6b1d5cfe7766d
          let turn_processor = TurnRequestProcessor::new(
              auth_manager,
              Arc::clone(&thread_manager),
-@@ -571,6 +592,7 @@ impl MessageProcessor {
+@@ -577,6 +598,7 @@ impl MessageProcessor {
              project_processor,
              remote_control_processor,
              search_processor,
@@ -52,7 +52,7 @@ index 4c7ca2e8de84aa2eda9152d79e3ef5be4e3b338c..e2bb2729920dd714c4d6b1d5cfe7766d
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -585,6 +607,9 @@ impl MessageProcessor {
+@@ -591,6 +613,9 @@ impl MessageProcessor {
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
          self.skills_watcher.shutdown();
@@ -63,10 +63,10 @@ index 4c7ca2e8de84aa2eda9152d79e3ef5be4e3b338c..e2bb2729920dd714c4d6b1d5cfe7766d
  
      pub(crate) async fn process_request(
 diff --git a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
-index c777f9403b90b1f0faf25a6fd782074f57b7214d..d9c18c4bc847d743d97728fa7d52bd0bf48683e5 100644
+index 7060ec4f3254fb4508ae732385e2939e69324912..6661a1c55cbec4c0d294115419b43ad589929966 100644
 --- a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
-@@ -375,6 +375,10 @@ pub(super) async fn ensure_listener_task_running(
+@@ -402,6 +402,10 @@ pub(super) async fn ensure_listener_task_running(
                          unloading_state.note_thread_activity_observed();
                          continue;
                      }
@@ -77,7 +77,7 @@ index c777f9403b90b1f0faf25a6fd782074f57b7214d..d9c18c4bc847d743d97728fa7d52bd0b
                      {
                          let mut pending_thread_unloads = pending_thread_unloads.lock().await;
                          if pending_thread_unloads.contains(&conversation_id) {
-@@ -409,6 +413,10 @@ pub(super) async fn ensure_listener_task_running(
+@@ -436,6 +440,10 @@ pub(super) async fn ensure_listener_task_running(
      Ok(())
  }
  
@@ -89,10 +89,10 @@ index c777f9403b90b1f0faf25a6fd782074f57b7214d..d9c18c4bc847d743d97728fa7d52bd0b
      match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_and_wait()).await {
          Ok(Ok(())) => ThreadShutdownResult::Complete,
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index afea864aff81b8096aa9622e8820d36f1a885b40..999a6f64e6f72b936dd49de8eb088490d112b1e9 100644
+index 0803fb1445ef0dad635a8199623657125a84d355..9b87376c03ebb68b71d838d5710d1e5069165638 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -262,6 +262,15 @@ fn has_model_resume_override(
+@@ -267,6 +267,15 @@ fn has_model_resume_override(
              .is_some_and(|overrides| overrides.contains_key("model_reasoning_effort"))
  }
  
@@ -108,7 +108,7 @@ index afea864aff81b8096aa9622e8820d36f1a885b40..999a6f64e6f72b936dd49de8eb088490
  fn has_permission_override(
      request_overrides: Option<&HashMap<String, serde_json::Value>>,
      typesafe_overrides: &ConfigOverrides,
-@@ -3656,12 +3665,8 @@ impl ThreadRequestProcessor {
+@@ -3782,12 +3791,8 @@ impl ThreadRequestProcessor {
                  return Ok(());
              }
          };
@@ -123,7 +123,7 @@ index afea864aff81b8096aa9622e8820d36f1a885b40..999a6f64e6f72b936dd49de8eb088490
          }
  
          let response_history = thread_history.clone();
-@@ -5966,6 +5971,8 @@ fn build_thread_from_loaded_snapshot(
+@@ -6129,6 +6134,8 @@ fn build_thread_from_loaded_snapshot(
      )
  }
  
@@ -500,10 +500,10 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..18428ba72c632a9a887ff285a86525e5
 +        .collect()
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index ba8da1a3e36a960b8759d73bf8751a50ba95b636..ee46925b913ca84a35c04d53f18569758f5ad317 100644
+index b1a851ac73d38bb33084248f9be3ca3f880d88e4..1887858916b6ff814a1fac556906e42c73c12ac2 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -246,6 +246,21 @@ impl CodexThread {
+@@ -332,6 +332,21 @@ impl CodexThread {
          crate::saffron::goal_supervisor::stop(&self.session).await;
      }
  
@@ -526,10 +526,10 @@ index ba8da1a3e36a960b8759d73bf8751a50ba95b636..ee46925b913ca84a35c04d53f1856975
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index f482d8a4e0641e37f728c9375f8bfbc711db7e55..4c0083cb414d27b78c17e721bfe47cd0958ab243 100644
+index 59dae95010867d2aa1bd2ec729cc1dbc1a008e08..325d48981aa77dbf5c70c6581d7cd2a920259c5b 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -113,6 +113,9 @@ pub use codex_prompts as review_prompts;
+@@ -118,6 +118,9 @@ pub use codex_prompts as review_prompts;
  mod thread_manager;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
@@ -540,10 +540,10 @@ index f482d8a4e0641e37f728c9375f8bfbc711db7e55..4c0083cb414d27b78c17e721bfe47cd0
  pub use thread_manager::NewThread;
  pub use thread_manager::StartThreadOptions;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-index 91676676b2f482aea3078ec4263b3f2418af81e1..8de0f6eb72d4999cc6dd46077b4ffddea89f39db 100644
+index 62d35ee5fa3352760eaf20532abb50f8f5bfa262..f0e4a56dcad6e394f97b1a92564eabd9bebdf5c9 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-@@ -104,7 +104,8 @@ pub(super) async fn snooze(
+@@ -103,7 +103,8 @@ pub(super) async fn snooze(
                  runtime::clear_failed_action(parent, helper_id, &action).await;
                  return Err(error);
              }
@@ -568,20 +568,10 @@ index 03b084d2717c7292a3d921a4b8a7dd8c05b1ceb3..75b59881c56168631215b17a7afd3ca0
  pub(crate) use runtime::stop;
  pub(crate) use tools::register;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 1d484bf2dcc557bb9d1b9c6d054621b877aa3488..477752752ed618a8f05d6b6e4fd8cf2fb5ce1541 100644
+index 4ea68723c6495950e90c63e1ab7c62107aafc82c..8b7bfbe9cb684ba4e7e01351dbda9cf7bda0baa3 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-@@ -6,7 +6,8 @@ use std::sync::atomic::AtomicU64;
- use std::sync::atomic::Ordering;
- use std::time::Duration;
- 
--use chrono::{DateTime, Utc};
-+use chrono::DateTime;
-+use chrono::Utc;
- use codex_extension_api::ThreadIdleCause;
- use codex_protocol::AgentPath;
- use codex_protocol::ThreadId;
-@@ -42,6 +43,15 @@ pub(super) struct Runtime {
+@@ -43,6 +43,15 @@ pub(super) struct Runtime {
      wake_generation: AtomicU64,
  }
  
@@ -597,7 +587,7 @@ index 1d484bf2dcc557bb9d1b9c6d054621b877aa3488..477752752ed618a8f05d6b6e4fd8cf2f
  #[derive(Default)]
  struct State {
      goal_id: Option<String>,
-@@ -51,6 +61,26 @@ struct State {
+@@ -52,6 +61,26 @@ struct State {
      previous_action: Option<Action>,
  }
  
@@ -624,7 +614,7 @@ index 1d484bf2dcc557bb9d1b9c6d054621b877aa3488..477752752ed618a8f05d6b6e4fd8cf2f
  struct ActiveHelper {
      thread_id: ThreadId,
      goal_revision: codex_state::ThreadGoalRevision,
-@@ -70,6 +100,13 @@ enum GoalEditState {
+@@ -71,6 +100,13 @@ enum GoalEditState {
  pub(super) struct Snooze {
      wake: GoalWake,
      pub(super) deadline: Instant,
@@ -638,7 +628,7 @@ index 1d484bf2dcc557bb9d1b9c6d054621b877aa3488..477752752ed618a8f05d6b6e4fd8cf2f
  }
  
  impl Snooze {
-@@ -84,8 +121,19 @@ impl Snooze {
+@@ -85,8 +121,19 @@ impl Snooze {
                  wake_at_ms: Utc::now().timestamp_millis().saturating_add(delay_millis),
              },
              deadline: Instant::now() + delay,
@@ -658,7 +648,7 @@ index 1d484bf2dcc557bb9d1b9c6d054621b877aa3488..477752752ed618a8f05d6b6e4fd8cf2f
  }
  
  #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
-@@ -180,6 +228,12 @@ pub(crate) async fn start_checkin(
+@@ -181,6 +228,12 @@ pub(crate) async fn start_checkin(
          }
      }
  
@@ -671,7 +661,7 @@ index 1d484bf2dcc557bb9d1b9c6d054621b877aa3488..477752752ed618a8f05d6b6e4fd8cf2f
      match spawn_helper(parent, goal).await {
          Ok(helper_id) => {
              runtime.state.lock().await.active = Some(ActiveHelper {
-@@ -413,6 +467,19 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
+@@ -414,6 +467,19 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
          .get_or_init(Runtime::default)
  }
  
@@ -691,7 +681,7 @@ index 1d484bf2dcc557bb9d1b9c6d054621b877aa3488..477752752ed618a8f05d6b6e4fd8cf2f
  async fn spawn_helper(
      parent: &Arc<Session>,
      goal: &codex_state::ThreadGoal,
-@@ -654,6 +721,46 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -656,6 +722,46 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
      });
  }
  

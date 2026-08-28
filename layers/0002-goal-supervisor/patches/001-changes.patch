@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index 5f9eaeff4c0b484cbc956603358cfbd99502543a..9cc6d056deb7fccbe55dd75cc8fbe80b9bd55ab1 100644
+index 7ea4813a713c6ee02d229386cd58136a161b6831..57e4f35250d135acad356f49f20529e1ca1b0e5c 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
-@@ -83,6 +83,7 @@ mod residency;
+@@ -85,6 +85,7 @@ mod residency;
  mod review;
  mod rollout_migration;
  mod safety_check_downgrade;
@@ -11,7 +11,7 @@ index 5f9eaeff4c0b484cbc956603358cfbd99502543a..9cc6d056deb7fccbe55dd75cc8fbe80b
  mod selected_capability_stack;
  mod selected_environment;
 diff --git a/codex-rs/core/src/agent/control.rs b/codex-rs/core/src/agent/control.rs
-index f32efca6160caee11f63f6eb47b998fd006c1bcf..f454c910c8e3d64a548a9dac7596fb0d5b85c9dc 100644
+index afba0247a0ebe364464b3ed765ed523509e062fa..ffdbaced393a1d4989dd06990de5b4257bed8b8e 100644
 --- a/codex-rs/core/src/agent/control.rs
 +++ b/codex-rs/core/src/agent/control.rs
 @@ -4,6 +4,7 @@ use crate::TurnStartOptions;
@@ -22,7 +22,7 @@ index f32efca6160caee11f63f6eb47b998fd006c1bcf..f454c910c8e3d64a548a9dac7596fb0d
  use crate::agent::role::DEFAULT_ROLE_NAME;
  use crate::agent::role::resolve_role_config;
  use crate::agent::status::is_final;
-@@ -438,6 +439,19 @@ impl AgentControl {
+@@ -437,6 +438,19 @@ impl AgentControl {
          Some(thread.config_snapshot().await)
      }
  
@@ -42,7 +42,7 @@ index f32efca6160caee11f63f6eb47b998fd006c1bcf..f454c910c8e3d64a548a9dac7596fb0d
      pub(crate) async fn resolve_agent_reference(
          &self,
          _current_thread_id: ThreadId,
-@@ -682,6 +696,7 @@ impl AgentControl {
+@@ -680,6 +694,7 @@ impl AgentControl {
              agent_path,
              agent_nickname,
              agent_role,
@@ -50,7 +50,7 @@ index f32efca6160caee11f63f6eb47b998fd006c1bcf..f454c910c8e3d64a548a9dac7596fb0d
          })
      }
  
-@@ -694,18 +709,32 @@ impl AgentControl {
+@@ -692,18 +707,32 @@ impl AgentControl {
          depth: i32,
          agent_path: Option<AgentPath>,
          agent_role: Option<String>,
@@ -203,10 +203,10 @@ index 8ad8ddcf9f1820352331bbc1a81df9d06f59887d..cc645546370495ed62bbdd7623e45ca9
 +    );
 +}
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace372455f4ba 100644
+index 24a9e2692c41757ee3c1fa1789686d3bb4e3d3e8..53ed70673869ac1b30b644cbcec705699cf155a6 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
-@@ -234,6 +234,7 @@ impl AgentControl {
+@@ -235,6 +235,7 @@ impl AgentControl {
              SpawnInitialInput::UserInput(initial_input),
              session_source,
              SpawnAgentOptions::default(),
@@ -214,7 +214,7 @@ index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace37
          ))
          .await?;
          Ok(spawned_agent.thread_id)
-@@ -252,6 +253,28 @@ impl AgentControl {
+@@ -253,6 +254,28 @@ impl AgentControl {
              SpawnInitialInput::UserInput(initial_input),
              session_source,
              options,
@@ -243,7 +243,7 @@ index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace37
          ))
          .await
      }
-@@ -269,6 +292,7 @@ impl AgentControl {
+@@ -270,6 +293,7 @@ impl AgentControl {
              SpawnInitialInput::InterAgentCommunication(communication, context),
              session_source,
              options,
@@ -251,7 +251,7 @@ index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace37
          ))
          .await
      }
-@@ -585,8 +609,10 @@ impl AgentControl {
+@@ -586,8 +610,10 @@ impl AgentControl {
          initial_input: SpawnInitialInput,
          session_source: Option<SessionSource>,
          options: SpawnAgentOptions,
@@ -262,7 +262,7 @@ index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace37
          let multi_agent_version = state
              .effective_multi_agent_version_for_spawn(
                  &InitialHistory::New,
-@@ -596,11 +622,12 @@ impl AgentControl {
+@@ -597,11 +623,12 @@ impl AgentControl {
                  &config,
              )
              .await;
@@ -277,7 +277,7 @@ index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace37
              && session_source
                  .as_ref()
                  .is_some_and(is_v2_resident_session_source);
-@@ -617,7 +644,11 @@ impl AgentControl {
+@@ -618,7 +645,11 @@ impl AgentControl {
          } else {
              agent_max_threads
          };
@@ -290,7 +290,7 @@ index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace37
          let inheritance = SpawnAgentThreadInheritance {
              environments: self
                  .inherited_environments_for_source(&state, session_source.as_ref())
-@@ -641,6 +672,7 @@ impl AgentControl {
+@@ -642,6 +673,7 @@ impl AgentControl {
                      depth,
                      agent_path,
                      agent_role,
@@ -298,7 +298,7 @@ index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace37
                      /*preferred_agent_nickname*/ None,
                  )?;
                  (Some(session_source), agent_metadata)
-@@ -697,11 +729,12 @@ impl AgentControl {
+@@ -698,11 +730,12 @@ impl AgentControl {
              residency_slot.commit(new_thread.thread_id);
          }
  
@@ -316,7 +316,7 @@ index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace37
          {
              let client_metadata = match state.get_thread(*parent_thread_id).await {
                  Ok(parent_thread) => parent_thread.session.app_server_client_metadata().await,
-@@ -733,14 +766,15 @@ impl AgentControl {
+@@ -734,14 +767,15 @@ impl AgentControl {
          // Notify a new thread has been created. This notification will be processed by clients
          // to subscribe or drain this newly created thread.
          // TODO(jif) add helper for drain
@@ -338,9 +338,9 @@ index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace37
 +            .await;
 +        }
  
-         match initial_input {
-             SpawnInitialInput::UserInput(input) => {
-@@ -764,7 +798,7 @@ impl AgentControl {
+         let start_options = TurnStartOptions {
+             parent_turn_id: options.parent_turn_id,
+@@ -765,7 +799,7 @@ impl AgentControl {
                  .await?;
              }
          }
@@ -349,7 +349,7 @@ index 3a9e2533bb0a2682c7aa687187cd1b462675b001..a8e968b85ee97f2274009e26f50ace37
              let child_reference = agent_metadata
                  .agent_path
                  .as_ref()
-@@ -1197,6 +1231,7 @@ impl AgentControl {
+@@ -1201,6 +1235,7 @@ impl AgentControl {
                  depth,
                  agent_path.or(resumed_agent_path),
                  resumed_agent_role,
@@ -546,10 +546,10 @@ index 24d204ee56b0ecc2a47077d5b83d86d85a189e95..5795d21650c652f9918c7a6fe4e3da12
  fn replacing_agent_metadata_updates_thread_identity_index() {
      let registry = AgentRegistry::default();
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index a84a4f188879341154cfe256872209e11d9a6137..4861074a23c7567524e3eb75b3c64f2a805b7991 100644
+index 3527df18d5dc3f614bd6413b942cf506f2da0a97..af4739e5b51ce517d7aeda8d0c60ac93b1395125 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -306,6 +306,23 @@ impl CodexThread {
+@@ -316,6 +316,23 @@ impl CodexThread {
          self.session.emit_thread_idle_lifecycle_if_idle(cause).await;
      }
  
@@ -583,10 +583,10 @@ index 893a01ce5ad0bb1789d7b27ce5baad5f8a7a01e8..efe282cc73938c574f582581c9695875
  pub(crate) mod await_exec;
 +pub(crate) mod goal_supervisor;
 diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
-index 5389c652bfd69c089fbc4943bfa7825fe5baf62f..f82264167aaefb42e1953025971e180e099b8ae9 100644
+index cc3681d42098956c61866dfa24e1d43f5b5768e1..516f3b84ac8a563ef52ea0800209e40a8c7057b1 100644
 --- a/codex-rs/core/src/session/turn_context.rs
 +++ b/codex-rs/core/src/session/turn_context.rs
-@@ -617,6 +617,22 @@ impl Session {
+@@ -704,6 +704,22 @@ impl Session {
          config
      }
  
@@ -610,10 +610,10 @@ index 5389c652bfd69c089fbc4943bfa7825fe5baf62f..f82264167aaefb42e1953025971e180e
      #[instrument(name = "turn_context.make", level = "trace", skip_all)]
      pub(crate) fn make_turn_context(
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index f8fae7e986e353308faedbaf331b529ac47cce67..0b2a8626c92a5b7544e0000dc88e5469595b06b1 100644
+index 24bbae05a8c51ed493c1a5746e3c12a9722ab33c..db23f304fe22b1b17a928c51623dc6a36ace9ebd 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -360,6 +360,7 @@ impl Session {
+@@ -335,6 +335,7 @@ impl Session {
          let agent_execution_guard = self.services.agent_control.execution_guard(
              turn_context.multi_agent_version,
              &turn_context.session_source,
@@ -622,10 +622,10 @@ index f8fae7e986e353308faedbaf331b529ac47cce67..0b2a8626c92a5b7544e0000dc88e5469
          let done_clone = Arc::clone(&done);
          let session = Arc::clone(self);
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 7803f0909028d06d6ace91c14f455e37d439b264..9d09fa14aa743724768ba847ea5a088f37ca588d 100644
+index f5ac9782a29dfa2b34aa3ebb5183b12932108db5..19c70a34d8d6abfcaa91eb350532e9cbd56d16e5 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
-@@ -141,6 +141,14 @@ pub(crate) fn build_tool_router(
+@@ -148,6 +148,14 @@ pub(crate) fn build_tool_router(
      };
      let mut registry = ToolRegistry::default();
      add_core_tool_sources(&context, &mut registry);
@@ -639,12 +639,12 @@ index 7803f0909028d06d6ace91c14f455e37d439b264..9d09fa14aa743724768ba847ea5a088f
 +    }
  
      let hosted_specs = if crate::guardian::is_basic_session_source(&turn_context.session_source) {
-         Vec::new()
+         if let Some(history_tools) = session
 diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
-index 28cc32712700ef0de5506eb8c05ecc45e776cfe1..2a0860b080a0834d377a6c33b46e73b324f6df6f 100644
+index d9f0f0df24b3de00666f8956420008841f7f0466..e741b4117047edbf3d242493d4b6c3502d3ed9ee 100644
 --- a/codex-rs/ext/goal/src/runtime.rs
 +++ b/codex-rs/ext/goal/src/runtime.rs
-@@ -397,13 +397,23 @@ impl GoalRuntimeHandle {
+@@ -405,13 +405,23 @@ impl GoalRuntimeHandle {
              .map_err(|err| err.to_string())?
          else {
              self.inner.accounting_state.clear_active_goal();
@@ -668,4 +668,4 @@ index 28cc32712700ef0de5506eb8c05ecc45e776cfe1..2a0860b080a0834d377a6c33b46e73b3
 +        let item = continuation_steering_item(&goal);
  
          match thread
-             .start_turn_if_idle(TurnInputRequest::new(TurnInput::ResponseItem(item)))
+             .start_turn_if_idle(

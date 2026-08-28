@@ -1,5 +1,5 @@
 diff --git a/codex-rs/model-provider-info/src/lib.rs b/codex-rs/model-provider-info/src/lib.rs
-index f631e7c6f180d049d0b79a241d34493121a5fbe1..1fa2b75cf0c56af7d3810c40101762950da1c49d 100644
+index 65e2e4cbf75a53d62d4a681cdbd9ac32d47403a6..51646842bd47a01c118e4663dad2a91b76804246 100644
 --- a/codex-rs/model-provider-info/src/lib.rs
 +++ b/codex-rs/model-provider-info/src/lib.rs
 @@ -58,6 +58,18 @@ const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer su
@@ -38,7 +38,7 @@ index f631e7c6f180d049d0b79a241d34493121a5fbe1..1fa2b75cf0c56af7d3810c4010176295
              env_http_headers: Some(
                  [
 diff --git a/codex-rs/model-provider-info/src/model_provider_info_tests.rs b/codex-rs/model-provider-info/src/model_provider_info_tests.rs
-index c70d59b39ae91830ad67e487ff622a4bbcf2891a..0e655cf377e3954b623930004776987aa6942ccd 100644
+index d08af0ffb54c266d81465cd056944e2085889b97..1c4b91e7669fc0890e944cec9cea349f2e5a279b 100644
 --- a/codex-rs/model-provider-info/src/model_provider_info_tests.rs
 +++ b/codex-rs/model-provider-info/src/model_provider_info_tests.rs
 @@ -154,6 +154,32 @@ fn test_header_auth_uses_chatgpt_codex_base_url() {
@@ -72,5 +72,5 @@ index c70d59b39ae91830ad67e487ff622a4bbcf2891a..0e655cf377e3954b623930004776987a
 +}
 +
  #[test]
- fn test_uses_openai_actor_authorization() {
-     let mut provider = ModelProviderInfo {
+ fn codex_backend_routes_require_codex_base_url() {
+     for (base_url, expected) in [

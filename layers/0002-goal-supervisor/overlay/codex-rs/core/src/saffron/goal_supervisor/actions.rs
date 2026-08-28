@@ -17,6 +17,7 @@ use tokio::time::Instant;
 use super::runtime;
 use super::runtime::Action;
 use super::runtime::Snooze;
+use crate::TurnStartOptions;
 use crate::agent_communication::AgentCommunicationContext;
 use crate::agent_communication::AgentCommunicationKind;
 use crate::session::session::Session;
@@ -81,8 +82,7 @@ async fn deliver_parent_message(
             parent.thread_id,
             communication,
             context,
-            /*parent_turn_id*/ None,
-            /*root_turn_id*/ None,
+            TurnStartOptions::default(),
         )
         .await
         .map(|_| ())

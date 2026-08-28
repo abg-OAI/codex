@@ -36,6 +36,8 @@ async fn manager_with_live_process() -> (UnifiedExecProcessManager, Arc<UnifiedE
             initial_exec_command_active: Arc::new(AtomicBool::new(false)),
             hook_command: "sleep 60".to_string(),
             tty: false,
+            environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+            escalated: false,
             network_approval: None,
             session: Weak::new(),
             last_used: Instant::now(),
