@@ -4,6 +4,7 @@ use crate::TurnStartOptions;
 use crate::agent::AgentStatus;
 use crate::agent::registry::AgentMetadata;
 use crate::agent::registry::AgentRegistry;
+use crate::agent::registry::AgentVisibility;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::resolve_role_config;
 use crate::agent::status::is_final;
@@ -437,6 +438,19 @@ impl AgentControl {
         Some(thread.config_snapshot().await)
     }
 
+    /// Returns a live thread for internal coordinators that already hold its ID.
+    pub(crate) async fn get_live_thread(
+        &self,
+        thread_id: ThreadId,
+    ) -> CodexResult<Arc<crate::CodexThread>> {
+        self.upgrade()?.get_thread(thread_id).await
+    }
+
+    /// Returns whether `thread_id` was spawned through the hidden-helper seam.
+    pub(crate) fn is_hidden_agent(&self, thread_id: ThreadId) -> bool {
+        self.state.is_hidden_thread(thread_id)
+    }
+
     pub(crate) async fn resolve_agent_reference(
         &self,
         _current_thread_id: ThreadId,
@@ -680,6 +694,7 @@ impl AgentControl {
             agent_path,
             agent_nickname,
             agent_role,
+            visibility: AgentVisibility::Listed,
         })
     }
 
@@ -692,18 +707,32 @@ impl AgentControl {
         depth: i32,
         agent_path: Option<AgentPath>,
         agent_role: Option<String>,
+        visibility: AgentVisibility,
         preferred_agent_nickname: Option<String>,
     ) -> CodexResult<(SessionSource, AgentMetadata)> {
         if depth == 1 {
             self.state.register_root_thread(parent_thread_id);
         }
-        let agent_metadata = self.prepare_agent_metadata(
-            reservation,
-            config,
-            agent_path,
-            agent_role,
-            preferred_agent_nickname,
-        )?;
+        let agent_metadata = match visibility {
+            AgentVisibility::Listed => self.prepare_agent_metadata(
+                reservation,
+                config,
+                agent_path,
+                agent_role,
+                preferred_agent_nickname,
+            )?,
+            AgentVisibility::Hidden => {
+                if let Some(agent_path) = agent_path.as_ref() {
+                    reservation.reserve_agent_path(agent_path)?;
+                }
+                AgentMetadata {
+                    agent_path,
+                    agent_role,
+                    visibility,
+                    ..Default::default()
+                }
+            }
+        };
         let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
             parent_thread_id,
             depth,
