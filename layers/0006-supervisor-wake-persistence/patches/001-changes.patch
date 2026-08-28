@@ -1,20 +1,39 @@
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-index 9521618d50ad044ec6c655918fb7dde061a60c57..91676676b2f482aea3078ec4263b3f2418af81e1 100644
+index ffbe7a2da37648d4f5bd4883d9a3b885bb6dc9ab..62d35ee5fa3352760eaf20532abb50f8f5bfa262 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-@@ -11,11 +11,9 @@ use codex_protocol::protocol::InterAgentCommunication;
+@@ -3,6 +3,13 @@
+ use std::sync::Arc;
+ use std::time::Duration;
+ 
++use super::runtime;
++use super::runtime::Action;
++use crate::TurnStartOptions;
++use crate::agent_communication::AgentCommunicationContext;
++use crate::agent_communication::AgentCommunicationKind;
++use crate::saffron::goal_edit::protocol_goal;
++use crate::session::session::Session;
+ use codex_protocol::AgentPath;
+ use codex_protocol::ThreadId;
+ use codex_protocol::protocol::Event;
+@@ -11,16 +18,6 @@ use codex_protocol::protocol::InterAgentCommunication;
  use codex_protocol::protocol::Op;
  use codex_protocol::protocol::ThreadGoal;
  use codex_protocol::protocol::ThreadGoalUpdatedEvent;
 -use tokio::time::Instant;
- 
- use super::runtime;
- use super::runtime::Action;
+-
+-use super::runtime;
+-use super::runtime::Action;
 -use super::runtime::Snooze;
- use crate::agent_communication::AgentCommunicationContext;
- use crate::agent_communication::AgentCommunicationKind;
- use crate::saffron::goal_edit::protocol_goal;
-@@ -97,11 +95,20 @@ pub(super) async fn snooze(
+-use crate::TurnStartOptions;
+-use crate::agent_communication::AgentCommunicationContext;
+-use crate::agent_communication::AgentCommunicationKind;
+-use crate::saffron::goal_edit::protocol_goal;
+-use crate::session::session::Session;
+ 
+ pub(super) async fn followup(
+     helper: &Arc<Session>,
+@@ -97,11 +94,20 @@ pub(super) async fn snooze(
      let action = Action::Snooze { delay_seconds };
      let goal_id = runtime::select_action(parent, helper_id, action.clone()).await?;
      let supervisor_runtime = runtime::runtime(parent);
@@ -40,7 +59,7 @@ index 9521618d50ad044ec6c655918fb7dde061a60c57..91676676b2f482aea3078ec4263b3f24
      runtime::schedule_wake(parent, &supervisor_runtime, snooze);
      runtime::commit_action(parent, action).await;
      Ok(())
-@@ -153,7 +160,7 @@ pub(super) async fn complete(
+@@ -153,7 +159,7 @@ pub(super) async fn complete(
                  objective: None,
                  status: Some(codex_state::ThreadGoalStatus::Complete),
                  token_budget: None,
@@ -49,7 +68,7 @@ index 9521618d50ad044ec6c655918fb7dde061a60c57..91676676b2f482aea3078ec4263b3f24
              },
          )
          .await
-@@ -168,6 +175,12 @@ pub(super) async fn complete(
+@@ -168,6 +174,12 @@ pub(super) async fn complete(
              return Err(error);
          }
      };
@@ -80,20 +99,10 @@ index 5559c1b874c5f03559912cbe53828203bf474010..03b084d2717c7292a3d921a4b8a7dd8c
  mod actions;
  mod identity;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index d5c40fdb5f596110342ee76f35bc778b2bb71f7f..1d484bf2dcc557bb9d1b9c6d054621b877aa3488 100644
+index 71009a3785571f6320ad265d9f7f4c69a49c6e77..4ea68723c6495950e90c63e1ab7c62107aafc82c 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-@@ -6,8 +6,7 @@ use std::sync::atomic::AtomicU64;
- use std::sync::atomic::Ordering;
- use std::time::Duration;
- 
--use chrono::DateTime;
--use chrono::Utc;
-+use chrono::{DateTime, Utc};
- use codex_extension_api::ThreadIdleCause;
- use codex_protocol::AgentPath;
- use codex_protocol::ThreadId;
-@@ -28,6 +27,8 @@ use super::HELPER_ROLE_NAME;
+@@ -28,6 +28,8 @@ use super::HELPER_ROLE_NAME;
  use crate::agent::control::SpawnAgentForkMode;
  use crate::agent::control::SpawnAgentOptions;
  use crate::agent::next_thread_spawn_depth;
@@ -102,7 +111,7 @@ index d5c40fdb5f596110342ee76f35bc778b2bb71f7f..1d484bf2dcc557bb9d1b9c6d054621b8
  use crate::session::session::Session;
  
  const INITIAL_FAILURE_RETRY: Duration = Duration::from_secs(60);
-@@ -67,10 +68,26 @@ enum GoalEditState {
+@@ -67,10 +69,26 @@ enum GoalEditState {
  
  #[derive(Clone)]
  pub(super) struct Snooze {
@@ -130,7 +139,7 @@ index d5c40fdb5f596110342ee76f35bc778b2bb71f7f..1d484bf2dcc557bb9d1b9c6d054621b8
  #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
  #[serde(rename_all = "snake_case")]
  pub(super) enum Action {
-@@ -149,14 +166,18 @@ pub(crate) async fn start_checkin(
+@@ -149,14 +167,18 @@ pub(crate) async fn start_checkin(
              state.previous_action = None;
          }
          if let Some(snooze) = state.snooze.as_ref()
@@ -151,7 +160,7 @@ index d5c40fdb5f596110342ee76f35bc778b2bb71f7f..1d484bf2dcc557bb9d1b9c6d054621b8
      }
  
      match spawn_helper(parent, goal).await {
-@@ -330,8 +351,59 @@ pub(super) async fn clear_failed_action(parent: &Session, helper_id: ThreadId, a
+@@ -330,8 +352,59 @@ pub(super) async fn clear_failed_action(parent: &Session, helper_id: ThreadId, a
      }
  }
  
@@ -212,7 +221,7 @@ index d5c40fdb5f596110342ee76f35bc778b2bb71f7f..1d484bf2dcc557bb9d1b9c6d054621b8
  }
  
  pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
-@@ -512,12 +584,22 @@ async fn defer_failure(
+@@ -513,12 +586,22 @@ async fn defer_failure(
              }),
          })
          .await;
@@ -241,7 +250,7 @@ index d5c40fdb5f596110342ee76f35bc778b2bb71f7f..1d484bf2dcc557bb9d1b9c6d054621b8
  }
  
  fn failure_retry_delay(consecutive_failures: u32) -> Duration {
-@@ -544,7 +626,7 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -545,7 +628,7 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
              if state
                  .snooze
                  .as_ref()
@@ -250,7 +259,7 @@ index d5c40fdb5f596110342ee76f35bc778b2bb71f7f..1d484bf2dcc557bb9d1b9c6d054621b8
              {
                  state.snooze = None;
                  true
-@@ -553,6 +635,18 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -554,6 +637,18 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
              }
          };
          if should_wake {

@@ -162,7 +162,10 @@ impl ToolExecutor<ToolInvocation> for Handler {
         true
     }
 
-    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
+    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
+    where
+        ToolInvocation: 'a,
+    {
         Box::pin(async move {
             let ToolInvocation {
                 session,
@@ -192,7 +195,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
                         .timeout_ms
                         .map(|timeout_ms| Duration::from_millis(u64::from(timeout_ms))),
                     max_output_tokens: args.max_output_tokens,
-                    truncation_policy: turn.model_info.truncation_policy.into(),
+                    truncation_policy: turn.model_info().truncation_policy.into(),
                 })
                 .await
                 .map_err(|err| {

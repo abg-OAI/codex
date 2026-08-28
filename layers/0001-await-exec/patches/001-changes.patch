@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index f7c636a5b8b34522f6d887f1d22327bb497bf7fa..3f876f53c2739db71dc97bb36639df4e00c838ca 100644
+index 8463ae9e16e997cebd910419f7cf8052b6b97f84..59dae95010867d2aa1bd2ec729cc1dbc1a008e08 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -105,6 +105,7 @@ mod session_startup_prewarm;
+@@ -106,6 +106,7 @@ mod session_startup_prewarm;
  mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
@@ -28,7 +28,7 @@ index f6a5bfa5423af952bca4b1f8788fd25760882ad7..a7aebef21875d115445aa949d53fc9c9
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index b317ca2c02a28c9d9c85bb81f26f6c07303b1670..7803f0909028d06d6ace91c14f455e37d439b264 100644
+index 24e15e8be58cef57b2bbe7c2948ebf2a3f5b7cbe..f5ac9782a29dfa2b34aa3ebb5183b12932108db5 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -39,7 +39,7 @@ index b317ca2c02a28c9d9c85bb81f26f6c07303b1670..7803f0909028d06d6ace91c14f455e37
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -995,6 +996,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1081,6 +1082,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
          ),
      }));
      registry.add(WriteStdinHandler);
@@ -48,7 +48,7 @@ index b317ca2c02a28c9d9c85bb81f26f6c07303b1670..7803f0909028d06d6ace91c14f455e37
  
  fn unified_exec_should_include_shell_parameter(
 diff --git a/codex-rs/core/src/unified_exec/mod.rs b/codex-rs/core/src/unified_exec/mod.rs
-index 3762b7f437b275bf558c5bcc47b994d928fd6b0f..738b23ff5e6744dcada04408e2e4d3995cbf86bd 100644
+index 4f50e2dc4adfd345c80df92fff049de836ba96af..455b3522fb8f8395ab183146be4d085a714b8621 100644
 --- a/codex-rs/core/src/unified_exec/mod.rs
 +++ b/codex-rs/core/src/unified_exec/mod.rs
 @@ -64,6 +64,8 @@ pub(crate) use process::NoopSpawnLifecycle;
@@ -91,10 +91,10 @@ index 3793927eb4f64e9df2c35a4c313304ff42226c33..6e1d550b25be2fe8ea2630af4c7e1309
          let state = self.state_rx.borrow().clone();
          match &self.process_handle {
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 181551409d2d511a3ff8f027048200beb27606ec..0301b1124de00c0bdeed4919822a650600e9e159 100644
+index 5c34c69f36392afa34d23a4c4c620e5639e4db47..559eb9a6f497f76fd0ae411d76933565bad79f5c 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
-@@ -98,6 +98,11 @@ const NETWORK_ACCESS_DENIED_MESSAGE: &str =
+@@ -102,6 +102,11 @@ const NETWORK_ACCESS_DENIED_MESSAGE: &str =
  const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
  const INTERRUPT: &str = "\u{3}";
  
@@ -107,14 +107,14 @@ index 181551409d2d511a3ff8f027048200beb27606ec..0301b1124de00c0bdeed4919822a6506
  ///
  /// In production builds this value should remain at its default (`false`) and
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index 47c1b598cfceab1f889d9d87ff8363b17ab448f1..55e7d76bb97d6f6b4e2e0b3b883a41a281d7b809 100644
+index 28cb2c6b469428641e073905e4efdaff8ea335ea..c84b9762025490105f4176ddf3ba0295484b0b3d 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -143,6 +143,7 @@ mod rollout_budget;
+@@ -146,6 +146,7 @@ mod rollout_budget;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;
 +mod saffrodex_await_exec;
  mod search_tool;
  mod send_user_message_async;
- mod shell_snapshot;
+ mod settings_commits;
