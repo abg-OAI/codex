@@ -54,7 +54,7 @@ struct AwaitExecArgs {
     #[serde(default)]
     return_on: ReturnOn,
 
-    /// Positive wall-clock limit for this wait, in milliseconds.
+    /// Optional independent deadline for this wait, in milliseconds.
     #[serde(default)]
     timeout_ms: Option<u32>,
 
@@ -251,7 +251,7 @@ fn create_tool_spec() -> ToolSpec {
         (
             "timeout_ms".to_string(),
             JsonSchema::integer(Some(
-                "Positive maximum time to wait for same-session access and the selected process event, in milliseconds (up to 4294967295). Required lifecycle cleanup may finish afterward. Omit it to wait until the selected event. A timeout does not terminate the process."
+                "Independent wait deadline in milliseconds (up to 4294967295). Omit unless the agent must resume without output or exit. A timeout does not terminate the process; required cleanup may finish afterward."
                     .to_string(),
             )),
         ),
@@ -271,18 +271,16 @@ fn create_tool_spec() -> ToolSpec {
         tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
             name: TOOL_NAME.to_string(),
             description: concat!(
-                "Sleep without polling while a command started by exec_command is still running. ",
-                "Call exec_command first and pass its session_id here. ",
-                "By default, this call resumes for output already buffered, newly printed output, ",
-                "or exit; use return_on=exit to retain intermediate output and remain asleep until exit. ",
-                "timeout_ms bounds either return mode without terminating the command. ",
-                "Output is consumed when returned and is not repeated by later interactions. ",
-                "Parallel calls are safe for different session IDs, but never run await_exec or ",
-                "write_stdin concurrently for the same session. If the response contains session_id, ",
-                "call await_exec again to keep waiting or use write_stdin to interact. Invalid or stale ",
-                "session IDs and process or approval failures return tool errors; start a new ",
-                "exec_command session instead of retrying a stale ID. This tool does not start ",
-                "commands, send input, or terminate sessions."
+                "Wait for output or exit from a running exec_command session. Use this instead of ",
+                "empty write_stdin calls when the command needs no input. Pass exec_command's ",
+                "session_id. By default, buffered or new output and exit resume the call; ",
+                "return_on=exit buffers output until exit. Set timeout_ms only for an independent ",
+                "deadline; a timeout does not terminate the command. Returned output is consumed ",
+                "and not repeated. Never call await_exec and write_stdin concurrently for the same ",
+                "session. If session_id is returned, call await_exec again or use write_stdin to ",
+                "interact. Invalid or stale sessions and process or approval failures are errors; ",
+                "start a new exec_command session instead of retrying a stale ID. This tool does ",
+                "not start commands, send input, or terminate them."
             )
             .to_string(),
             strict: false,
