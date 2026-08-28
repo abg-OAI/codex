@@ -5,14 +5,22 @@
 //! module owns the complete storage contract so upstream integration points
 //! need only provide the configured SQLite home.
 
+use std::sync::LazyLock;
+
 use codex_protocol::ThreadId;
 use codex_state::SqliteConfig;
 use sqlx::Row;
 use sqlx::SqlitePool;
 use sqlx::migrate::Migrator;
+use tokio::sync::watch;
 
 const SAFFRON_DB_FILENAME: &str = "saffron_1.sqlite";
 static SAFFRON_MIGRATOR: Migrator = sqlx::migrate!("./src/saffron/migrations");
+
+// A process-local change signal lets the scheduler observe a snooze recorded
+// by a helper without polling until the next reconciliation pass. Durability
+// and cross-process recovery come from SQLite; this signal carries no state.
+static WAKE_CHANGED: LazyLock<watch::Sender<u64>> = LazyLock::new(|| watch::channel(0_u64).0);
 
 /// Exact durable identity of one deferred supervisor check-in.
 ///
@@ -48,6 +56,11 @@ impl SaffronStore {
         Ok(Self { pool })
     }
 
+    /// Subscribes to successful schedule mutations in this process.
+    pub(super) fn subscribe() -> watch::Receiver<u64> {
+        WAKE_CHANGED.subscribe()
+    }
+
     /// Returns the persisted wake for `thread_id`, including stale identities.
     pub(super) async fn get_goal_wake(
         &self,
@@ -76,7 +89,7 @@ WHERE thread_id = ?
         .transpose()
     }
 
-    /// Replaces the wake for a thread.
+    /// Replaces the wake for a thread and notifies process-local schedulers.
     pub(super) async fn set_goal_wake(&self, wake: &GoalWake) -> anyhow::Result<()> {
         sqlx::query(
             r#"
@@ -101,6 +114,7 @@ ON CONFLICT(thread_id) DO UPDATE SET
         .bind(wake.wake_at_ms)
         .execute(&self.pool)
         .await?;
+        notify_wake_changed();
         Ok(())
     }
 
@@ -123,8 +137,16 @@ WHERE thread_id = ?
         .bind(wake.wake_at_ms)
         .execute(&self.pool)
         .await?;
-        Ok(result.rows_affected() != 0)
+        let cleared = result.rows_affected() != 0;
+        if cleared {
+            notify_wake_changed();
+        }
+        Ok(cleared)
     }
+}
+
+fn notify_wake_changed() {
+    WAKE_CHANGED.send_modify(|generation| *generation = generation.wrapping_add(1));
 }
 
 #[cfg(test)]
