@@ -7,6 +7,7 @@
 
 pub(crate) mod await_exec;
 mod goal_edit;
+pub(crate) mod goal_scheduler;
 pub(crate) mod goal_supervisor;
 mod storage;
 
