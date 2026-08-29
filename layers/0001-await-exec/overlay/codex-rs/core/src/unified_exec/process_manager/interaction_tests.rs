@@ -10,10 +10,13 @@ use tokio::time::Instant;
 
 use super::*;
 use crate::unified_exec::ProcessEntry;
+use crate::unified_exec::TerminalPermissions;
+use crate::unified_exec::TerminalSandboxSource;
 
 const PROCESS_ID: i32 = 1000;
 
 async fn manager_with_live_process() -> (UnifiedExecProcessManager, Arc<UnifiedExecProcess>) {
+    let (_, turn) = crate::session::tests::make_session_and_context().await;
     let manager = UnifiedExecProcessManager::default();
     let process = Arc::new(
         crate::unified_exec::process_tests::remote_process(
@@ -37,7 +40,14 @@ async fn manager_with_live_process() -> (UnifiedExecProcessManager, Arc<UnifiedE
             hook_command: "sleep 60".to_string(),
             tty: false,
             environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
-            escalated: false,
+            permissions: TerminalPermissions::for_launch(
+                turn.environments.primary().expect("turn environment"),
+                &turn,
+                TerminalSandboxSource::Native,
+                crate::sandboxing::SandboxPermissions::UseDefault,
+                /*additional_permissions*/ None,
+                /*internal_permissions*/ None,
+            ),
             network_approval: None,
             session: Weak::new(),
             last_used: Instant::now(),
