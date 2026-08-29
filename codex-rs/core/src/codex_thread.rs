@@ -316,6 +316,23 @@ impl CodexThread {
         self.session.emit_thread_idle_lifecycle_if_idle(cause).await;
     }
 
+    /// Lets Saffron replace root-goal continuation with an ephemeral supervisor.
+    ///
+    /// Returns `false` for threads outside Saffron's root-thread scope so the
+    /// goal extension can retain its ordinary continuation behavior.
+    pub async fn start_saffron_goal_supervisor_checkin(
+        &self,
+        goal_id: &str,
+        goal: &codex_protocol::protocol::ThreadGoal,
+    ) -> Result<bool, String> {
+        crate::saffron::goal_supervisor::start_checkin(&self.session, goal_id, goal).await
+    }
+
+    /// Clears process-local supervisor state after a goal becomes inactive.
+    pub async fn stop_saffron_goal_supervisor(&self) {
+        crate::saffron::goal_supervisor::stop(&self.session).await;
+    }
+
     #[doc(hidden)]
     pub async fn ensure_rollout_materialized(&self) {
         self.session
