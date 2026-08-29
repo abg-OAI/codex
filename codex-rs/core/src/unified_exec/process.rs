@@ -196,6 +196,25 @@ impl UnifiedExecProcess {
         }
     }
 
+    /// Waits for transport-neutral process termination.
+    ///
+    /// Exec-server processes report `Exited` before `Closed` when descendants
+    /// retain inherited output streams. This watches process state rather than
+    /// the output-closure cancellation token so exit-sensitive callers do not
+    /// remain blocked on those descendants.
+    pub(super) async fn wait_for_exit(&self) {
+        if self.has_exited() {
+            return;
+        }
+
+        let mut state = self.state_rx.clone();
+        while state.changed().await.is_ok() {
+            if state.borrow().has_exited {
+                return;
+            }
+        }
+    }
+
     pub(super) fn exit_code(&self) -> Option<i32> {
         if self.timed_out() {
             return Some(124);
