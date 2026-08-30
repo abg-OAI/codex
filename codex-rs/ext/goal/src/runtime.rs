@@ -405,13 +405,23 @@ impl GoalRuntimeHandle {
             .map_err(|err| err.to_string())?
         else {
             self.inner.accounting_state.clear_active_goal();
+            thread.stop_saffron_goal_supervisor().await;
             return Ok(());
         };
         if goal.status != codex_state::ThreadGoalStatus::Active {
             self.inner.accounting_state.clear_active_goal();
+            thread.stop_saffron_goal_supervisor().await;
             return Ok(());
         }
-        let item = continuation_steering_item(&protocol_goal_from_state(goal));
+        let goal_id = goal.goal_id.clone();
+        let goal = protocol_goal_from_state(goal);
+        if thread
+            .start_saffron_goal_supervisor_checkin(&goal_id, &goal)
+            .await?
+        {
+            return Ok(());
+        }
+        let item = continuation_steering_item(&goal);
 
         match thread
             .start_turn_if_idle(
