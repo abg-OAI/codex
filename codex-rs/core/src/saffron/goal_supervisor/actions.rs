@@ -3,6 +3,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::runtime;
+use super::runtime::Action;
+use crate::TurnStartOptions;
+use crate::agent_communication::AgentCommunicationContext;
+use crate::agent_communication::AgentCommunicationKind;
+use crate::saffron::goal_edit::protocol_goal;
+use crate::session::session::Session;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::Event;
@@ -11,16 +18,6 @@ use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ThreadGoal;
 use codex_protocol::protocol::ThreadGoalUpdatedEvent;
-use tokio::time::Instant;
-
-use super::runtime;
-use super::runtime::Action;
-use super::runtime::Snooze;
-use crate::TurnStartOptions;
-use crate::agent_communication::AgentCommunicationContext;
-use crate::agent_communication::AgentCommunicationKind;
-use crate::saffron::goal_edit::protocol_goal;
-use crate::session::session::Session;
 
 pub(super) async fn followup(
     helper: &Arc<Session>,
@@ -97,11 +94,20 @@ pub(super) async fn snooze(
     let action = Action::Snooze { delay_seconds };
     let goal_id = runtime::select_action(parent, helper_id, action.clone()).await?;
     let supervisor_runtime = runtime::runtime(parent);
-    let snooze = Snooze {
-        goal_id,
-        deadline: Instant::now() + Duration::from_secs(delay_seconds),
-    };
-    runtime::set_snooze(parent, snooze.clone()).await;
+    let snooze =
+        match runtime::snooze_for_active_goal(parent, &goal_id, Duration::from_secs(delay_seconds))
+            .await
+        {
+            Ok(snooze) => snooze,
+            Err(error) => {
+                runtime::clear_failed_action(parent, helper_id, &action).await;
+                return Err(error);
+            }
+        };
+    if let Err(error) = runtime::set_snooze(parent, snooze.clone()).await {
+        runtime::clear_failed_action(parent, helper_id, &action).await;
+        return Err(error);
+    }
     runtime::schedule_wake(parent, &supervisor_runtime, snooze);
     runtime::commit_action(parent, action).await;
     Ok(())
@@ -153,7 +159,7 @@ pub(super) async fn complete(
                 objective: None,
                 status: Some(codex_state::ThreadGoalStatus::Complete),
                 token_budget: None,
-                expected_goal_id: Some(goal_id),
+                expected_goal_id: Some(goal_id.clone()),
             },
         )
         .await
@@ -168,6 +174,12 @@ pub(super) async fn complete(
             return Err(error);
         }
     };
+    if let Err(error) = runtime::clear_snooze_for_goal(parent, &goal_id).await {
+        tracing::warn!(
+            thread_id = %parent.thread_id,
+            "failed to clear Saffron supervisor wake for completed goal: {error}"
+        );
+    }
     let goal = protocol_goal(goal);
     parent
         .send_event_raw(Event {
