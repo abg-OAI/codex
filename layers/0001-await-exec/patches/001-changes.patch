@@ -28,7 +28,7 @@ index 9f9f8a8cf1ea9fbd01f01813e9dcf1ccca6ab1e1..d0ef75556bc481fee669259b8e1e1558
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index de8b37d45bded9cf6eb42ee9cee700481f0a8016..2913c4c48bf75ce91425f295f2b4b60315783962 100644
+index 082bb8f0b24e298eedf675a9729f9ffd118e72e1..f0670e9914cb91ccd7efb634eea0952bd70d8518 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -39,7 +39,7 @@ index de8b37d45bded9cf6eb42ee9cee700481f0a8016..2913c4c48bf75ce91425f295f2b4b603
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -1082,6 +1083,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1110,6 +1111,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
      if features.enabled(Feature::UnifiedExec) {
          registry.add(ExecCommandHandler::new(options));
          registry.add(WriteStdinHandler);
@@ -48,18 +48,18 @@ index de8b37d45bded9cf6eb42ee9cee700481f0a8016..2913c4c48bf75ce91425f295f2b4b603
          // Managed requirements are the only configuration path that can keep
          // unified exec disabled. Preserve command execution without exposing a
 diff --git a/codex-rs/core/src/unified_exec/mod.rs b/codex-rs/core/src/unified_exec/mod.rs
-index 0af579e332054ac0a34c163393810cb9f37cf4cc..ed8a5a49cb4dc399721ae736265cb6ebfdf6d1ab 100644
+index 8dc8f359d4e09cc5db417a67e2923b80323a59c9..2fbad7f8067997db4fa5b0dff65ad52fe5d6e702 100644
 --- a/codex-rs/core/src/unified_exec/mod.rs
 +++ b/codex-rs/core/src/unified_exec/mod.rs
-@@ -66,6 +66,8 @@ pub(crate) use process::NoopSpawnLifecycle;
+@@ -67,6 +67,8 @@ pub(crate) use process::NoopSpawnLifecycle;
  pub(crate) use process::SpawnLifecycle;
  pub(crate) use process::SpawnLifecycleHandle;
  pub(crate) use process::UnifiedExecProcess;
 +pub(crate) use process_manager::ProcessInteractionAcquisition;
 +pub(crate) use process_manager::ProcessWaitReason;
+ pub(crate) use stdin_approval::TerminalPermissions;
+ pub(crate) use stdin_approval::TerminalSandboxSource;
  
- pub(crate) const MIN_YIELD_TIME_MS: u64 = 250;
- pub(crate) const WINDOWS_INITIAL_EXEC_YIELD_TIME_FLOOR_MS: u64 = 10_000;
 diff --git a/codex-rs/core/src/unified_exec/process.rs b/codex-rs/core/src/unified_exec/process.rs
 index 81946e4b2691dfd34fb9b85ca3ba7a2b6802e84f..df67713ef048edd7b8df42feb99d7ee32df3850f 100644
 --- a/codex-rs/core/src/unified_exec/process.rs
@@ -91,10 +91,10 @@ index 81946e4b2691dfd34fb9b85ca3ba7a2b6802e84f..df67713ef048edd7b8df42feb99d7ee3
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 74e61a9c72532760f0e097352b165d505781f525..cd6ca6c0133b8c4e34cc31caec6537ef40f627fa 100644
+index 565f9f5ce4f1d5ba121623084d0508e61332ffe2..0f5ff4cb31f356f3175d698e481496b8290530ec 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
-@@ -104,6 +104,11 @@ const NETWORK_ACCESS_DENIED_MESSAGE: &str =
+@@ -102,6 +102,11 @@ const NETWORK_ACCESS_DENIED_MESSAGE: &str =
  const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
  const INTERRUPT: &str = "\u{3}";
  
@@ -107,10 +107,10 @@ index 74e61a9c72532760f0e097352b165d505781f525..cd6ca6c0133b8c4e34cc31caec6537ef
  ///
  /// In production builds this value should remain at its default (`false`) and
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index 28cb2c6b469428641e073905e4efdaff8ea335ea..c84b9762025490105f4176ddf3ba0295484b0b3d 100644
+index 4b4a0ba1df9b6adf39d7ee7076819fdcdb4ff522..e291901bc802ee1bf2070614e3a13f3c91aea66e 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -146,6 +146,7 @@ mod rollout_budget;
+@@ -148,6 +148,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;
