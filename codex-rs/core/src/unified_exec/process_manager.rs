@@ -102,6 +102,11 @@ const NETWORK_ACCESS_DENIED_MESSAGE: &str =
 const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
 const INTERRUPT: &str = "\u{3}";
 
+mod interaction;
+
+pub(crate) use interaction::ProcessInteractionAcquisition;
+pub(crate) use interaction::ProcessWaitReason;
+
 /// Test-only override for deterministic unified exec process IDs.
 ///
 /// In production builds this value should remain at its default (`false`) and
