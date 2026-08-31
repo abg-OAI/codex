@@ -181,10 +181,10 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
  
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index af4739e5b51ce517d7aeda8d0c60ac93b1395125..b1a851ac73d38bb33084248f9be3ca3f880d88e4 100644
+index 136211029ed12ea93867c033ac5edb15b1a0ee9e..c453faa9184fe54c2489228f92dac3e785908648 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -322,10 +322,9 @@ impl CodexThread {
+@@ -316,10 +316,9 @@ impl CodexThread {
      /// goal extension can retain its ordinary continuation behavior.
      pub async fn start_saffron_goal_supervisor_checkin(
          &self,
@@ -242,10 +242,10 @@ index 74b956382ada052fb771525ee433995d476890e4..ffbe7a2da37648d4f5bd4883d9a3b885
 -    }
 -}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/mod.rs b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-index 11f2fd6cd0be31e35e6606a004297637d5b19b0d..5559c1b874c5f03559912cbe53828203bf474010 100644
+index 65779efcc65c8668823069a0e713a511bb1e9a10..5abe0cfd20922343ae8d50d0ad8893f61d5fb804 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/mod.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-@@ -16,6 +16,10 @@ mod tools;
+@@ -17,6 +17,10 @@ mod tools;
  
  pub(crate) use identity::HELPER_ROLE_NAME;
  pub(crate) use identity::is_helper_source;
@@ -492,10 +492,10 @@ index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c06
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 19c70a34d8d6abfcaa91eb350532e9cbd56d16e5..5a7b3719a6118bc0394711303c530a6026412328 100644
+index caeb5a36ff0f619c14eed90d3119e7d4b9f498e1..ff62b21a65d551602cc1c95130aa92eb3afe489a 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
-@@ -148,14 +148,7 @@ pub(crate) fn build_tool_router(
+@@ -152,14 +152,7 @@ pub(crate) fn build_tool_router(
      };
      let mut registry = ToolRegistry::default();
      add_core_tool_sources(&context, &mut registry);
@@ -512,10 +512,10 @@ index 19c70a34d8d6abfcaa91eb350532e9cbd56d16e5..5a7b3719a6118bc0394711303c530a60
      let hosted_specs = if crate::guardian::is_basic_session_source(&turn_context.session_source) {
          if let Some(history_tools) = session
 diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
-index e741b4117047edbf3d242493d4b6c3502d3ed9ee..1d35de913c17576ac8ef6bc98d43801eff98e9b6 100644
+index a801afcaaece27645c22286df4805b011a266226..efb2c183051d875a99edcf9307dea09a0aeeb6a3 100644
 --- a/codex-rs/ext/goal/src/runtime.rs
 +++ b/codex-rs/ext/goal/src/runtime.rs
-@@ -413,14 +413,10 @@ impl GoalRuntimeHandle {
+@@ -445,14 +445,10 @@ impl GoalRuntimeHandle {
              thread.stop_saffron_goal_supervisor().await;
              return Ok(());
          }
@@ -529,9 +529,9 @@ index e741b4117047edbf3d242493d4b6c3502d3ed9ee..1d35de913c17576ac8ef6bc98d43801e
              return Ok(());
          }
 +        let goal = protocol_goal_from_state(goal);
-         let item = continuation_steering_item(&goal);
- 
-         match thread
+         let start_options = thread
+             .thread_extension_data()
+             .get::<TurnStartOptions>()
 diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
 index c9a82df965b1b1bc2ae58bdbd5a3e1293bcbba9f..8bdcaae5dd8c0d4000a833bbb13e0c042203f0c1 100644
 --- a/codex-rs/state/src/lib.rs
