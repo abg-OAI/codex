@@ -18,6 +18,10 @@ mod tools;
 
 pub(crate) use identity::HELPER_ROLE_NAME;
 pub(crate) use identity::is_helper_source;
+pub(super) use runtime::begin_goal_edit;
+pub(super) use runtime::clear_failed_goal_edit;
+pub(super) use runtime::commit_goal_edit;
+pub(super) use runtime::parent_for_helper;
 pub(crate) use runtime::start_checkin;
 pub(crate) use runtime::stop;
 pub(crate) use tools::register;
