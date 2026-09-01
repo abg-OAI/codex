@@ -181,7 +181,7 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
  
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 136211029ed12ea93867c033ac5edb15b1a0ee9e..c453faa9184fe54c2489228f92dac3e785908648 100644
+index 29c1f2842af5c6e2110e8dd2b149981309034f42..0b2907208bc7129e2006ef3d8a3dea59308622cf 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -316,10 +316,9 @@ impl CodexThread {
@@ -492,7 +492,7 @@ index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c06
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index caeb5a36ff0f619c14eed90d3119e7d4b9f498e1..ff62b21a65d551602cc1c95130aa92eb3afe489a 100644
+index 430a2cc9a7809c261d5669679039ad0b2f4a4a51..a95577c876e5cc762f449b9ade3ecdd9fb76b384 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -152,14 +152,7 @@ pub(crate) fn build_tool_router(
@@ -510,12 +510,12 @@ index caeb5a36ff0f619c14eed90d3119e7d4b9f498e1..ff62b21a65d551602cc1c95130aa92eb
 +    saffron::register_tools(session, turn_context, &mut registry);
  
      let hosted_specs = if crate::guardian::is_basic_session_source(&turn_context.session_source) {
-         if let Some(history_tools) = session
+         Vec::new()
 diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
-index a801afcaaece27645c22286df4805b011a266226..efb2c183051d875a99edcf9307dea09a0aeeb6a3 100644
+index 126266b919fc63711d7a94be99abd3cec1610bc7..89c4fbcc1c06597e3abe0795cc23d51eccf82820 100644
 --- a/codex-rs/ext/goal/src/runtime.rs
 +++ b/codex-rs/ext/goal/src/runtime.rs
-@@ -445,14 +445,10 @@ impl GoalRuntimeHandle {
+@@ -442,14 +442,10 @@ impl GoalRuntimeHandle {
              thread.stop_saffron_goal_supervisor().await;
              return Ok(());
          }
