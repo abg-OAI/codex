@@ -2,6 +2,10 @@ use super::*;
 use crate::model::ThreadGoalRow;
 use uuid::Uuid;
 
+mod active_goal_objective;
+
+pub use active_goal_objective::ThreadGoalRevision;
+
 #[derive(Clone)]
 pub struct GoalStore {
     pool: Arc<SqlitePool>,
