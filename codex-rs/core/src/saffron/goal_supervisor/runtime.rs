@@ -28,6 +28,8 @@ use super::HELPER_ROLE_NAME;
 use crate::agent::control::SpawnAgentForkMode;
 use crate::agent::control::SpawnAgentOptions;
 use crate::agent::next_thread_spawn_depth;
+use crate::saffron::storage::GoalWake;
+use crate::saffron::storage::SaffronStore;
 use crate::session::session::Session;
 
 const INITIAL_FAILURE_RETRY: Duration = Duration::from_secs(60);
@@ -67,8 +69,24 @@ enum GoalEditState {
 
 #[derive(Clone)]
 pub(super) struct Snooze {
-    pub(super) goal_id: String,
+    wake: GoalWake,
     pub(super) deadline: Instant,
+}
+
+impl Snooze {
+    fn for_goal(goal: &codex_state::ThreadGoal, delay: Duration) -> Self {
+        let delay_millis = i64::try_from(delay.as_millis()).unwrap_or(i64::MAX);
+        Self {
+            wake: GoalWake {
+                thread_id: goal.thread_id,
+                goal_id: goal.goal_id.clone(),
+                goal_objective: goal.objective.clone(),
+                goal_updated_at_ms: goal.updated_at.timestamp_millis(),
+                wake_at_ms: Utc::now().timestamp_millis().saturating_add(delay_millis),
+            },
+            deadline: Instant::now() + delay,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -149,14 +167,18 @@ pub(crate) async fn start_checkin(
             state.previous_action = None;
         }
         if let Some(snooze) = state.snooze.as_ref()
-            && snooze.goal_id == goal_id
+            && snooze.wake.goal_id == goal_id
+            && snooze.wake.goal_updated_at_ms == goal.updated_at.timestamp_millis()
+            && snooze.wake.goal_objective == goal.objective
             && snooze.deadline > now
         {
             schedule_wake(parent, &runtime, snooze.clone());
             return Ok(true);
         }
         state.active = None;
-        state.snooze = None;
+        if state.snooze.take().is_some() {
+            runtime.wake_generation.fetch_add(1, Ordering::AcqRel);
+        }
     }
 
     match spawn_helper(parent, goal).await {
@@ -330,8 +352,59 @@ pub(super) async fn clear_failed_action(parent: &Session, helper_id: ThreadId, a
     }
 }
 
-pub(super) async fn set_snooze(parent: &Session, snooze: Snooze) {
+pub(super) async fn set_snooze(parent: &Session, snooze: Snooze) -> Result<(), String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Err("goal state is unavailable".to_string());
+    };
+    SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?
+        .set_goal_wake(&snooze.wake)
+        .await
+        .map_err(|error| error.to_string())?;
     runtime(parent).state.lock().await.snooze = Some(snooze);
+    Ok(())
+}
+
+pub(super) async fn snooze_for_active_goal(
+    parent: &Session,
+    goal_id: &str,
+    delay: Duration,
+) -> Result<Snooze, String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Err("goal state is unavailable".to_string());
+    };
+    let goal = state_db
+        .thread_goals()
+        .get_thread_goal(parent.thread_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .filter(|goal| {
+            goal.goal_id == goal_id && goal.status == codex_state::ThreadGoalStatus::Active
+        })
+        .ok_or_else(|| "the active goal changed before it could be snoozed".to_string())?;
+    Ok(Snooze::for_goal(&goal, delay))
+}
+
+pub(super) async fn clear_snooze_for_goal(parent: &Session, goal_id: &str) -> Result<(), String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Ok(());
+    };
+    let store = SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(wake) = store
+        .get_goal_wake(parent.thread_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .filter(|wake| wake.goal_id == goal_id)
+    {
+        store
+            .clear_goal_wake(&wake)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
@@ -513,12 +586,22 @@ async fn defer_failure(
             }),
         })
         .await;
-    let snooze = Snooze {
-        goal_id: goal_id.to_string(),
-        deadline: Instant::now() + delay,
-    };
-    runtime.state.lock().await.snooze = Some(snooze.clone());
-    schedule_wake(parent, runtime, snooze);
+    match snooze_for_active_goal(parent, goal_id, delay).await {
+        Ok(snooze) => {
+            if let Err(persistence_error) = set_snooze(parent, snooze.clone()).await {
+                warn!(
+                    thread_id = %parent.thread_id,
+                    "failed to persist Saffron supervisor failure retry: {persistence_error}"
+                );
+                runtime.state.lock().await.snooze = Some(snooze.clone());
+            }
+            schedule_wake(parent, runtime, snooze);
+        }
+        Err(goal_error) => warn!(
+            thread_id = %parent.thread_id,
+            "failed to schedule Saffron supervisor failure retry: {goal_error}"
+        ),
+    }
 }
 
 fn failure_retry_delay(consecutive_failures: u32) -> Duration {
@@ -545,7 +628,7 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
             if state
                 .snooze
                 .as_ref()
-                .is_some_and(|current| current.goal_id == snooze.goal_id)
+                .is_some_and(|current| current.wake == snooze.wake)
             {
                 state.snooze = None;
                 true
@@ -554,6 +637,18 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
             }
         };
         if should_wake {
+            if let Some(state_db) = parent.services.state_db.as_ref() {
+                let clear_result = match SaffronStore::open(state_db.sqlite()).await {
+                    Ok(store) => store.clear_goal_wake(&snooze.wake).await.map(|_| ()),
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = clear_result {
+                    warn!(
+                        thread_id = %parent.thread_id,
+                        "failed to clear due Saffron supervisor wake: {error}"
+                    );
+                }
+            }
             parent
                 .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Completed)
                 .await;
