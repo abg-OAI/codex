@@ -11,6 +11,7 @@
 
 mod actions;
 pub(crate) mod guidance;
+mod history;
 mod identity;
 mod runtime;
 mod tools;
@@ -20,3 +21,5 @@ pub(crate) use identity::is_helper_source;
 pub(crate) use runtime::start_checkin;
 pub(crate) use runtime::stop;
 pub(crate) use tools::register;
+
+pub(crate) use history::preserves_fork_item;
