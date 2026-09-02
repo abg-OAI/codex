@@ -108,6 +108,14 @@ mod skills;
 pub(crate) use skills::maybe_emit_implicit_skill_invocation;
 pub(crate) use skills::skills_load_input_from_config;
 mod saffron;
+
+/// Installs Saffrodex-owned model guidance that accompanies goal tools.
+pub fn install_saffron_goal_guidance(
+    builder: &mut codex_extension_api::ExtensionRegistryBuilder<config::Config>,
+) {
+    saffron::goal_supervisor::guidance::install(builder);
+}
+
 mod stream_events_utils;
 pub mod test_support;
 mod unified_exec;

@@ -86,6 +86,8 @@ mod residency;
 mod review;
 mod rollout_migration;
 mod safety_check_downgrade;
+mod saffron_goal_guidance;
+mod saffron_goal_supervisor;
 #[cfg(not(target_os = "windows"))]
 mod selected_capability_stack;
 mod selected_environment;

@@ -90,6 +90,7 @@ where
                 max_goal_token_budget: config.max_goal_token_budget,
             },
         );
+        codex_core::install_saffron_goal_guidance(&mut builder);
     }
     codex_git_attribution::install(
         &mut builder,
