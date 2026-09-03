@@ -77,6 +77,9 @@ use tokio::time::sleep;
 use tokio::time::timeout;
 use toml::Value as TomlValue;
 
+#[path = "../saffron/goal_supervisor/fork_tests.rs"]
+mod saffron_fork_tests;
+
 async fn test_config_with_cli_overrides(
     mut cli_overrides: Vec<(String, TomlValue)>,
 ) -> (TempDir, Config) {
