@@ -6,6 +6,8 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use chrono::DateTime;
+use chrono::Utc;
 use codex_extension_api::ThreadIdleCause;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
@@ -359,7 +361,14 @@ async fn spawn_helper(
         agent_role: Some(HELPER_ROLE_NAME.to_string()),
     });
     let continuity = continuity(parent, goal).await;
-    let prompt = render_checkin_prompt(parent.thread_id, &goal.objective, &continuity);
+    let checkin_time = parent
+        .services
+        .time_provider
+        .current_time(parent.thread_id)
+        .await
+        .map_err(|error| format!("failed to read current time: {error:#}"))?;
+    let prompt =
+        render_checkin_prompt(parent.thread_id, checkin_time, &goal.objective, &continuity);
     let helper = Box::pin(
         parent
             .services
@@ -389,9 +398,19 @@ async fn spawn_helper(
 }
 
 /// Renders one bounded model-visible assignment for the ephemeral helper.
-fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str) -> String {
+///
+/// The time comes from the parent session's clock for this helper spawn. It is
+/// kept in the prefix that middle truncation preserves so inherited history
+/// cannot become the helper's only evidence of the current time.
+fn render_checkin_prompt(
+    parent_id: ThreadId,
+    checkin_time: DateTime<Utc>,
+    objective: &str,
+    continuity: &str,
+) -> String {
+    let checkin_time = checkin_time.format("%Y-%m-%d %H:%M:%S UTC");
     let prompt = format!(
-        "# Supervisor Check-in\n\nParent thread: {parent_id}\n\nActive goal:\n{objective}\n\nContinuity:\n{continuity}"
+        "# Supervisor Check-in\n\nCurrent UTC time: {checkin_time}\n\nParent thread: {parent_id}\n\nActive goal:\n{objective}\n\nContinuity:\n{continuity}"
     );
     truncate_text(&prompt, TruncationPolicy::Tokens(MAX_CHECKIN_PROMPT_TOKENS))
 }
