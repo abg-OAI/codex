@@ -7,7 +7,8 @@ Add a process-local supervisor that creates one bounded, hidden,
 full-history helper for an active root goal. Hidden helpers neither
 appear in user agent lists nor consume normal agent capacity, and their
 privileged actions are authorized by registry identity rather than a
-role name.
+role name. The supervisor owns its communication with the parent, so
+Codex does not also enqueue ordinary child-completion messages.
 
 The helper can resume its parent, snooze with capped retry backoff,
 compact parent context, or complete itself. It retires stale helpers
