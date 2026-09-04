@@ -25,6 +25,7 @@ use tokio::time::Instant;
 use tracing::warn;
 
 use super::HELPER_ROLE_NAME;
+use super::failure;
 use crate::agent::control::SpawnAgentForkMode;
 use crate::agent::control::SpawnAgentOptions;
 use crate::agent::next_thread_spawn_depth;
@@ -615,6 +616,19 @@ async fn finish_helper(
         state.active = None;
         action
     };
+    let terminal_failure = if action.is_none() {
+        match parent
+            .services
+            .agent_control
+            .get_live_thread(helper_id)
+            .await
+        {
+            Ok(helper) => failure::terminal_failure(&helper.session),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
     if let Err(error) = parent
         .services
         .agent_control
@@ -624,6 +638,31 @@ async fn finish_helper(
         warn!(%helper_id, "failed to retire Saffron goal supervisor: {error}");
     }
     if action.is_none() {
+        if let Some(terminal_failure) = terminal_failure {
+            match failure::block_goal(parent, goal_id, &terminal_failure).await {
+                Ok(()) => {
+                    if let Err(error) = clear_snooze_for_goal(parent, goal_id).await {
+                        warn!(
+                            thread_id = %parent.thread_id,
+                            "failed to clear Saffron supervisor wake for blocked goal: {error}"
+                        );
+                    }
+                    runtime.wake_generation.fetch_add(1, Ordering::AcqRel);
+                    runtime.state.lock().await.snooze = None;
+                    return;
+                }
+                Err(error) => {
+                    defer_failure(
+                        parent,
+                        &runtime,
+                        goal_id,
+                        format!("failed to block goal after terminal helper error: {error}"),
+                    )
+                    .await;
+                    return;
+                }
+            }
+        }
         let description =
             format!("helper ended as {terminal_status:?} without selecting an action");
         defer_failure(parent, &runtime, goal_id, description).await;
