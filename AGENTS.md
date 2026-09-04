@@ -8,25 +8,22 @@ It is not itself a Codex source checkout.
 
 `upstream.json` identifies the exact Codex release used by the current
 projection.
-`layers/0000-foundation/` contains the non-feature patches that every
+`layers/0000-foundation.patch` contains the non-feature changes that every
 projected Saffrodex tree needs.
-Every generated commit is defined by a `layers/NNNN-layer-slug/` directory.
+Every generated commit is defined by one
+`layers/NNNN-layer-slug.patch` Git mail patch.
 The four-digit prefix determines application order through ordinary lexical
 sorting; no separate series or order file exists.
-Each layer directory contains:
-
-- `COMMIT_MSG`, whose bytes become the generated commit message verbatim;
-- optional `overlay/` content for paths introduced by the layer; and
-- optional `patches/NNN-*.patch` files applied in lexical order to paths that
-  existed before the layer.
-
-A path cannot be both overlay content and a patch target in one layer.
-Later layers may patch files introduced by earlier layers.
+Each patch contains the generated commit's message, author metadata,
+and complete tree delta.
+Treat layer patches as generated artifacts:
+edit and review source in a hydrated projection,
+then use `layerctl layer add` or `layerctl layer refresh` to capture it.
 
 Repository-owned guidance, release tooling, the root `.github/workflows/`
 directory, and `layerctl` do not belong in a generated projection.
 Changes needed in every generated source tree belong in
-`layers/0000-foundation/`.
+`layers/0000-foundation.patch`.
 
 ## Conditional guidance
 

@@ -1,11 +1,10 @@
-// Package layer captures projection trees into canonical Saffrodex layer
-// definitions. It owns classification of new paths and inherited-path patches.
+// Package layer captures accepted projection commits as canonical Saffrodex
+// layer patches.
 package layer
 
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
+	"github.com/abg-OAI/codex/layerctl/internal/mailpatch"
 	"github.com/abg-OAI/codex/layerctl/internal/projection"
 )
 
@@ -55,7 +55,7 @@ func (s *Service) Add(ctx context.Context, req AddRequest) error {
 	if err := s.requireGeneratedUnit(ctx, source.Base, predecessor); err != nil {
 		return fmt.Errorf("projection %q base: %w", req.Projection, err)
 	}
-	return s.writeLayer(ctx, req.ID, source.Base, source.Head, nil)
+	return s.writeLayer(ctx, req.ID, source.Base, source.Head, false)
 }
 
 // Refresh replaces an existing layer so its generated result becomes the
@@ -92,7 +92,7 @@ func (s *Service) Refresh(ctx context.Context, id, projectionName string) error 
 	if err != nil {
 		return fmt.Errorf("resolve parent of generated layer %q: %w", id, err)
 	}
-	return s.writeLayer(ctx, id, parent, source.Head, current)
+	return s.writeLayer(ctx, id, parent, source.Head, true)
 }
 
 func (s *Service) findUnit(id string) *definition.Unit {
@@ -120,94 +120,73 @@ func (s *Service) isGeneratedUnit(ctx context.Context, commit string, unit defin
 	if err != nil {
 		return false, err
 	}
-	wantMessage, err := os.ReadFile(unit.CommitMessagePath)
+	patches := &mailpatch.Service{Git: s.Git}
+	wantMessage, err := patches.Message(ctx, unit.PatchPath)
 	if err != nil {
-		return false, fmt.Errorf("read commit message for %q: %w", unit.ID, err)
+		return false, err
 	}
 	return bytes.Equal(message, wantMessage), nil
 }
 
-func (s *Service) writeLayer(ctx context.Context, id, before, after string, current *definition.Unit) error {
+func (s *Service) writeLayer(ctx context.Context, id, before, after string, replaceExisting bool) error {
 	layersRoot := filepath.Join(s.Definition.Root, "layers")
-	temporary, err := os.MkdirTemp(layersRoot, ".layerctl-"+id+"-")
-	if err != nil {
-		return fmt.Errorf("create temporary layer: %w", err)
-	}
-	defer os.RemoveAll(temporary)
-
-	message, err := commitMessage(s.Git, ctx, s.Git.Root, after)
+	patches := &mailpatch.Service{Git: s.Git}
+	content, err := patches.Capture(ctx, mailpatch.CaptureRequest{
+		Before: before,
+		After:  after,
+	})
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(temporary, "COMMIT_MSG"), message, 0o644); err != nil {
-		return fmt.Errorf("write commit message: %w", err)
-	}
 
-	paths, err := changedPaths(s.Git, ctx, s.Git.Root, before, after)
+	temporary, err := os.CreateTemp(layersRoot, ".layerctl-"+id+"-*.patch")
 	if err != nil {
-		return err
+		return fmt.Errorf("create temporary layer patch: %w", err)
 	}
-	var patchPaths []string
-	for _, path := range paths {
-		beforeExists, err := objectExists(s.Git, ctx, s.Git.Root, before, path)
-		if err != nil {
-			return err
-		}
-		afterExists, err := objectExists(s.Git, ctx, s.Git.Root, after, path)
-		if err != nil {
-			return err
-		}
-		if !beforeExists && afterExists {
-			if err := extractOverlay(s.Git, ctx, s.Git.Root, after, path, filepath.Join(temporary, "overlay", path)); err != nil {
-				return err
-			}
-			continue
-		}
-		patchPaths = append(patchPaths, path)
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if _, err := temporary.Write(content); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write temporary layer patch: %w", err)
 	}
-	if len(patchPaths) > 0 {
-		patch, err := s.Git.Bytes(ctx, s.Git.Root, append([]string{"diff", "--binary", "--full-index", before, after, "--"}, patchPaths...)...)
-		if err != nil {
-			return fmt.Errorf("generate inherited-path patch: %w", err)
-		}
-		patchDirectory := filepath.Join(temporary, "patches")
-		if err := os.MkdirAll(patchDirectory, 0o755); err != nil {
-			return fmt.Errorf("create patch directory: %w", err)
-		}
-		if err := os.WriteFile(filepath.Join(patchDirectory, "001-changes.patch"), patch, 0o644); err != nil {
-			return fmt.Errorf("write generated patch: %w", err)
-		}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close temporary layer patch: %w", err)
 	}
-	if len(paths) == 0 {
-		return errors.New("source projection has no tree changes to capture")
+	matches, err := patches.Matches(ctx, temporaryPath, before, after)
+	if err != nil {
+		return fmt.Errorf("verify captured layer %q: %w", id, err)
+	}
+	if !matches {
+		return fmt.Errorf("captured layer %q does not reproduce the accepted commit", id)
 	}
 
-	target := filepath.Join(layersRoot, id)
-	if current != nil {
-		target = current.Directory
-	}
-	if current == nil {
-		if err := os.Rename(temporary, target); err != nil {
+	target := filepath.Join(layersRoot, id+".patch")
+	if !replaceExisting {
+		if err := os.Rename(temporaryPath, target); err != nil {
 			return fmt.Errorf("install layer %q: %w", id, err)
 		}
 		return nil
 	}
-	backup, err := os.MkdirTemp(layersRoot, ".layerctl-backup-"+id+"-")
+	backup, err := os.CreateTemp(layersRoot, ".layerctl-backup-"+id+"-*.patch")
 	if err != nil {
 		return fmt.Errorf("reserve layer backup: %w", err)
 	}
-	if err := os.Remove(backup); err != nil {
+	backupPath := backup.Name()
+	if err := backup.Close(); err != nil {
+		return fmt.Errorf("close layer backup: %w", err)
+	}
+	if err := os.Remove(backupPath); err != nil {
 		return fmt.Errorf("prepare layer backup: %w", err)
 	}
-	if err := os.Rename(target, backup); err != nil {
+	if err := os.Rename(target, backupPath); err != nil {
 		return fmt.Errorf("backup layer %q: %w", id, err)
 	}
-	if err := os.Rename(temporary, target); err != nil {
-		_ = os.Rename(backup, target)
+	if err := os.Rename(temporaryPath, target); err != nil {
+		_ = os.Rename(backupPath, target)
 		return fmt.Errorf("install refreshed layer %q: %w", id, err)
 	}
-	if err := os.RemoveAll(backup); err != nil {
-		return fmt.Errorf("remove layer backup %q: %w", backup, err)
+	if err := os.Remove(backupPath); err != nil {
+		return fmt.Errorf("remove layer backup %q: %w", backupPath, err)
 	}
 	return nil
 }
@@ -222,62 +201,4 @@ func commitMessage(git *gitrepo.Repository, ctx context.Context, root, commit st
 		return nil, fmt.Errorf("commit %q has no message", commit)
 	}
 	return message, nil
-}
-
-func changedPaths(git *gitrepo.Repository, ctx context.Context, root, before, after string) ([]string, error) {
-	output, err := git.Bytes(ctx, root, "diff", "--name-only", "-z", before, after)
-	if err != nil {
-		return nil, fmt.Errorf("list changed paths: %w", err)
-	}
-	fields := bytes.Split(output, []byte{0})
-	paths := make([]string, 0, len(fields))
-	for _, field := range fields {
-		if len(field) > 0 {
-			paths = append(paths, string(field))
-		}
-	}
-	return paths, nil
-}
-
-func objectExists(git *gitrepo.Repository, ctx context.Context, root, commit, path string) (bool, error) {
-	_, err := git.Bytes(ctx, root, "cat-file", "-e", commit+":"+path)
-	if err != nil {
-		return false, nil
-	}
-	return true, nil
-}
-
-func extractOverlay(git *gitrepo.Repository, ctx context.Context, root, commit, path, target string) error {
-	entry, err := git.Output(ctx, root, "ls-tree", commit, "--", path)
-	if err != nil {
-		return fmt.Errorf("inspect overlay object %q: %w", path, err)
-	}
-	fields := strings.Fields(entry)
-	if len(fields) < 3 {
-		return fmt.Errorf("cannot parse tree entry for %q", path)
-	}
-	content, err := git.Bytes(ctx, root, "cat-file", "blob", commit+":"+path)
-	if err != nil {
-		return fmt.Errorf("read overlay object %q: %w", path, err)
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("create overlay parent for %q: %w", path, err)
-	}
-	switch fields[0] {
-	case "100644":
-		if err := os.WriteFile(target, content, 0o644); err != nil {
-			return fmt.Errorf("write overlay file %q: %w", path, err)
-		}
-	case "100755":
-		if err := os.WriteFile(target, content, 0o755); err != nil {
-			return fmt.Errorf("write executable overlay file %q: %w", path, err)
-		}
-	case "120000":
-		if err := os.Symlink(string(content), target); err != nil {
-			return fmt.Errorf("write overlay symlink %q: %w", path, err)
-		}
-	default:
-		return fmt.Errorf("unsupported Git mode %q for overlay path %q", fields[0], path)
-	}
-	return nil
 }

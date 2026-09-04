@@ -14,6 +14,7 @@ import (
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
 	"github.com/abg-OAI/codex/layerctl/internal/layer"
+	"github.com/abg-OAI/codex/layerctl/internal/mailpatch"
 	"github.com/abg-OAI/codex/layerctl/internal/projection"
 	"github.com/abg-OAI/codex/layerctl/internal/upstream"
 )
@@ -90,6 +91,40 @@ func TestAdvanceConflictRefreshContinueAndAbort(t *testing.T) {
 	}
 }
 
+func TestContinueRecoversAfterResolvedMailPatchWasCommitted(t *testing.T) {
+	root := newCanonicalRepository(t)
+	upstreamService, _, projections := newServices(t, root)
+	resolveWorktree := filepath.Join(t.TempDir(), "resolve")
+	if _, err := upstreamService.Advance(t.Context(), upstream.AdvanceRequest{
+		Tag:          "rust-v1.2.0",
+		WorktreePath: resolveWorktree,
+	}); err == nil || !strings.Contains(err.Error(), `unit "0001-feature" requires resolution`) {
+		t.Fatalf("Advance(conflict) error = %v", err)
+	}
+
+	writeFile(t, filepath.Join(resolveWorktree, "base.txt"), "resolved after interruption\n")
+	gitRun(t, resolveWorktree, "add", "-A")
+	gitRun(t, resolveWorktree, "am", "--continue", "--no-verify", "--no-gpg-sign")
+
+	path, err := upstreamService.Continue(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "layerctl layer refresh 0001-feature") {
+		t.Fatalf("Continue(recover committed resolution) path = %q, error = %v", path, err)
+	}
+	_, layerService, _ := newServices(t, root)
+	if err := layerService.Refresh(t.Context(), "0001-feature", "upstream-advance"); err != nil {
+		t.Fatalf("Refresh(feature) error = %v", err)
+	}
+	upstreamService, _, projections = newServices(t, root)
+	if _, err := upstreamService.Continue(t.Context()); err != nil {
+		t.Fatalf("Continue(refreshed) error = %v", err)
+	}
+	assertUpstreamTag(t, root, "rust-v1.2.0")
+	assertFile(t, filepath.Join(resolveWorktree, "base.txt"), "resolved after interruption\n")
+	if err := projections.Delete(t.Context(), "upstream-advance"); err != nil {
+		t.Fatalf("Delete(resolved projection) error = %v", err)
+	}
+}
+
 func newCanonicalRepository(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "repository")
@@ -112,14 +147,22 @@ func newCanonicalRepository(t *testing.T) string {
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "upstream 1.2")
 	gitRun(t, root, "tag", "rust-v1.2.0")
+
+	gitRun(t, root, "switch", "--detach", v1Commit)
+	writeFile(t, filepath.Join(root, "foundation.txt"), "foundation\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-m", "saffrodex: foundation")
+	foundationPatch := capturePatch(t, root, "HEAD^", "HEAD")
+	writeFile(t, filepath.Join(root, "base.txt"), "feature\n")
+	writeFile(t, filepath.Join(root, "feature.txt"), "feature\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-m", "saffrodex: feature")
+	featurePatch := capturePatch(t, root, "HEAD^", "HEAD")
 	gitRun(t, root, "switch", "--orphan", "saffrodex-next")
 
 	writeFile(t, filepath.Join(root, "upstream.json"), fmt.Sprintf("{\n  \"tag\": \"rust-v1.0.0\",\n  \"commit\": %q\n}\n", v1Commit))
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "COMMIT_MSG"), "saffrodex: foundation\n")
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "overlay", "foundation.txt"), "foundation\n")
-	writeFile(t, filepath.Join(root, "layers", "0001-feature", "COMMIT_MSG"), "saffrodex: feature\n")
-	writeFile(t, filepath.Join(root, "layers", "0001-feature", "overlay", "feature.txt"), "feature\n")
-	writeFile(t, filepath.Join(root, "layers", "0001-feature", "patches", "001-base.patch"), "diff --git a/base.txt b/base.txt\n--- a/base.txt\n+++ b/base.txt\n@@ -1 +1 @@\n-base\n+feature\n")
+	writeFile(t, filepath.Join(root, "layers", "0000-foundation.patch"), string(foundationPatch))
+	writeFile(t, filepath.Join(root, "layers", "0001-feature.patch"), string(featurePatch))
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "canonical")
 	return root
@@ -200,4 +243,21 @@ func gitOutput(t *testing.T, directory string, args ...string) string {
 		t.Fatalf("git %v error = %v\n%s", args, err, output)
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func capturePatch(t *testing.T, directory, before, after string) []byte {
+	t.Helper()
+	git, err := gitrepo.Discover(t.Context(), directory)
+	if err != nil {
+		t.Fatalf("gitrepo.Discover() error = %v", err)
+	}
+	patches := &mailpatch.Service{Git: git}
+	content, err := patches.Capture(t.Context(), mailpatch.CaptureRequest{
+		Before: before,
+		After:  after,
+	})
+	if err != nil {
+		t.Fatalf("Capture(%s, %s) error = %v", before, after, err)
+	}
+	return content
 }

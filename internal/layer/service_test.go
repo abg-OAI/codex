@@ -14,6 +14,7 @@ import (
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
 	"github.com/abg-OAI/codex/layerctl/internal/layer"
+	"github.com/abg-OAI/codex/layerctl/internal/mailpatch"
 	"github.com/abg-OAI/codex/layerctl/internal/projection"
 )
 
@@ -42,14 +43,13 @@ func TestAddAndRefreshRoundTripProjectionTrees(t *testing.T) {
 	if err := layers.Add(t.Context(), layer.AddRequest{ID: "0002-added", Projection: "add-source"}); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
-	if got := readFile(t, filepath.Join(root, "layers", "0002-added", "COMMIT_MSG")); got != "saffrodex: added layer\n\nExact added body.\n" {
-		t.Fatalf("captured COMMIT_MSG = %q", got)
-	}
-	if mode := fileMode(t, filepath.Join(root, "layers", "0002-added", "overlay", "new.sh")); mode&0o111 == 0 {
-		t.Fatalf("captured new.sh mode = %v, want executable", mode)
-	}
-	if patch := readFile(t, filepath.Join(root, "layers", "0002-added", "patches", "001-changes.patch")); !strings.Contains(patch, "base.txt") || !strings.Contains(patch, "delete.txt") {
-		t.Fatalf("captured patch does not contain modified and deleted paths:\n%s", patch)
+	patch := readFile(t, filepath.Join(root, "layers", "0002-added.patch"))
+	if !strings.Contains(patch, "Subject: saffrodex: added layer") ||
+		!strings.Contains(patch, "Exact added body.") ||
+		!strings.Contains(patch, "base.txt") ||
+		!strings.Contains(patch, "delete.txt") ||
+		!strings.Contains(patch, "new.sh") {
+		t.Fatalf("captured layer patch is incomplete:\n%s", patch)
 	}
 	repository, err := definition.Load(root)
 	if err != nil {
@@ -92,8 +92,10 @@ func TestAddAndRefreshRoundTripProjectionTrees(t *testing.T) {
 	if err := layers.Refresh(t.Context(), "0001-feature", "refresh-source"); err != nil {
 		t.Fatalf("Refresh() error = %v", err)
 	}
-	if got := readFile(t, filepath.Join(root, "layers", "0001-feature", "COMMIT_MSG")); got != "saffrodex: refreshed feature\n\nExact refresh body.\n" {
-		t.Fatalf("refreshed COMMIT_MSG = %q", got)
+	patch = readFile(t, filepath.Join(root, "layers", "0001-feature.patch"))
+	if !strings.Contains(patch, "Subject: saffrodex: refreshed feature") ||
+		!strings.Contains(patch, "Exact refresh body.") {
+		t.Fatalf("refreshed layer patch has wrong message:\n%s", patch)
 	}
 
 	_, projections = newServices(t, root)
@@ -122,16 +124,26 @@ func newCanonicalRepository(t *testing.T) string {
 	gitRun(t, root, "commit", "-m", "upstream")
 	upstreamCommit := gitOutput(t, root, "rev-parse", "HEAD")
 	gitRun(t, root, "tag", "rust-v1.2.3")
+
+	writeFile(t, filepath.Join(root, "foundation.txt"), "foundation\n", 0o644)
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-m", "saffrodex: foundation")
+	foundationPatch := capturePatch(t, root, "HEAD^", "HEAD")
+	writeFile(t, filepath.Join(root, "base.txt"), "feature\n", 0o644)
+	writeFile(t, filepath.Join(root, "feature.txt"), "feature\n", 0o644)
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-m", "saffrodex: feature")
+	featurePatch := capturePatch(t, root, "HEAD^", "HEAD")
+	writeFile(t, filepath.Join(root, "tail.txt"), "tail\n", 0o644)
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-m", "saffrodex: tail")
+	tailPatch := capturePatch(t, root, "HEAD^", "HEAD")
 	gitRun(t, root, "switch", "--orphan", "saffrodex-next")
 
 	writeFile(t, filepath.Join(root, "upstream.json"), fmt.Sprintf("{\n  \"tag\": \"rust-v1.2.3\",\n  \"commit\": %q\n}\n", upstreamCommit), 0o644)
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "COMMIT_MSG"), "saffrodex: foundation\n", 0o644)
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "overlay", "foundation.txt"), "foundation\n", 0o644)
-	writeFile(t, filepath.Join(root, "layers", "0001-feature", "COMMIT_MSG"), "saffrodex: feature\n", 0o644)
-	writeFile(t, filepath.Join(root, "layers", "0001-feature", "overlay", "feature.txt"), "feature\n", 0o644)
-	writeFile(t, filepath.Join(root, "layers", "0001-feature", "patches", "001-base.patch"), "diff --git a/base.txt b/base.txt\n--- a/base.txt\n+++ b/base.txt\n@@ -1 +1 @@\n-base\n+feature\n", 0o644)
-	writeFile(t, filepath.Join(root, "layers", "0003-tail", "COMMIT_MSG"), "saffrodex: tail\n", 0o644)
-	writeFile(t, filepath.Join(root, "layers", "0003-tail", "overlay", "tail.txt"), "tail\n", 0o644)
+	writeFile(t, filepath.Join(root, "layers", "0000-foundation.patch"), string(foundationPatch), 0o644)
+	writeFile(t, filepath.Join(root, "layers", "0001-feature.patch"), string(featurePatch), 0o644)
+	writeFile(t, filepath.Join(root, "layers", "0003-tail.patch"), string(tailPatch), 0o644)
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "canonical")
 	return root
@@ -184,15 +196,6 @@ func readFile(t *testing.T, path string) string {
 	return string(content)
 }
 
-func fileMode(t *testing.T, path string) os.FileMode {
-	t.Helper()
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat(%q) error = %v", path, err)
-	}
-	return info.Mode()
-}
-
 func gitRun(t *testing.T, directory string, args ...string) {
 	t.Helper()
 	command := exec.CommandContext(t.Context(), "git", args...)
@@ -212,4 +215,21 @@ func gitOutput(t *testing.T, directory string, args ...string) string {
 		t.Fatalf("git %v error = %v\n%s", args, err, output)
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func capturePatch(t *testing.T, directory, before, after string) []byte {
+	t.Helper()
+	git, err := gitrepo.Discover(t.Context(), directory)
+	if err != nil {
+		t.Fatalf("gitrepo.Discover() error = %v", err)
+	}
+	patches := &mailpatch.Service{Git: git}
+	content, err := patches.Capture(t.Context(), mailpatch.CaptureRequest{
+		Before: before,
+		After:  after,
+	})
+	if err != nil {
+		t.Fatalf("Capture(%s, %s) error = %v", before, after, err)
+	}
+	return content
 }

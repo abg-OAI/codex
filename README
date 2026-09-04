@@ -23,7 +23,8 @@ Repository layout
 
 ```text
 .github/workflows/      Canonical release automation
-layers/NNNN-layer-slug/ Ordered COMMIT_MSG, overlay/, and patches/
+layers/NNNN-layer-slug.patch
+                        Ordered generated Git mail patches
 cmd/layerctl/           CLI entry point
 internal/               layerctl domains and adapters
 LAYERCTL.md             Layer maintenance and release operations
@@ -31,9 +32,9 @@ tools/                  Canonical repository operations
 upstream.json           Current exact Codex base
 ```
 
-Layer directory names are applied in lexical order.
+Layer patch names are applied in lexical order.
 Their four-digit prefixes are the only ordering mechanism.
-`layers/0000-foundation/` is the required first layer and carries changes
+`layers/0000-foundation.patch` is the required first layer and carries changes
 needed by every generated Saffrodex source tree.
 
 See `LAYERCTL.md` for projection, layer capture, upstream advancement,

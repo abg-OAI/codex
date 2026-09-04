@@ -11,19 +11,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
+	"strings"
 )
 
-var (
-	layerIDPattern = regexp.MustCompile(`^[0-9]{4}-[a-z0-9]+(-[a-z0-9]+)*$`)
-	patchPattern   = regexp.MustCompile(`^[0-9]{3}-.+\.patch$`)
-)
+var layerIDPattern = regexp.MustCompile(`^[0-9]{4}-[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // FoundationLayerID identifies the required first generated commit.
 const FoundationLayerID = "0000-foundation"
 
 // Repository is one complete canonical Saffrodex definition.
-// Layers are ordered lexically by their numbered directory names.
+// Layers are ordered lexically by their numbered patch names.
 type Repository struct {
 	Root     string
 	Upstream Upstream
@@ -37,14 +34,10 @@ type Upstream struct {
 	Commit string `json:"commit"`
 }
 
-// Unit is one generated commit. Overlay paths must not exist before the unit,
-// and patches modify or delete paths present at that point in the projection.
+// Unit is one generated commit serialized as one Git mail patch.
 type Unit struct {
-	ID                string
-	Directory         string
-	CommitMessagePath string
-	OverlayPath       string
-	PatchPaths        []string
+	ID        string
+	PatchPath string
 }
 
 // Load reads the canonical repository rooted at root and rejects malformed or
@@ -121,73 +114,31 @@ func loadLayers(path string) ([]Unit, error) {
 	}
 	layers := make([]Unit, 0, len(entries))
 	for _, entry := range entries {
-		id := entry.Name()
-		if !entry.IsDir() || !layerIDPattern.MatchString(id) {
-			return nil, fmt.Errorf("invalid layer entry %q", filepath.Join(path, id))
+		name := entry.Name()
+		if entry.IsDir() || filepath.Ext(name) != ".patch" {
+			return nil, fmt.Errorf("invalid layer entry %q", filepath.Join(path, name))
 		}
-		unit, err := loadUnit(id, filepath.Join(path, id))
+		id := strings.TrimSuffix(name, ".patch")
+		if err := ValidateLayerID(id); err != nil {
+			return nil, fmt.Errorf("invalid layer entry %q: %w", filepath.Join(path, name), err)
+		}
+		patchPath := filepath.Join(path, name)
+		info, err := entry.Info()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("inspect layer patch %q: %w", patchPath, err)
 		}
-		layers = append(layers, unit)
+		if !info.Mode().IsRegular() || info.Size() == 0 {
+			return nil, fmt.Errorf("layer patch %q must be a nonempty regular file", patchPath)
+		}
+		layers = append(layers, Unit{ID: id, PatchPath: patchPath})
 	}
 	return layers, nil
 }
 
-// ValidateLayerID rejects names that cannot be canonical layer directories.
+// ValidateLayerID rejects names that cannot identify canonical layer patches.
 func ValidateLayerID(id string) error {
 	if !layerIDPattern.MatchString(id) {
 		return fmt.Errorf("invalid layer ID %q", id)
 	}
 	return nil
-}
-
-func loadUnit(id, directory string) (Unit, error) {
-	if err := ValidateLayerID(id); err != nil {
-		return Unit{}, err
-	}
-
-	messagePath := filepath.Join(directory, "COMMIT_MSG")
-	message, err := os.ReadFile(messagePath)
-	if err != nil {
-		return Unit{}, fmt.Errorf("read %q: %w", messagePath, err)
-	}
-	if len(message) == 0 {
-		return Unit{}, fmt.Errorf("commit message %q is empty", messagePath)
-	}
-
-	overlayPath := filepath.Join(directory, "overlay")
-	if info, err := os.Stat(overlayPath); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return Unit{}, fmt.Errorf("inspect overlay %q: %w", overlayPath, err)
-		}
-		overlayPath = ""
-	} else if !info.IsDir() {
-		return Unit{}, fmt.Errorf("overlay %q is not a directory", overlayPath)
-	}
-
-	patchDirectory := filepath.Join(directory, "patches")
-	entries, err := os.ReadDir(patchDirectory)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return Unit{}, fmt.Errorf("read patch directory %q: %w", patchDirectory, err)
-	}
-	patches := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || !patchPattern.MatchString(entry.Name()) {
-			return Unit{}, fmt.Errorf("invalid patch entry %q", filepath.Join(patchDirectory, entry.Name()))
-		}
-		patches = append(patches, filepath.Join(patchDirectory, entry.Name()))
-	}
-	slices.Sort(patches)
-	if overlayPath == "" && len(patches) == 0 {
-		return Unit{}, fmt.Errorf("unit %q has no overlay or patches", id)
-	}
-
-	return Unit{
-		ID:                id,
-		Directory:         directory,
-		CommitMessagePath: messagePath,
-		OverlayPath:       overlayPath,
-		PatchPaths:        patches,
-	}, nil
 }

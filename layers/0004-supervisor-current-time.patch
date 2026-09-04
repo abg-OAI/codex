@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Abhinav Gupta <abg@openai.com>
+Date: Mon, 24 Aug 2026 22:15:31 +0000
+Subject: Give supervisor check-ins current time
+
+A supervisor wake inherited the prior relative snooze but no current
+clock value, so it could repeat the original delay after that delay had
+already elapsed.
+
+Read the parent session clock for every helper spawn and place the
+resulting UTC instant in the truncation-preserved prompt prefix. This
+leaves deadline interpretation to the supervisor.
+
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
+index 7fde17392fb149eb22b8e3adc86cb93480e1d354..71009a3785571f6320ad265d9f7f4c69a49c6e77 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
++++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
+@@ -6,6 +6,8 @@ use std::sync::atomic::AtomicU64;
+ use std::sync::atomic::Ordering;
+ use std::time::Duration;
+
++use chrono::DateTime;
++use chrono::Utc;
+ use codex_extension_api::ThreadIdleCause;
+ use codex_protocol::AgentPath;
+ use codex_protocol::ThreadId;
+@@ -359,7 +361,14 @@ async fn spawn_helper(
+         agent_role: Some(HELPER_ROLE_NAME.to_string()),
+     });
+     let continuity = continuity(parent, goal).await;
+-    let prompt = render_checkin_prompt(parent.thread_id, &goal.objective, &continuity);
++    let checkin_time = parent
++        .services
++        .time_provider
++        .current_time(parent.thread_id)
++        .await
++        .map_err(|error| format!("failed to read current time: {error:#}"))?;
++    let prompt =
++        render_checkin_prompt(parent.thread_id, checkin_time, &goal.objective, &continuity);
+     let helper = Box::pin(
+         parent
+             .services
+@@ -389,9 +398,19 @@ async fn spawn_helper(
+ }
+
+ /// Renders one bounded model-visible assignment for the ephemeral helper.
+-fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str) -> String {
++///
++/// The time comes from the parent session's clock for this helper spawn. It is
++/// kept in the prefix that middle truncation preserves so inherited history
++/// cannot become the helper's only evidence of the current time.
++fn render_checkin_prompt(
++    parent_id: ThreadId,
++    checkin_time: DateTime<Utc>,
++    objective: &str,
++    continuity: &str,
++) -> String {
++    let checkin_time = checkin_time.format("%Y-%m-%d %H:%M:%S UTC");
+     let prompt = format!(
+-        "# Supervisor Check-in\n\nParent thread: {parent_id}\n\nActive goal:\n{objective}\n\nContinuity:\n{continuity}"
++        "# Supervisor Check-in\n\nCurrent UTC time: {checkin_time}\n\nParent thread: {parent_id}\n\nActive goal:\n{objective}\n\nContinuity:\n{continuity}"
+     );
+     truncate_text(&prompt, TruncationPolicy::Tokens(MAX_CHECKIN_PROMPT_TOKENS))
+ }
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
+index fa20a7700be328f11b72d400e87b562c9e00f39a..5c09fcfe6bde59806301a75ae9d0b4f948e376ec 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
++++ b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
+@@ -1,5 +1,7 @@
+ use super::*;
+
++use chrono::DateTime;
++use chrono::Utc;
+ use pretty_assertions::assert_eq;
+
+ #[test]
+@@ -11,11 +13,40 @@ fn failure_retry_is_exponential_and_capped() {
+ }
+
+ #[test]
+-fn checkin_prompt_bounds_large_goal_objectives() {
++fn each_checkin_prompt_includes_its_current_time() {
++    let parent_id =
++        ThreadId::from_string("018f0000-0000-7000-8000-000000000001").expect("thread id");
++    let objective = "Release when CI becomes green.";
++    let continuity =
++        r#"{"goal_updated_at":1787288448,"previous_action":{"snooze":{"delay_seconds":1477}}}"#;
++    let first_checkin_time: DateTime<Utc> = "2026-08-21T05:00:48Z".parse().expect("UTC time");
++    let next_checkin_time: DateTime<Utc> = "2026-08-21T05:25:25Z".parse().expect("UTC time");
++
++    let prompts = [
++        render_checkin_prompt(parent_id, first_checkin_time, objective, continuity),
++        render_checkin_prompt(parent_id, next_checkin_time, objective, continuity),
++    ];
++
++    assert_eq!(
++        prompts,
++        [
++            "# Supervisor Check-in\n\nCurrent UTC time: 2026-08-21 05:00:48 UTC\n\nParent thread: 018f0000-0000-7000-8000-000000000001\n\nActive goal:\nRelease when CI becomes green.\n\nContinuity:\n{\"goal_updated_at\":1787288448,\"previous_action\":{\"snooze\":{\"delay_seconds\":1477}}}"
++                .to_string(),
++            "# Supervisor Check-in\n\nCurrent UTC time: 2026-08-21 05:25:25 UTC\n\nParent thread: 018f0000-0000-7000-8000-000000000001\n\nActive goal:\nRelease when CI becomes green.\n\nContinuity:\n{\"goal_updated_at\":1787288448,\"previous_action\":{\"snooze\":{\"delay_seconds\":1477}}}"
++                .to_string(),
++        ]
++    );
++}
++
++#[test]
++fn checkin_prompt_bounds_large_goal_objectives_without_losing_current_time() {
+     let objective = "long objective ".repeat(2_000);
++    let checkin_time: DateTime<Utc> = "2026-08-21T05:25:25Z".parse().expect("UTC time");
+
+-    let prompt = render_checkin_prompt(ThreadId::new(), &objective, "{}");
++    let prompt = render_checkin_prompt(ThreadId::new(), checkin_time, &objective, "{}");
+
+-    assert!(prompt.starts_with("# Supervisor Check-in"));
++    assert!(
++        prompt.starts_with("# Supervisor Check-in\n\nCurrent UTC time: 2026-08-21 05:25:25 UTC")
++    );
+     assert!(prompt.len() < objective.len());
+ }

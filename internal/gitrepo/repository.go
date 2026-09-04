@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -40,17 +41,35 @@ func (r *Repository) Run(ctx context.Context, directory string, args ...string) 
 
 // Bytes runs Git in directory without altering standard output bytes.
 func (r *Repository) Bytes(ctx context.Context, directory string, args ...string) ([]byte, error) {
-	return commandOutput(ctx, directory, args...)
+	return commandOutput(ctx, directory, Invocation{Arguments: args})
+}
+
+// Invoke runs Git with input and environment needed by commands that construct
+// objects without exposing temporary process files to their callers.
+func (r *Repository) Invoke(ctx context.Context, directory string, invocation Invocation) ([]byte, error) {
+	return commandOutput(ctx, directory, invocation)
+}
+
+// Invocation describes one system-Git process. Environment entries override
+// inherited values with the same name.
+type Invocation struct {
+	Arguments   []string
+	Stdin       []byte
+	Environment []string
 }
 
 func output(ctx context.Context, directory string, args ...string) (string, error) {
-	output, err := commandOutput(ctx, directory, args...)
+	output, err := commandOutput(ctx, directory, Invocation{Arguments: args})
 	return strings.TrimSpace(string(output)), err
 }
 
-func commandOutput(ctx context.Context, directory string, args ...string) ([]byte, error) {
-	command := exec.CommandContext(ctx, "git", args...)
+func commandOutput(ctx context.Context, directory string, invocation Invocation) ([]byte, error) {
+	command := exec.CommandContext(ctx, "git", invocation.Arguments...)
 	command.Dir = directory
+	command.Stdin = bytes.NewReader(invocation.Stdin)
+	if len(invocation.Environment) > 0 {
+		command.Env = append(os.Environ(), invocation.Environment...)
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	command.Stdout = &stdout
@@ -61,9 +80,9 @@ func commandOutput(ctx context.Context, directory string, args ...string) ([]byt
 			detail = strings.TrimSpace(stdout.String())
 		}
 		if detail == "" {
-			return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+			return nil, fmt.Errorf("git %s: %w", strings.Join(invocation.Arguments, " "), err)
 		}
-		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, detail)
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(invocation.Arguments, " "), err, detail)
 	}
 	return stdout.Bytes(), nil
 }

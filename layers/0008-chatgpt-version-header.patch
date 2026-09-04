@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: abg-OAI <abg@openai.com>
+Date: Thu, 27 Aug 2026 23:11:29 -0700
+Subject: Send upstream version to ChatGPT
+
+Saffrodex release versions include build metadata that the ChatGPT model
+catalog does not recognize for eligibility checks.
+
+Strip build metadata from the built-in OpenAI provider version header
+while preserving the upstream prerelease. Versions without build metadata
+remain unchanged.
+
+diff --git a/codex-rs/model-provider-info/src/lib.rs b/codex-rs/model-provider-info/src/lib.rs
+index 3fb3e87a2aa9b034713687b20b7f11c38b182389..6b595edb2f24ff1a3a30f00e2cd6515c4593d330 100644
+--- a/codex-rs/model-provider-info/src/lib.rs
++++ b/codex-rs/model-provider-info/src/lib.rs
+@@ -59,6 +59,18 @@ const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer su
+ pub const LEGACY_OLLAMA_CHAT_PROVIDER_ID: &str = "ollama-chat";
+ pub const OLLAMA_CHAT_PROVIDER_REMOVED_ERROR: &str = "`ollama-chat` is no longer supported.\nHow to fix: replace `ollama-chat` with `ollama` in `model_provider`, `oss_provider`, or `--local-provider`.\nMore info: https://github.com/openai/codex/discussions/7782";
+
++/// Returns the upstream Codex version used for ChatGPT model eligibility.
++///
++/// Saffrodex release versions use SemVer build metadata, but the ChatGPT model
++/// catalog does not accept build metadata in the `version` header. The
++/// prerelease component must remain because model eligibility can depend on
++/// the upstream alpha version.
++fn openai_client_version_header(version: &str) -> &str {
++    version
++        .split_once('+')
++        .map_or(version, |(upstream_version, _)| upstream_version)
++}
++
+ /// Wire protocol that the provider speaks.
+ #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
+ #[serde(rename_all = "lowercase")]
+@@ -395,9 +407,12 @@ impl ModelProviderInfo {
+             wire_api: WireApi::Responses,
+             query_params: None,
+             http_headers: Some(
+-                [("version".to_string(), env!("CARGO_PKG_VERSION").into())]
+-                    .into_iter()
+-                    .collect(),
++                [(
++                    "version".to_string(),
++                    openai_client_version_header(env!("CARGO_PKG_VERSION")).into(),
++                )]
++                .into_iter()
++                .collect(),
+             ),
+             env_http_headers: Some(
+                 [
+diff --git a/codex-rs/model-provider-info/src/model_provider_info_tests.rs b/codex-rs/model-provider-info/src/model_provider_info_tests.rs
+index d08af0ffb54c266d81465cd056944e2085889b97..1c4b91e7669fc0890e944cec9cea349f2e5a279b 100644
+--- a/codex-rs/model-provider-info/src/model_provider_info_tests.rs
++++ b/codex-rs/model-provider-info/src/model_provider_info_tests.rs
+@@ -154,6 +154,32 @@ fn test_header_auth_uses_chatgpt_codex_base_url() {
+     assert_eq!(api_provider.base_url, CHATGPT_CODEX_BASE_URL);
+ }
+
++#[test]
++fn openai_client_version_header_preserves_prerelease_and_strips_build_metadata() {
++    assert_eq!(
++        openai_client_version_header("0.150.0-alpha.11+saffrodex.0"),
++        "0.150.0-alpha.11"
++    );
++    assert_eq!(
++        openai_client_version_header("0.150.0-alpha.11"),
++        "0.150.0-alpha.11"
++    );
++}
++
++#[test]
++fn openai_provider_uses_upstream_client_version_header() {
++    let api_provider = ModelProviderInfo::create_openai_provider(/*base_url*/ None)
++        .to_api_provider(Some(AuthMode::Chatgpt))
++        .expect("OpenAI provider should build API provider");
++
++    assert_eq!(
++        api_provider.headers.get("version"),
++        Some(&HeaderValue::from_static(openai_client_version_header(
++            env!("CARGO_PKG_VERSION")
++        )))
++    );
++}
++
+ #[test]
+ fn codex_backend_routes_require_codex_base_url() {
+     for (base_url, expected) in [
