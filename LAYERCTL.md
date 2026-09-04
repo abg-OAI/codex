@@ -24,6 +24,8 @@ projection without checking whether its work was captured.
 Read the projected tree's `AGENTS.md` before changing Codex or Saffron source.
 Use `layerctl layer add` or `layerctl layer refresh` to capture accepted
 projection work instead of hand-editing generated patches.
+The hydrated projection commit is the source-review surface;
+the canonical mail patch is its generated storage form.
 
 Create a layer
 --------------
@@ -33,7 +35,7 @@ Create new feature work from the generated predecessor:
 ```text
 go run ./cmd/layerctl projection create <name> \
   --worktree <path> --through <predecessor>
-# Edit and commit in <path>; the final commit message becomes COMMIT_MSG.
+# Edit and commit in <path>.
 go run ./cmd/layerctl layer add <NNNN-layer-slug> --from <name>
 go run ./cmd/layerctl projection delete <name>
 ```
@@ -53,7 +55,10 @@ go run ./cmd/layerctl layer refresh <layer> --from <name>
 go run ./cmd/layerctl projection delete <name>
 ```
 
-Capture uses the projection head as the complete desired layer result.
+Capture uses the projection head's complete tree, commit message,
+author, and author date as the desired layer result.
+Git mail syntax reserves a standalone `---` line,
+so `layerctl` rejects commit messages that contain one.
 
 Advance upstream
 ----------------
@@ -73,11 +78,13 @@ successfully.
 
 When a layer conflicts, resolve its complete desired tree in the reported
 `upstream-advance` worktree and run `layerctl upstream continue`.
-The tool commits that resolved layer and directs the required
+`layerctl` owns the interrupted Git mail operation,
+commits that resolved layer, and directs the required
 `layerctl layer refresh <layer> --from upstream-advance` command.
 Run `layerctl upstream continue` again; it independently reapplies the
 refreshed definition and proceeds only when the generated tree matches.
-Use `layerctl upstream abort` to discard the local advancement state.
+Use `layerctl upstream abort` to discard both the interrupted layer
+and the local advancement state.
 
 After a successful advance, run
 `layerctl projection delete upstream-advance` to remove its completed local

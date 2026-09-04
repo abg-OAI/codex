@@ -9,16 +9,12 @@ import (
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 )
 
-func TestLoadSortsNumberedLayersAndPatches(t *testing.T) {
+func TestLoadSortsNumberedLayerPatches(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "upstream.json"), `{"tag":"rust-v1.2.3","commit":"abc123"}`)
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "COMMIT_MSG"), "foundation\n")
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "overlay", "foundation.txt"), "foundation\n")
-	writeFile(t, filepath.Join(root, "layers", "0002-second", "COMMIT_MSG"), "second\n")
-	writeFile(t, filepath.Join(root, "layers", "0002-second", "patches", "020-later.patch"), "later\n")
-	writeFile(t, filepath.Join(root, "layers", "0002-second", "patches", "010-earlier.patch"), "earlier\n")
-	writeFile(t, filepath.Join(root, "layers", "0001-first", "COMMIT_MSG"), "first\n")
-	writeFile(t, filepath.Join(root, "layers", "0001-first", "overlay", "first.txt"), "first\n")
+	writeFile(t, filepath.Join(root, "layers", "0000-foundation.patch"), "foundation\n")
+	writeFile(t, filepath.Join(root, "layers", "0002-second.patch"), "second\n")
+	writeFile(t, filepath.Join(root, "layers", "0001-first.patch"), "first\n")
 
 	repository, err := definition.Load(root)
 	if err != nil {
@@ -29,33 +25,36 @@ func TestLoadSortsNumberedLayersAndPatches(t *testing.T) {
 	if want := []string{"0000-foundation", "0001-first", "0002-second"}; !reflect.DeepEqual(gotLayers, want) {
 		t.Fatalf("layer order = %v, want %v", gotLayers, want)
 	}
-	gotPatches := []string{
-		filepath.Base(repository.Layers[2].PatchPaths[0]),
-		filepath.Base(repository.Layers[2].PatchPaths[1]),
-	}
-	if want := []string{"010-earlier.patch", "020-later.patch"}; !reflect.DeepEqual(gotPatches, want) {
-		t.Fatalf("patch order = %v, want %v", gotPatches, want)
+	if got, want := filepath.Base(repository.Layers[2].PatchPath), "0002-second.patch"; got != want {
+		t.Fatalf("last patch = %q, want %q", got, want)
 	}
 }
 
 func TestLoadRejectsUnnumberedLayer(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "upstream.json"), `{"tag":"rust-v1.2.3","commit":"abc123"}`)
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "COMMIT_MSG"), "foundation\n")
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "overlay", "foundation.txt"), "foundation\n")
-	writeFile(t, filepath.Join(root, "layers", "feature", "COMMIT_MSG"), "feature\n")
-	writeFile(t, filepath.Join(root, "layers", "feature", "overlay", "feature.txt"), "feature\n")
+	writeFile(t, filepath.Join(root, "layers", "0000-foundation.patch"), "foundation\n")
+	writeFile(t, filepath.Join(root, "layers", "feature.patch"), "feature\n")
 
 	if _, err := definition.Load(root); err == nil {
-		t.Fatal("Load() error = nil, want invalid layer directory error")
+		t.Fatal("Load() error = nil, want invalid layer patch error")
+	}
+}
+
+func TestLoadRejectsLegacyLayerDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "upstream.json"), `{"tag":"rust-v1.2.3","commit":"abc123"}`)
+	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "COMMIT_MSG"), "foundation\n")
+
+	if _, err := definition.Load(root); err == nil {
+		t.Fatal("Load() error = nil, want legacy layer directory error")
 	}
 }
 
 func TestLoadAllowsRepositoryWithoutProductLayers(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "upstream.json"), `{"tag":"rust-v1.2.3","commit":"abc123"}`)
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "COMMIT_MSG"), "foundation\n")
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation", "overlay", "foundation.txt"), "foundation\n")
+	writeFile(t, filepath.Join(root, "layers", "0000-foundation.patch"), "foundation\n")
 
 	repository, err := definition.Load(root)
 	if err != nil {

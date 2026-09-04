@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
+	"github.com/abg-OAI/codex/layerctl/internal/mailpatch"
 )
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -163,75 +163,29 @@ func (s *Service) resolveUpstream(ctx context.Context) (string, error) {
 // ApplyUnit applies one definition to worktree and creates its generated commit.
 // Callers own the worktree's starting commit and any recovery after failure.
 func (s *Service) ApplyUnit(ctx context.Context, worktree string, unit definition.Unit) error {
-	if unit.OverlayPath != "" {
-		if err := copyOverlay(unit.OverlayPath, worktree); err != nil {
-			return err
-		}
-	}
-	for _, patchPath := range unit.PatchPaths {
-		if err := s.Git.Run(ctx, worktree, "apply", "--binary", patchPath); err != nil {
-			return fmt.Errorf("apply patch %q: %w", patchPath, err)
-		}
-	}
-	if err := s.Git.Run(ctx, worktree, "add", "-A"); err != nil {
-		return fmt.Errorf("stage generated tree: %w", err)
-	}
-	if err := s.Git.Run(ctx, worktree, "commit", "--cleanup=verbatim", "-F", unit.CommitMessagePath); err != nil {
-		return fmt.Errorf("commit generated tree: %w", err)
+	patches := &mailpatch.Service{Git: s.Git}
+	if err := patches.Apply(ctx, worktree, unit.PatchPath); err != nil {
+		return fmt.Errorf("apply layer patch %q: %w", unit.PatchPath, err)
 	}
 	return nil
 }
 
-func copyOverlay(sourceRoot, targetRoot string) error {
-	return filepath.WalkDir(sourceRoot, func(sourcePath string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		relativePath, err := filepath.Rel(sourceRoot, sourcePath)
-		if err != nil {
-			return fmt.Errorf("resolve overlay path %q: %w", sourcePath, err)
-		}
-		if relativePath == "." {
-			return nil
-		}
-		targetPath := filepath.Join(targetRoot, relativePath)
-		info, err := entry.Info()
-		if err != nil {
-			return fmt.Errorf("inspect overlay path %q: %w", sourcePath, err)
-		}
-		if entry.IsDir() {
-			if err := os.MkdirAll(targetPath, info.Mode().Perm()); err != nil {
-				return fmt.Errorf("create overlay directory %q: %w", targetPath, err)
-			}
-			return nil
-		}
-		if _, err := os.Lstat(targetPath); err == nil {
-			return fmt.Errorf("overlay target %q already exists", relativePath)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("inspect overlay target %q: %w", targetPath, err)
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(sourcePath)
-			if err != nil {
-				return fmt.Errorf("read overlay symlink %q: %w", sourcePath, err)
-			}
-			if err := os.Symlink(target, targetPath); err != nil {
-				return fmt.Errorf("create overlay symlink %q: %w", targetPath, err)
-			}
-			return nil
-		}
-		if !entry.Type().IsRegular() {
-			return fmt.Errorf("unsupported overlay entry %q", sourcePath)
-		}
-		content, err := os.ReadFile(sourcePath)
-		if err != nil {
-			return fmt.Errorf("read overlay file %q: %w", sourcePath, err)
-		}
-		if err := os.WriteFile(targetPath, content, info.Mode().Perm()); err != nil {
-			return fmt.Errorf("write overlay file %q: %w", targetPath, err)
-		}
-		return nil
-	})
+// ContinueUnit commits the staged resolution for an interrupted ApplyUnit.
+func (s *Service) ContinueUnit(ctx context.Context, worktree string) error {
+	patches := &mailpatch.Service{Git: s.Git}
+	return patches.Continue(ctx, worktree)
+}
+
+// AbortUnit restores the worktree to the commit before an interrupted ApplyUnit.
+func (s *Service) AbortUnit(ctx context.Context, worktree string) error {
+	patches := &mailpatch.Service{Git: s.Git}
+	return patches.Abort(ctx, worktree)
+}
+
+// UnitApplyInProgress reports whether ApplyUnit left a git-am operation.
+func (s *Service) UnitApplyInProgress(ctx context.Context, worktree string) (bool, error) {
+	patches := &mailpatch.Service{Git: s.Git}
+	return patches.InProgress(ctx, worktree)
 }
 
 func (s *Service) requireAbsent(ctx context.Context, name string) error {
