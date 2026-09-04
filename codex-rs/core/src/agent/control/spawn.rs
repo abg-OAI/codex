@@ -237,6 +237,7 @@ impl AgentControl {
             SpawnInitialInput::UserInput(initial_input),
             session_source,
             SpawnAgentOptions::default(),
+            AgentVisibility::Listed,
         ))
         .await?;
         Ok(spawned_agent.thread_id)
@@ -255,6 +256,28 @@ impl AgentControl {
             SpawnInitialInput::UserInput(initial_input),
             session_source,
             options,
+            AgentVisibility::Listed,
+        ))
+        .await
+    }
+
+    /// Spawns an unlisted, uncounted helper owned by internal coordination.
+    ///
+    /// The caller must supply a `ThreadSpawn` source so parentage and a unique
+    /// agent path remain available for lifecycle cleanup.
+    pub(crate) async fn spawn_hidden_agent_with_metadata(
+        &self,
+        config: Config,
+        initial_input: Vec<UserInput>,
+        session_source: SessionSource,
+        options: SpawnAgentOptions,
+    ) -> CodexResult<LiveAgent> {
+        Box::pin(self.spawn_agent_internal(
+            config,
+            SpawnInitialInput::UserInput(initial_input),
+            Some(session_source),
+            options,
+            AgentVisibility::Hidden,
         ))
         .await
     }
@@ -272,6 +295,7 @@ impl AgentControl {
             SpawnInitialInput::InterAgentCommunication(communication, context),
             session_source,
             options,
+            AgentVisibility::Listed,
         ))
         .await
     }
@@ -589,8 +613,10 @@ impl AgentControl {
         initial_input: SpawnInitialInput,
         session_source: Option<SessionSource>,
         options: SpawnAgentOptions,
+        visibility: AgentVisibility,
     ) -> CodexResult<LiveAgent> {
         let state = self.upgrade()?;
+        let hidden_helper = visibility == AgentVisibility::Hidden;
         let multi_agent_version = state
             .effective_multi_agent_version_for_spawn(
                 &InitialHistory::New,
@@ -600,11 +626,12 @@ impl AgentControl {
                 &config,
             )
             .await;
-        if let Some(session_source) = session_source.as_ref() {
+        if !hidden_helper && let Some(session_source) = session_source.as_ref() {
             self.ensure_execution_capacity(multi_agent_version, session_source)?;
         }
         let agent_max_threads = config.effective_agent_max_threads(multi_agent_version);
-        let spawn_uses_v2_residency = multi_agent_version == MultiAgentVersion::V2
+        let spawn_uses_v2_residency = !hidden_helper
+            && multi_agent_version == MultiAgentVersion::V2
             && session_source
                 .as_ref()
                 .is_some_and(is_v2_resident_session_source);
@@ -621,7 +648,11 @@ impl AgentControl {
         } else {
             agent_max_threads
         };
-        let mut reservation = self.state.reserve_spawn_slot(reservation_max_threads)?;
+        let mut reservation = if hidden_helper {
+            self.state.reserve_internal_spawn_slot()
+        } else {
+            self.state.reserve_spawn_slot(reservation_max_threads)?
+        };
         let inheritance = SpawnAgentThreadInheritance {
             environments: self
                 .inherited_environments_for_source(&state, session_source.as_ref())
@@ -645,6 +676,7 @@ impl AgentControl {
                     depth,
                     agent_path,
                     agent_role,
+                    visibility,
                     /*preferred_agent_nickname*/ None,
                 )?;
                 (Some(session_source), agent_metadata)
@@ -701,11 +733,12 @@ impl AgentControl {
             residency_slot.commit(new_thread.thread_id);
         }
 
-        if let Some(SessionSource::SubAgent(
-            subagent_source @ SubAgentSource::ThreadSpawn {
-                parent_thread_id, ..
-            },
-        )) = notification_source.as_ref()
+        if !hidden_helper
+            && let Some(SessionSource::SubAgent(
+                subagent_source @ SubAgentSource::ThreadSpawn {
+                    parent_thread_id, ..
+                },
+            )) = notification_source.as_ref()
         {
             let client_metadata = match state.get_thread(*parent_thread_id).await {
                 Ok(parent_thread) => parent_thread.session.app_server_client_metadata().await,
@@ -737,14 +770,15 @@ impl AgentControl {
         // Notify a new thread has been created. This notification will be processed by clients
         // to subscribe or drain this newly created thread.
         // TODO(jif) add helper for drain
-        state.notify_thread_created(new_thread.thread_id);
-
-        self.persist_thread_spawn_edge_for_source(
-            new_thread.thread.as_ref(),
-            new_thread.thread_id,
-            notification_source.as_ref(),
-        )
-        .await;
+        if !hidden_helper {
+            state.notify_thread_created(new_thread.thread_id);
+            self.persist_thread_spawn_edge_for_source(
+                new_thread.thread.as_ref(),
+                new_thread.thread_id,
+                notification_source.as_ref(),
+            )
+            .await;
+        }
 
         let start_options = TurnStartOptions {
             parent_turn_id: options.parent_turn_id,
@@ -768,7 +802,7 @@ impl AgentControl {
                 .await?;
             }
         }
-        if multi_agent_version != MultiAgentVersion::V2 {
+        if !hidden_helper && multi_agent_version != MultiAgentVersion::V2 {
             let child_reference = agent_metadata
                 .agent_path
                 .as_ref()
@@ -917,7 +951,9 @@ impl AgentControl {
         // Compaction stores response items separately, so sanitize both top-level messages and
         // compacted replacement histories with the same policy.
         let retain_forked_item = |response_item: &mut ResponseItem, replaced: &mut bool| {
-            if matches!(response_item, ResponseItem::AgentMessage { .. }) {
+            if matches!(response_item, ResponseItem::AgentMessage { .. })
+                && !crate::saffron::goal_supervisor::is_helper_source(&session_source)
+            {
                 return false;
             }
             if !retain_forked_developer_message(
@@ -974,7 +1010,8 @@ impl AgentControl {
             true
         };
         forked_rollout_items.retain_mut(|item| {
-            if !keep_forked_rollout_item(item, preserve_reference_context_item)
+            if (!keep_forked_rollout_item(item, preserve_reference_context_item)
+                && !crate::saffron::goal_supervisor::preserves_fork_item(&session_source, item))
                 || destination_history_mode == Some(ThreadHistoryMode::Paginated)
                     && matches!(
                         &*item,
@@ -1217,6 +1254,7 @@ impl AgentControl {
                 depth,
                 agent_path.or(resumed_agent_path),
                 resumed_agent_role,
+                AgentVisibility::Listed,
                 resumed_agent_nickname,
             )?,
             other => (other, AgentMetadata::default()),

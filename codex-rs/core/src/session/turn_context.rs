@@ -705,6 +705,22 @@ impl Session {
         config
     }
 
+    /// Snapshots the configuration inherited by an internal child thread.
+    pub(crate) async fn effective_session_config(&self) -> Config {
+        let state = self.state.lock().await;
+        self.build_effective_session_config(&state.session_configuration)
+    }
+
+    /// Returns the live source identity used for child-thread relationships.
+    pub(crate) async fn session_source(&self) -> SessionSource {
+        self.state
+            .lock()
+            .await
+            .session_configuration
+            .session_source
+            .clone()
+    }
+
     #[allow(clippy::too_many_arguments)]
     #[instrument(name = "turn_context.make", level = "trace", skip_all)]
     pub(crate) fn make_turn_context(
