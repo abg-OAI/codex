@@ -424,6 +424,31 @@ fn committed_agent_path_is_indexed_until_release() {
 }
 
 #[test]
+fn internal_spawn_is_hidden_and_does_not_consume_capacity() {
+    let registry = Arc::new(AgentRegistry::default());
+    let thread_id = ThreadId::new();
+    let mut reservation = registry.reserve_internal_spawn_slot();
+    reservation
+        .reserve_agent_path(&agent_path("/root/goal_supervisor"))
+        .expect("reserve helper path");
+    reservation.commit(AgentMetadata {
+        agent_id: Some(thread_id),
+        agent_path: Some(agent_path("/root/goal_supervisor")),
+        agent_role: Some("goal_supervisor".to_string()),
+        visibility: AgentVisibility::Hidden,
+        ..Default::default()
+    });
+
+    assert!(registry.live_agents().is_empty());
+    let ordinary = registry
+        .reserve_spawn_slot(Some(1))
+        .expect("internal helper must not consume user agent capacity");
+    drop(ordinary);
+    registry.release_spawned_thread(thread_id);
+    assert!(registry.agent_metadata_for_thread(thread_id).is_none());
+}
+
+#[test]
 fn replacing_agent_metadata_updates_thread_identity_index() {
     let registry = AgentRegistry::default();
     let previous_thread_id = ThreadId::new();
