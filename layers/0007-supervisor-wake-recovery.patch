@@ -13,7 +13,7 @@ per-home ownership lock. Unload scheduler-materialized roots only after
 the goal is inactive and the supervisor runtime is quiescent.
 
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 2ccc1e3fe51dc36e7ddecf98944ac40267b2dac6..afc64d58bbae3da3ec39f1c47070094dd1a3ed7d 100644
+index da84311484c85513c358db59c9fba652b6b02522..8d310953b4b50e682cb1bc452b49746a9d7f8f95 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -73,6 +73,8 @@ use codex_app_server_protocol::JSONRPCResponse;
@@ -33,7 +33,7 @@ index 2ccc1e3fe51dc36e7ddecf98944ac40267b2dac6..afc64d58bbae3da3ec39f1c47070094d
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -507,6 +510,24 @@ impl MessageProcessor {
+@@ -509,6 +512,24 @@ impl MessageProcessor {
              turn_cost_worker.as_ref().map(TurnCostWorker::handle),
              config_warnings,
          );
@@ -58,7 +58,7 @@ index 2ccc1e3fe51dc36e7ddecf98944ac40267b2dac6..afc64d58bbae3da3ec39f1c47070094d
          let turn_processor = TurnRequestProcessor::new(
              auth_manager,
              Arc::clone(&thread_manager),
-@@ -589,6 +610,7 @@ impl MessageProcessor {
+@@ -591,6 +612,7 @@ impl MessageProcessor {
              project_processor,
              remote_control_processor,
              search_processor,
@@ -66,7 +66,7 @@ index 2ccc1e3fe51dc36e7ddecf98944ac40267b2dac6..afc64d58bbae3da3ec39f1c47070094d
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -603,6 +625,9 @@ impl MessageProcessor {
+@@ -605,6 +627,9 @@ impl MessageProcessor {
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
          self.skills_watcher.shutdown();
@@ -137,10 +137,10 @@ index 0000000000000000000000000000000000000000..934f511d414d2f698f028b926fb1c147
 +    assert!(unloading_state.should_unload_now());
 +}
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index fe4bec3135ff897987e47e1ea7b2d5adb928e8fa..e9aa7026a8728db52bb4fa4a0a724396b3a8d092 100644
+index 9e28aef7b22ab9e1caf650c64d8910bd2c0caec8..3644a1fe7c57b3940c448d35c6106bfa6b4bd416 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -267,6 +267,15 @@ fn has_model_resume_override(
+@@ -275,6 +275,15 @@ fn has_model_resume_override(
              .is_some_and(|overrides| overrides.contains_key("model_reasoning_effort"))
  }
 
@@ -156,22 +156,7 @@ index fe4bec3135ff897987e47e1ea7b2d5adb928e8fa..e9aa7026a8728db52bb4fa4a0a724396
  fn has_permission_override(
      request_overrides: Option<&HashMap<String, serde_json::Value>>,
      typesafe_overrides: &ConfigOverrides,
-@@ -3831,12 +3840,8 @@ impl ThreadRequestProcessor {
-                 return Ok(());
-             }
-         };
--        if !has_explicit_model_resume_override
--            && persisted_metadata
--                .as_ref()
--                .is_some_and(|metadata| metadata.reasoning_effort.is_none())
--        {
--            config.model_reasoning_effort = None;
-+        if !has_explicit_model_resume_override {
-+            preserve_unset_persisted_reasoning_effort(&mut config, persisted_metadata.as_ref());
-         }
-
-         let response_history = thread_history.clone();
-@@ -6196,6 +6201,8 @@ fn build_thread_from_loaded_snapshot(
+@@ -6257,6 +6266,8 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -775,7 +760,7 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..18428ba72c632a9a887ff285a86525e5
 +        .collect()
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 13e93748e380dd324552fa91a3e130a1af044cdc..60b5dd8b754a77239dcb4b1bfbee478ae6291adc 100644
+index ce8de9840c1d33e91ddb13b3c7fcd13b8fda1c10..3a7d36b0558e1ab528576c25f52ca878147bb435 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -297,6 +297,21 @@ impl CodexThread {
@@ -801,10 +786,10 @@ index 13e93748e380dd324552fa91a3e130a1af044cdc..60b5dd8b754a77239dcb4b1bfbee478a
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index db97f3b236a3228da303c0d2eaebf91a72460fae..beb68a20ade24b77d388941ba4e39d0d48bfc7c0 100644
+index 3375ed1084acc820d584e766242b1d6febd39e5a..a552ae6ddfa4dec2670731719243f77d16232dc0 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -127,6 +127,9 @@ pub use codex_prompts as review_prompts;
+@@ -128,6 +128,9 @@ pub use codex_prompts as review_prompts;
  mod thread_manager;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
