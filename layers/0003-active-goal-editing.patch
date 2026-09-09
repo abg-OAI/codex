@@ -200,7 +200,7 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
 
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index ec807dbceaaa3e3b18196c5a5b9eb125fddb7e4b..13e93748e380dd324552fa91a3e130a1af044cdc 100644
+index 3ff773c7d1f8bdbf02d3653765dd78ab432f7c83..ce8de9840c1d33e91ddb13b3c7fcd13b8fda1c10 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -287,10 +287,9 @@ impl CodexThread {
@@ -799,7 +799,7 @@ index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c06
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index a4250a0be88442719c16e0ac9949f67693376aa3..b47f17a4f7f108e581cc856448eb526012c0fa7d 100644
+index 1323faf17165c0b3595800c79bb4d30faff39af6..5c0284c996162426e8013e82c417044c88cb554e 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -153,14 +153,7 @@ pub(crate) fn build_tool_router(

@@ -111,10 +111,10 @@ index ac7bdca0b9545a315041032e289bd87e053e5985..d7d83cd74b3a0e42e0e2f79129e592a2
  mod actions;
  pub(crate) mod guidance;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 71009a3785571f6320ad265d9f7f4c69a49c6e77..4ea68723c6495950e90c63e1ab7c62107aafc82c 100644
+index d7ca63d4f43f6c16e660df4ed45d42543e0b7d6c..f55655e27042d14884a501b8dba2168b6ec0a1d9 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-@@ -28,6 +28,8 @@ use super::HELPER_ROLE_NAME;
+@@ -29,6 +29,8 @@ use super::HELPER_ROLE_NAME;
  use crate::agent::control::SpawnAgentForkMode;
  use crate::agent::control::SpawnAgentOptions;
  use crate::agent::next_thread_spawn_depth;
@@ -123,7 +123,7 @@ index 71009a3785571f6320ad265d9f7f4c69a49c6e77..4ea68723c6495950e90c63e1ab7c6210
  use crate::session::session::Session;
 
  const INITIAL_FAILURE_RETRY: Duration = Duration::from_secs(60);
-@@ -67,10 +69,26 @@ enum GoalEditState {
+@@ -68,10 +70,26 @@ enum GoalEditState {
 
  #[derive(Clone)]
  pub(super) struct Snooze {
@@ -151,7 +151,7 @@ index 71009a3785571f6320ad265d9f7f4c69a49c6e77..4ea68723c6495950e90c63e1ab7c6210
  #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
  #[serde(rename_all = "snake_case")]
  pub(super) enum Action {
-@@ -149,14 +167,18 @@ pub(crate) async fn start_checkin(
+@@ -150,14 +168,18 @@ pub(crate) async fn start_checkin(
              state.previous_action = None;
          }
          if let Some(snooze) = state.snooze.as_ref()
@@ -172,7 +172,7 @@ index 71009a3785571f6320ad265d9f7f4c69a49c6e77..4ea68723c6495950e90c63e1ab7c6210
      }
 
      match spawn_helper(parent, goal).await {
-@@ -330,8 +352,59 @@ pub(super) async fn clear_failed_action(parent: &Session, helper_id: ThreadId, a
+@@ -331,8 +353,59 @@ pub(super) async fn clear_failed_action(parent: &Session, helper_id: ThreadId, a
      }
  }
 
@@ -233,7 +233,7 @@ index 71009a3785571f6320ad265d9f7f4c69a49c6e77..4ea68723c6495950e90c63e1ab7c6210
  }
 
  pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
-@@ -513,12 +586,22 @@ async fn defer_failure(
+@@ -515,12 +588,22 @@ async fn defer_failure(
              }),
          })
          .await;
@@ -262,7 +262,7 @@ index 71009a3785571f6320ad265d9f7f4c69a49c6e77..4ea68723c6495950e90c63e1ab7c6210
  }
 
  fn failure_retry_delay(consecutive_failures: u32) -> Duration {
-@@ -545,7 +628,7 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -547,7 +630,7 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
              if state
                  .snooze
                  .as_ref()
@@ -271,7 +271,7 @@ index 71009a3785571f6320ad265d9f7f4c69a49c6e77..4ea68723c6495950e90c63e1ab7c6210
              {
                  state.snooze = None;
                  true
-@@ -554,6 +637,18 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -556,6 +639,18 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
              }
          };
          if should_wake {
