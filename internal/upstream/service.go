@@ -146,18 +146,8 @@ func (s *Service) Abort(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	state, err := readState(statePath)
-	if err != nil {
+	if _, err := readState(statePath); err != nil {
 		return err
-	}
-	inProgress, err := s.Projection.UnitApplyInProgress(ctx, state.WorktreePath)
-	if err != nil {
-		return err
-	}
-	if inProgress {
-		if err := s.Projection.AbortUnit(ctx, state.WorktreePath); err != nil {
-			return fmt.Errorf("abort active layer patch: %w", err)
-		}
 	}
 	if err := s.Projection.Delete(ctx, projectionName); err != nil {
 		return err
@@ -202,11 +192,11 @@ func (s *Service) process(ctx context.Context, statePath string, state *advanceS
 			return err
 		}
 		if err := s.Projection.ApplyUnit(ctx, state.WorktreePath, unit); err != nil {
-			inProgress, inspectErr := s.Projection.UnitApplyInProgress(ctx, state.WorktreePath)
+			hasConflicts, inspectErr := s.Projection.UnitHasConflicts(ctx, state.WorktreePath)
 			if inspectErr != nil {
 				return errors.Join(err, inspectErr)
 			}
-			if !inProgress {
+			if !hasConflicts {
 				state.ApplyingHead = ""
 				if writeErr := writeState(statePath, *state); writeErr != nil {
 					return errors.Join(err, writeErr)
@@ -234,22 +224,24 @@ func (s *Service) continueUnit(
 	state *advanceState,
 	unit definition.Unit,
 ) error {
-	inProgress, err := s.Projection.UnitApplyInProgress(ctx, state.WorktreePath)
+	head, err := s.Git.Output(ctx, state.WorktreePath, "rev-parse", "HEAD")
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve advance head: %w", err)
 	}
-	if !inProgress {
+	if head != state.ApplyingHead {
 		return s.reconcileCompletedUnit(ctx, statePath, state, unit)
 	}
-
-	state.Resolving = true
-	if err := writeState(statePath, *state); err != nil {
-		return err
+	if !state.Resolving {
+		state.ApplyingHead = ""
+		if err := writeState(statePath, *state); err != nil {
+			return err
+		}
+		return s.process(ctx, statePath, state)
 	}
 	if err := s.Git.Run(ctx, state.WorktreePath, "add", "-A"); err != nil {
 		return fmt.Errorf("stage resolved unit %q: %w", unit.ID, err)
 	}
-	if err := s.Projection.ContinueUnit(ctx, state.WorktreePath); err != nil {
+	if err := s.Projection.CommitUnit(ctx, state.WorktreePath, unit); err != nil {
 		return fmt.Errorf("commit resolved unit %q: %w", unit.ID, err)
 	}
 	state.ApplyingHead = ""
@@ -266,20 +258,6 @@ func (s *Service) reconcileCompletedUnit(
 	state *advanceState,
 	unit definition.Unit,
 ) error {
-	head, err := s.Git.Output(ctx, state.WorktreePath, "rev-parse", "HEAD")
-	if err != nil {
-		return fmt.Errorf("resolve advance head: %w", err)
-	}
-	if head == state.ApplyingHead {
-		if state.Resolving {
-			return fmt.Errorf("unit %q no longer has an active git-am operation; use layerctl upstream abort", unit.ID)
-		}
-		state.ApplyingHead = ""
-		if err := writeState(statePath, *state); err != nil {
-			return err
-		}
-		return s.process(ctx, statePath, state)
-	}
 	parent, err := s.Git.Output(ctx, state.WorktreePath, "rev-parse", "HEAD^")
 	if err != nil {
 		return fmt.Errorf("resolve parent of recovered unit %q: %w", unit.ID, err)

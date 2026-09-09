@@ -1,4 +1,4 @@
-package mailpatch_test
+package layercommit_test
 
 import (
 	"bytes"
@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
-	"github.com/abg-OAI/codex/layerctl/internal/mailpatch"
+	"github.com/abg-OAI/codex/layerctl/internal/layercommit"
 )
 
-func TestService_CaptureAndApplyRoundTripAcceptedEndpoint(t *testing.T) {
+func TestServiceCaptureAndApplyRoundTripAcceptedEndpoint(t *testing.T) {
 	root, before := newRepository(t)
 	writeFile(t, filepath.Join(root, "text.txt"), []byte("intermediate\n"), 0o644)
 	writeFile(t, filepath.Join(root, "binary.bin"), []byte{0, 1, 2, 255}, 0o644)
@@ -32,37 +33,23 @@ func TestService_CaptureAndApplyRoundTripAcceptedEndpoint(t *testing.T) {
 		t.Fatalf("Symlink(link) error = %v", err)
 	}
 	gitRun(t, root, "add", "-A")
-	gitRun(
-		t,
-		root,
-		"-c", "user.name=Accepted Author",
-		"-c", "user.email=accepted@example.com",
-		"commit",
-		"-m", "layer: Capture endpoint",
-		"-m", "Preserve the complete accepted tree.",
-	)
+	gitRun(t, root, "commit", "-m", "Capture endpoint", "-m", "Preserve the complete accepted tree.\n\n---\n\nIncluding separators.")
 	after := gitOutput(t, root, "rev-parse", "HEAD")
 
 	git, err := gitrepo.Discover(t.Context(), root)
 	if err != nil {
 		t.Fatalf("gitrepo.Discover() error = %v", err)
 	}
-	patches := &mailpatch.Service{Git: git}
-	content, err := patches.Capture(t.Context(), mailpatch.CaptureRequest{
-		Before: before,
-		After:  after,
-	})
+	service := &layercommit.Service{Git: git}
+	captured, err := service.Capture(t.Context(), layercommit.CaptureRequest{Before: before, After: after})
 	if err != nil {
 		t.Fatalf("Capture() error = %v", err)
 	}
-	patchPath := filepath.Join(t.TempDir(), "0001-feature.patch")
-	writeFile(t, patchPath, content, 0o644)
-	if !bytes.Contains(content, []byte("GIT binary patch")) {
+	if !bytes.Contains(captured.Patch, []byte("GIT binary patch")) {
 		t.Fatal("Capture() patch does not contain the binary delta")
 	}
-
-	gitRun(t, root, "config", "apply.whitespace", "fix")
-	matches, err := patches.Matches(t.Context(), patchPath, before, after)
+	unit := writeLayer(t, t.TempDir(), "0001-feature", captured)
+	matches, err := service.Matches(t.Context(), unit, before, after)
 	if err != nil {
 		t.Fatalf("Matches() error = %v", err)
 	}
@@ -71,61 +58,70 @@ func TestService_CaptureAndApplyRoundTripAcceptedEndpoint(t *testing.T) {
 	}
 }
 
-func TestService_CaptureRejectsMailSeparatorInMessage(t *testing.T) {
+func TestServiceCaptureAndApplyMessageOnlyCommit(t *testing.T) {
 	root, before := newRepository(t)
-	writeFile(t, filepath.Join(root, "text.txt"), []byte("changed\n"), 0o644)
-	gitRun(t, root, "add", "-A")
-	gitRun(t, root, "commit", "-m", "layer: Invalid message", "-m", "Before\n\n---\n\nAfter")
-
+	gitRun(t, root, "commit", "--allow-empty", "-m", "Message only")
+	after := gitOutput(t, root, "rev-parse", "HEAD")
 	git, err := gitrepo.Discover(t.Context(), root)
 	if err != nil {
 		t.Fatalf("gitrepo.Discover() error = %v", err)
 	}
-	patches := &mailpatch.Service{Git: git}
-	_, err = patches.Capture(t.Context(), mailpatch.CaptureRequest{
-		Before: before,
-		After:  "HEAD",
-	})
-	if err == nil || !strings.Contains(err.Error(), "standalone --- line") {
-		t.Fatalf("Capture() error = %v, want standalone separator error", err)
+	service := &layercommit.Service{Git: git}
+	captured, err := service.Capture(t.Context(), layercommit.CaptureRequest{Before: before, After: after})
+	if err != nil {
+		t.Fatalf("Capture() error = %v", err)
+	}
+	if len(captured.Patch) != 0 {
+		t.Fatalf("Capture().Patch = %q, want empty", captured.Patch)
+	}
+	unit := writeLayer(t, t.TempDir(), "0001-message", captured)
+	if unit.PatchPath != "" {
+		t.Fatalf("unit.PatchPath = %q, want empty", unit.PatchPath)
+	}
+	matches, err := service.Matches(t.Context(), unit, before, after)
+	if err != nil || !matches {
+		t.Fatalf("Matches() = %v, %v; want true, nil", matches, err)
 	}
 }
 
-func TestService_ValidateRejectsSeveralMessages(t *testing.T) {
+func TestServiceApplyLeavesConflictsForResolution(t *testing.T) {
 	root, before := newRepository(t)
+	writeFile(t, filepath.Join(root, "text.txt"), []byte("layer\n"), 0o644)
+	gitRun(t, root, "add", "text.txt")
+	gitRun(t, root, "commit", "-m", "Layer change")
+	after := gitOutput(t, root, "rev-parse", "HEAD")
 	git, err := gitrepo.Discover(t.Context(), root)
 	if err != nil {
 		t.Fatalf("gitrepo.Discover() error = %v", err)
 	}
-	patches := &mailpatch.Service{Git: git}
-
-	writeFile(t, filepath.Join(root, "one.txt"), []byte("one\n"), 0o644)
-	gitRun(t, root, "add", "-A")
-	gitRun(t, root, "commit", "-m", "layer: One")
-	one, err := patches.Capture(t.Context(), mailpatch.CaptureRequest{
-		Before: before,
-		After:  "HEAD",
-	})
+	service := &layercommit.Service{Git: git}
+	captured, err := service.Capture(t.Context(), layercommit.CaptureRequest{Before: before, After: after})
 	if err != nil {
-		t.Fatalf("Capture(one) error = %v", err)
+		t.Fatalf("Capture() error = %v", err)
 	}
-	oneCommit := gitOutput(t, root, "rev-parse", "HEAD")
-	writeFile(t, filepath.Join(root, "two.txt"), []byte("two\n"), 0o644)
-	gitRun(t, root, "add", "-A")
-	gitRun(t, root, "commit", "-m", "layer: Two")
-	two, err := patches.Capture(t.Context(), mailpatch.CaptureRequest{
-		Before: oneCommit,
-		After:  "HEAD",
-	})
-	if err != nil {
-		t.Fatalf("Capture(two) error = %v", err)
-	}
+	unit := writeLayer(t, t.TempDir(), "0001-feature", captured)
 
-	patchPath := filepath.Join(t.TempDir(), "0001-several.patch")
-	writeFile(t, patchPath, append(one, two...), 0o644)
-	if err := patches.Validate(t.Context(), patchPath); err == nil ||
-		!strings.Contains(err.Error(), "contains 2 messages") {
-		t.Fatalf("Validate() error = %v, want several-message error", err)
+	gitRun(t, root, "switch", "--detach", before)
+	writeFile(t, filepath.Join(root, "text.txt"), []byte("upstream\n"), 0o644)
+	gitRun(t, root, "add", "text.txt")
+	gitRun(t, root, "commit", "-m", "Upstream change")
+	if err := service.Apply(t.Context(), root, unit); err == nil {
+		t.Fatal("Apply() error = nil, want conflict")
+	}
+	hasConflicts, err := service.HasConflicts(t.Context(), root)
+	if err != nil {
+		t.Fatalf("HasConflicts() error = %v", err)
+	}
+	if !hasConflicts {
+		t.Fatal("HasConflicts() = false, want true")
+	}
+	writeFile(t, filepath.Join(root, "text.txt"), []byte("resolved\n"), 0o644)
+	gitRun(t, root, "add", "-A")
+	if err := service.Commit(t.Context(), root, unit); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	if got := gitOutput(t, root, "show", "-s", "--format=%B", "HEAD"); got != "Layer change" {
+		t.Fatalf("resolved message = %q, want %q", got, "Layer change")
 	}
 }
 
@@ -141,6 +137,19 @@ func newRepository(t *testing.T) (string, string) {
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "base")
 	return root, gitOutput(t, root, "rev-parse", "HEAD")
+}
+
+func writeLayer(t *testing.T, root, id string, captured layercommit.Captured) definition.Unit {
+	t.Helper()
+	directory := filepath.Join(root, id)
+	messagePath := filepath.Join(directory, "COMMIT_EDITMSG")
+	writeFile(t, messagePath, captured.Message, 0o644)
+	unit := definition.Unit{ID: id, Directory: directory, MessagePath: messagePath}
+	if len(captured.Patch) > 0 {
+		unit.PatchPath = filepath.Join(directory, "patch")
+		writeFile(t, unit.PatchPath, captured.Patch, 0o644)
+	}
+	return unit
 }
 
 func writeFile(t *testing.T, path string, content []byte, mode os.FileMode) {

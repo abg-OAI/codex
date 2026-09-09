@@ -15,7 +15,7 @@ import (
 
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
-	"github.com/abg-OAI/codex/layerctl/internal/mailpatch"
+	"github.com/abg-OAI/codex/layerctl/internal/layercommit"
 )
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -163,29 +163,23 @@ func (s *Service) resolveUpstream(ctx context.Context) (string, error) {
 // ApplyUnit applies one definition to worktree and creates its generated commit.
 // Callers own the worktree's starting commit and any recovery after failure.
 func (s *Service) ApplyUnit(ctx context.Context, worktree string, unit definition.Unit) error {
-	patches := &mailpatch.Service{Git: s.Git}
-	if err := patches.Apply(ctx, worktree, unit.PatchPath); err != nil {
-		return fmt.Errorf("apply layer patch %q: %w", unit.PatchPath, err)
+	layers := &layercommit.Service{Git: s.Git}
+	if err := layers.Apply(ctx, worktree, unit); err != nil {
+		return fmt.Errorf("apply layer %q: %w", unit.ID, err)
 	}
 	return nil
 }
 
-// ContinueUnit commits the staged resolution for an interrupted ApplyUnit.
-func (s *Service) ContinueUnit(ctx context.Context, worktree string) error {
-	patches := &mailpatch.Service{Git: s.Git}
-	return patches.Continue(ctx, worktree)
+// CommitUnit records the staged resolution for an interrupted ApplyUnit.
+func (s *Service) CommitUnit(ctx context.Context, worktree string, unit definition.Unit) error {
+	layers := &layercommit.Service{Git: s.Git}
+	return layers.Commit(ctx, worktree, unit)
 }
 
-// AbortUnit restores the worktree to the commit before an interrupted ApplyUnit.
-func (s *Service) AbortUnit(ctx context.Context, worktree string) error {
-	patches := &mailpatch.Service{Git: s.Git}
-	return patches.Abort(ctx, worktree)
-}
-
-// UnitApplyInProgress reports whether ApplyUnit left a git-am operation.
-func (s *Service) UnitApplyInProgress(ctx context.Context, worktree string) (bool, error) {
-	patches := &mailpatch.Service{Git: s.Git}
-	return patches.InProgress(ctx, worktree)
+// UnitHasConflicts reports whether ApplyUnit left unresolved index entries.
+func (s *Service) UnitHasConflicts(ctx context.Context, worktree string) (bool, error) {
+	layers := &layercommit.Service{Git: s.Git}
+	return layers.HasConflicts(ctx, worktree)
 }
 
 func (s *Service) requireAbsent(ctx context.Context, name string) error {

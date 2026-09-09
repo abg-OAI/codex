@@ -1,20 +1,3 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Abhinav Gupta <abg@openai.com>
-Date: Wed, 9 Sep 2026 00:51:16 +0000
-Subject: Recover scheduled goal wakes
-
-App-server restart and session unload can discard process-local
-supervisor ownership while an active goal and wake schedule remain
-durable.
-
-Let the app server discover bounded active-root candidates, revalidate
-their persisted wake identity, and cold-resume due goals under a
-per-home ownership lock. Unload scheduler-materialized roots only after
-the goal is inactive and the supervisor runtime is quiescent.
-
-Cover recovery with an external client clock and no subscribed client
-so the app server remains responsible for unattended wake execution.
-
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
 index da84311484c85513c358db59c9fba652b6b02522..8d310953b4b50e682cb1bc452b49746a9d7f8f95 100644
 --- a/codex-rs/app-server/src/message_processor.rs

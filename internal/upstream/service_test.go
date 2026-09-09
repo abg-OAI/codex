@@ -14,7 +14,7 @@ import (
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
 	"github.com/abg-OAI/codex/layerctl/internal/layer"
-	"github.com/abg-OAI/codex/layerctl/internal/mailpatch"
+	"github.com/abg-OAI/codex/layerctl/internal/layercommit"
 	"github.com/abg-OAI/codex/layerctl/internal/projection"
 	"github.com/abg-OAI/codex/layerctl/internal/upstream"
 )
@@ -91,7 +91,7 @@ func TestAdvanceConflictRefreshContinueAndAbort(t *testing.T) {
 	}
 }
 
-func TestContinueRecoversAfterResolvedMailPatchWasCommitted(t *testing.T) {
+func TestContinueRecoversAfterResolvedLayerWasCommitted(t *testing.T) {
 	root := newCanonicalRepository(t)
 	upstreamService, _, projections := newServices(t, root)
 	resolveWorktree := filepath.Join(t.TempDir(), "resolve")
@@ -104,7 +104,7 @@ func TestContinueRecoversAfterResolvedMailPatchWasCommitted(t *testing.T) {
 
 	writeFile(t, filepath.Join(resolveWorktree, "base.txt"), "resolved after interruption\n")
 	gitRun(t, resolveWorktree, "add", "-A")
-	gitRun(t, resolveWorktree, "am", "--continue", "--no-verify", "--no-gpg-sign")
+	gitRun(t, resolveWorktree, "commit", "--no-verify", "--no-gpg-sign", "--cleanup=verbatim", "--file", filepath.Join(root, "layers", "0001-feature", "COMMIT_EDITMSG"))
 
 	path, err := upstreamService.Continue(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "layerctl layer refresh 0001-feature") {
@@ -152,17 +152,17 @@ func newCanonicalRepository(t *testing.T) string {
 	writeFile(t, filepath.Join(root, "foundation.txt"), "foundation\n")
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "saffrodex: foundation")
-	foundationPatch := capturePatch(t, root, "HEAD^", "HEAD")
+	foundationLayer := captureLayer(t, root, "HEAD^", "HEAD")
 	writeFile(t, filepath.Join(root, "base.txt"), "feature\n")
 	writeFile(t, filepath.Join(root, "feature.txt"), "feature\n")
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "saffrodex: feature")
-	featurePatch := capturePatch(t, root, "HEAD^", "HEAD")
+	featureLayer := captureLayer(t, root, "HEAD^", "HEAD")
 	gitRun(t, root, "switch", "--orphan", "saffrodex-next")
 
 	writeFile(t, filepath.Join(root, "upstream.json"), fmt.Sprintf("{\n  \"tag\": \"rust-v1.0.0\",\n  \"commit\": %q\n}\n", v1Commit))
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation.patch"), string(foundationPatch))
-	writeFile(t, filepath.Join(root, "layers", "0001-feature.patch"), string(featurePatch))
+	writeLayerDefinition(t, root, "0000-foundation", foundationLayer)
+	writeLayerDefinition(t, root, "0001-feature", featureLayer)
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "canonical")
 	return root
@@ -245,19 +245,28 @@ func gitOutput(t *testing.T, directory string, args ...string) string {
 	return strings.TrimSpace(string(output))
 }
 
-func capturePatch(t *testing.T, directory, before, after string) []byte {
+func captureLayer(t *testing.T, directory, before, after string) layercommit.Captured {
 	t.Helper()
 	git, err := gitrepo.Discover(t.Context(), directory)
 	if err != nil {
 		t.Fatalf("gitrepo.Discover() error = %v", err)
 	}
-	patches := &mailpatch.Service{Git: git}
-	content, err := patches.Capture(t.Context(), mailpatch.CaptureRequest{
+	layers := &layercommit.Service{Git: git}
+	captured, err := layers.Capture(t.Context(), layercommit.CaptureRequest{
 		Before: before,
 		After:  after,
 	})
 	if err != nil {
 		t.Fatalf("Capture(%s, %s) error = %v", before, after, err)
 	}
-	return content
+	return captured
+}
+
+func writeLayerDefinition(t *testing.T, root, id string, captured layercommit.Captured) {
+	t.Helper()
+	directory := filepath.Join(root, "layers", id)
+	writeFile(t, filepath.Join(directory, "COMMIT_EDITMSG"), string(captured.Message))
+	if len(captured.Patch) > 0 {
+		writeFile(t, filepath.Join(directory, "patch"), string(captured.Patch))
+	}
 }

@@ -13,7 +13,7 @@ import (
 
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
-	"github.com/abg-OAI/codex/layerctl/internal/mailpatch"
+	"github.com/abg-OAI/codex/layerctl/internal/layercommit"
 	"github.com/abg-OAI/codex/layerctl/internal/projection"
 )
 
@@ -120,8 +120,8 @@ func (s *Service) isGeneratedUnit(ctx context.Context, commit string, unit defin
 	if err != nil {
 		return false, err
 	}
-	patches := &mailpatch.Service{Git: s.Git}
-	wantMessage, err := patches.Message(ctx, unit.PatchPath)
+	layers := &layercommit.Service{Git: s.Git}
+	wantMessage, err := layers.Message(unit)
 	if err != nil {
 		return false, err
 	}
@@ -130,8 +130,8 @@ func (s *Service) isGeneratedUnit(ctx context.Context, commit string, unit defin
 
 func (s *Service) writeLayer(ctx context.Context, id, before, after string, replaceExisting bool) error {
 	layersRoot := filepath.Join(s.Definition.Root, "layers")
-	patches := &mailpatch.Service{Git: s.Git}
-	content, err := patches.Capture(ctx, mailpatch.CaptureRequest{
+	layers := &layercommit.Service{Git: s.Git}
+	captured, err := layers.Capture(ctx, layercommit.CaptureRequest{
 		Before: before,
 		After:  after,
 	})
@@ -139,20 +139,26 @@ func (s *Service) writeLayer(ctx context.Context, id, before, after string, repl
 		return err
 	}
 
-	temporary, err := os.CreateTemp(layersRoot, ".layerctl-"+id+"-*.patch")
+	temporaryPath, err := os.MkdirTemp(layersRoot, ".layerctl-"+id+"-")
 	if err != nil {
-		return fmt.Errorf("create temporary layer patch: %w", err)
+		return fmt.Errorf("create temporary layer directory: %w", err)
 	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if _, err := temporary.Write(content); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("write temporary layer patch: %w", err)
+	defer os.RemoveAll(temporaryPath)
+	temporaryUnit := definition.Unit{
+		ID:          id,
+		Directory:   temporaryPath,
+		MessagePath: filepath.Join(temporaryPath, "COMMIT_EDITMSG"),
 	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close temporary layer patch: %w", err)
+	if err := os.WriteFile(temporaryUnit.MessagePath, captured.Message, 0o644); err != nil {
+		return fmt.Errorf("write temporary layer message: %w", err)
 	}
-	matches, err := patches.Matches(ctx, temporaryPath, before, after)
+	if len(captured.Patch) > 0 {
+		temporaryUnit.PatchPath = filepath.Join(temporaryPath, "patch")
+		if err := os.WriteFile(temporaryUnit.PatchPath, captured.Patch, 0o644); err != nil {
+			return fmt.Errorf("write temporary layer patch: %w", err)
+		}
+	}
+	matches, err := layers.Matches(ctx, temporaryUnit, before, after)
 	if err != nil {
 		return fmt.Errorf("verify captured layer %q: %w", id, err)
 	}
@@ -160,22 +166,18 @@ func (s *Service) writeLayer(ctx context.Context, id, before, after string, repl
 		return fmt.Errorf("captured layer %q does not reproduce the accepted commit", id)
 	}
 
-	target := filepath.Join(layersRoot, id+".patch")
+	target := filepath.Join(layersRoot, id)
 	if !replaceExisting {
 		if err := os.Rename(temporaryPath, target); err != nil {
 			return fmt.Errorf("install layer %q: %w", id, err)
 		}
 		return nil
 	}
-	backup, err := os.CreateTemp(layersRoot, ".layerctl-backup-"+id+"-*.patch")
+	backupPath, err := os.MkdirTemp(layersRoot, ".layerctl-backup-"+id+"-")
 	if err != nil {
 		return fmt.Errorf("reserve layer backup: %w", err)
 	}
-	backupPath := backup.Name()
-	if err := backup.Close(); err != nil {
-		return fmt.Errorf("close layer backup: %w", err)
-	}
-	if err := os.Remove(backupPath); err != nil {
+	if err := os.RemoveAll(backupPath); err != nil {
 		return fmt.Errorf("prepare layer backup: %w", err)
 	}
 	if err := os.Rename(target, backupPath); err != nil {
@@ -185,7 +187,7 @@ func (s *Service) writeLayer(ctx context.Context, id, before, after string, repl
 		_ = os.Rename(backupPath, target)
 		return fmt.Errorf("install refreshed layer %q: %w", id, err)
 	}
-	if err := os.Remove(backupPath); err != nil {
+	if err := os.RemoveAll(backupPath); err != nil {
 		return fmt.Errorf("remove layer backup %q: %w", backupPath, err)
 	}
 	return nil
