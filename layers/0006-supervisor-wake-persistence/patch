@@ -1,15 +1,3 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: abg-OAI <abg@openai.com>
-Date: Fri, 28 Aug 2026 13:59:18 -0700
-Subject: Persist supervisor wake state
-
-Process-local snooze and retry timers cannot retain their exact deadline
-across app-server lifetimes.
-
-Add a wake table keyed by thread and exact goal revision, then replace
-or clear its rows with supervisor state transitions.
-This records durable state without discovering or resuming goals.
-
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 index ffbe7a2da37648d4f5bd4883d9a3b885bb6dc9ab..62d35ee5fa3352760eaf20532abb50f8f5bfa262 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs

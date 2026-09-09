@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 )
 
 var layerIDPattern = regexp.MustCompile(`^[0-9]{4}-[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -20,7 +19,7 @@ var layerIDPattern = regexp.MustCompile(`^[0-9]{4}-[a-z0-9]+(-[a-z0-9]+)*$`)
 const FoundationLayerID = "0000-foundation"
 
 // Repository is one complete canonical Saffrodex definition.
-// Layers are ordered lexically by their numbered patch names.
+// Layers are ordered lexically by their numbered directory names.
 type Repository struct {
 	Root     string
 	Upstream Upstream
@@ -34,10 +33,12 @@ type Upstream struct {
 	Commit string `json:"commit"`
 }
 
-// Unit is one generated commit serialized as one Git mail patch.
+// Unit is one generated commit serialized as a message and optional tree diff.
 type Unit struct {
-	ID        string
-	PatchPath string
+	ID          string
+	Directory   string
+	MessagePath string
+	PatchPath   string
 }
 
 // Load reads the canonical repository rooted at root and rejects malformed or
@@ -115,27 +116,69 @@ func loadLayers(path string) ([]Unit, error) {
 	layers := make([]Unit, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || filepath.Ext(name) != ".patch" {
+		if !entry.IsDir() {
 			return nil, fmt.Errorf("invalid layer entry %q", filepath.Join(path, name))
 		}
-		id := strings.TrimSuffix(name, ".patch")
-		if err := ValidateLayerID(id); err != nil {
+		if err := ValidateLayerID(name); err != nil {
 			return nil, fmt.Errorf("invalid layer entry %q: %w", filepath.Join(path, name), err)
 		}
-		patchPath := filepath.Join(path, name)
-		info, err := entry.Info()
+		directory := filepath.Join(path, name)
+		unit, err := loadUnit(name, directory)
 		if err != nil {
-			return nil, fmt.Errorf("inspect layer patch %q: %w", patchPath, err)
+			return nil, err
 		}
-		if !info.Mode().IsRegular() || info.Size() == 0 {
-			return nil, fmt.Errorf("layer patch %q must be a nonempty regular file", patchPath)
-		}
-		layers = append(layers, Unit{ID: id, PatchPath: patchPath})
+		layers = append(layers, unit)
 	}
 	return layers, nil
 }
 
-// ValidateLayerID rejects names that cannot identify canonical layer patches.
+func loadUnit(id, directory string) (Unit, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return Unit{}, fmt.Errorf("read layer %q: %w", id, err)
+	}
+	unit := Unit{
+		ID:          id,
+		Directory:   directory,
+		MessagePath: filepath.Join(directory, "COMMIT_EDITMSG"),
+	}
+	for _, entry := range entries {
+		path := filepath.Join(directory, entry.Name())
+		switch entry.Name() {
+		case "COMMIT_EDITMSG":
+			if err := requireNonemptyRegularFile(entry, path); err != nil {
+				return Unit{}, err
+			}
+		case "patch":
+			if err := requireNonemptyRegularFile(entry, path); err != nil {
+				return Unit{}, err
+			}
+			unit.PatchPath = path
+		default:
+			return Unit{}, fmt.Errorf("invalid entry %q in layer %q", entry.Name(), id)
+		}
+	}
+	if _, err := os.Stat(unit.MessagePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Unit{}, fmt.Errorf("layer %q is missing COMMIT_EDITMSG", id)
+		}
+		return Unit{}, fmt.Errorf("inspect layer message %q: %w", unit.MessagePath, err)
+	}
+	return unit, nil
+}
+
+func requireNonemptyRegularFile(entry os.DirEntry, path string) error {
+	info, err := entry.Info()
+	if err != nil {
+		return fmt.Errorf("inspect layer file %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return fmt.Errorf("layer file %q must be a nonempty regular file", path)
+	}
+	return nil
+}
+
+// ValidateLayerID rejects names that cannot identify canonical layer directories.
 func ValidateLayerID(id string) error {
 	if !layerIDPattern.MatchString(id) {
 		return fmt.Errorf("invalid layer ID %q", id)

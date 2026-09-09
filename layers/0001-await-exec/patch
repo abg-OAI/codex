@@ -1,24 +1,3 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: abg-OAI <abg@openai.com>
-Date: Tue, 1 Sep 2026 22:31:14 -0700
-Subject: Add saffron.await_exec
-
-Repeated `write_stdin` polling consumes model turns while an external
-command is idle.
-
-Add an event-driven `saffron.await_exec` tool with explicit wait modes
-for output, process exit, and timeout. Extend unified exec with
-cancellation-safe serialized interactions so the waiter cannot race
-`write_stdin` or steal buffered output, while the existing process
-manager retains session lifecycle and output ownership.
-
-Guide agents to use event-driven waits instead of empty `write_stdin`
-polling, and reserve `timeout_ms` for an independent deadline rather
-than the command's expected output cadence.
-
-Cover output wakeups, early exit detection, exit-only waits, timeout
-reuse, and the model-visible tool boundary.
-
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
 index 581392fb57dff81df5411a95cede4765acefb2b6..927b09dbc3737a49dfae972657cb888e854b6573 100644
 --- a/codex-rs/core/src/lib.rs

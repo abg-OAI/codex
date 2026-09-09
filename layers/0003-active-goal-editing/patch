@@ -1,22 +1,3 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: abg-OAI <abg@openai.com>
-Date: Mon, 31 Aug 2026 22:38:38 -0700
-Subject: Add active goal editing
-
-Goal mode previously let the model create a goal and change its status,
-but it could not correct an objective that no longer described the
-user-authorized outcome.
-
-Add `saffron.edit_active_goal` for root goal threads and the hidden
-Saffron supervisor. Root calls select the live goal at execution time;
-supervisor calls retain the revision captured before the helper starts.
-An atomic active-goal update rejects stale objectives, status changes,
-and replacements without adding a fork-owned database migration.
-
-Allow one optional supervisor edit before its existing required
-disposition action, and teach the supervisor to preserve explicit user
-requirements rather than using the objective as a progress log.
-
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe58673f215ca 100644
 --- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs

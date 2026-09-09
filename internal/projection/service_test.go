@@ -12,7 +12,7 @@ import (
 
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
-	"github.com/abg-OAI/codex/layerctl/internal/mailpatch"
+	"github.com/abg-OAI/codex/layerctl/internal/layercommit"
 	"github.com/abg-OAI/codex/layerctl/internal/projection"
 )
 
@@ -152,16 +152,16 @@ func newCanonicalRepository(t *testing.T) string {
 	writeFile(t, filepath.Join(root, "foundation.txt"), "foundation\n")
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "saffrodex: foundation", "-m", "Foundation body.")
-	foundationPatch := capturePatch(t, root, "HEAD^", "HEAD")
+	foundationLayer := captureLayer(t, root, "HEAD^", "HEAD")
 	writeFile(t, filepath.Join(root, "base.txt"), "changed\n")
 	writeFile(t, filepath.Join(root, "feature.txt"), "feature\n")
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "saffrodex: feature", "-m", "Feature body.")
-	featurePatch := capturePatch(t, root, "HEAD^", "HEAD")
+	featureLayer := captureLayer(t, root, "HEAD^", "HEAD")
 	gitRun(t, root, "switch", "--orphan", "saffrodex-next")
 	writeFile(t, filepath.Join(root, "upstream.json"), fmt.Sprintf("{\n  \"tag\": \"rust-v1.2.3\",\n  \"commit\": %q\n}\n", upstreamCommit))
-	writeFile(t, filepath.Join(root, "layers", "0000-foundation.patch"), string(foundationPatch))
-	writeFile(t, filepath.Join(root, "layers", "0001-feature.patch"), string(featurePatch))
+	writeLayerDefinition(t, root, "0000-foundation", foundationLayer)
+	writeLayerDefinition(t, root, "0001-feature", featureLayer)
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "canonical")
 	return root
@@ -216,21 +216,30 @@ func gitOutput(t *testing.T, directory string, args ...string) string {
 	return strings.TrimSpace(string(output))
 }
 
-func capturePatch(t *testing.T, directory, before, after string) []byte {
+func captureLayer(t *testing.T, directory, before, after string) layercommit.Captured {
 	t.Helper()
 	git, err := gitrepo.Discover(t.Context(), directory)
 	if err != nil {
 		t.Fatalf("gitrepo.Discover() error = %v", err)
 	}
-	patches := &mailpatch.Service{Git: git}
-	content, err := patches.Capture(t.Context(), mailpatch.CaptureRequest{
+	layers := &layercommit.Service{Git: git}
+	captured, err := layers.Capture(t.Context(), layercommit.CaptureRequest{
 		Before: before,
 		After:  after,
 	})
 	if err != nil {
 		t.Fatalf("Capture(%s, %s) error = %v", before, after, err)
 	}
-	return content
+	return captured
+}
+
+func writeLayerDefinition(t *testing.T, root, id string, captured layercommit.Captured) {
+	t.Helper()
+	directory := filepath.Join(root, "layers", id)
+	writeFile(t, filepath.Join(directory, "COMMIT_EDITMSG"), string(captured.Message))
+	if len(captured.Patch) > 0 {
+		writeFile(t, filepath.Join(directory, "patch"), string(captured.Patch))
+	}
 }
 
 func writeFile(t *testing.T, path, content string) {

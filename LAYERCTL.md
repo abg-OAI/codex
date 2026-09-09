@@ -25,7 +25,7 @@ Read the projected tree's `AGENTS.md` before changing Codex or Saffron source.
 Use `layerctl layer add` or `layerctl layer refresh` to capture accepted
 projection work instead of hand-editing generated patches.
 The hydrated projection commit is the source-review surface;
-the canonical mail patch is its generated storage form.
+the canonical layer directory is its generated storage form.
 
 Create a layer
 --------------
@@ -55,10 +55,10 @@ go run ./cmd/layerctl layer refresh <layer> --from <name>
 go run ./cmd/layerctl projection delete <name>
 ```
 
-Capture uses the projection head's complete tree, commit message,
-author, and author date as the desired layer result.
-Git mail syntax reserves a standalone `---` line,
-so `layerctl` rejects commit messages that contain one.
+Capture uses the projection head's complete tree and exact commit message as
+the desired layer result. It does not preserve commit authorship metadata.
+`git diff-tree` produces the optional binary-safe `patch` file relative to the
+generated predecessor.
 
 Advance upstream
 ----------------
@@ -78,8 +78,8 @@ successfully.
 
 When a layer conflicts, resolve its complete desired tree in the reported
 `upstream-advance` worktree and run `layerctl upstream continue`.
-`layerctl` owns the interrupted Git mail operation,
-commits that resolved layer, and directs the required
+`layerctl` owns the interrupted three-way patch application, commits the
+resolved layer with its canonical message, and directs the required
 `layerctl layer refresh <layer> --from upstream-advance` command.
 Run `layerctl upstream continue` again; it independently reapplies the
 refreshed definition and proceeds only when the generated tree matches.
