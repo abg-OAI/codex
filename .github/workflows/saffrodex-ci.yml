@@ -76,15 +76,12 @@ jobs:
             echo "CODEX_REPO_ROOT=${projection_path}"
           } >>"${GITHUB_ENV}"
 
-      - name: Install Linux test dependencies
+      - name: Configure Linux sandboxing
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            bubblewrap \
-            libcap-dev \
-            pkg-config
+            bubblewrap
           sudo sysctl -w kernel.unprivileged_userns_clone=1
           if sudo sysctl -a 2>/dev/null | grep -q '^kernel.apparmor_restrict_unprivileged_userns'; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
