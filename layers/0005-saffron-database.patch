@@ -10,10 +10,10 @@ Introduce `saffron_1.sqlite`, its private SQLx migrator, and an empty
 migration directory. The foundation creates no application tables.
 
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 782f8d2535b9517026821f7f5530c94738437ed6..d7c729e7b5728e87c55411ecd76730b6e58f3622 100644
+index 45fca1b150822ec5f09689acef48c346b61a7afd..42a904efdb505749c00e48c15fecb3d5da5e268a 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -2903,6 +2903,7 @@ dependencies = [
+@@ -3063,6 +3063,7 @@ dependencies = [
   "sha1 0.10.6",
   "shlex",
   "similar",
@@ -22,10 +22,10 @@ index 782f8d2535b9517026821f7f5530c94738437ed6..d7c729e7b5728e87c55411ecd76730b6
   "test-case",
   "test-log",
 diff --git a/codex-rs/core/Cargo.toml b/codex-rs/core/Cargo.toml
-index eb0137c03e18c2b629274ccb518bd78f353b058d..c92e12003ede5af0a686e5968c94f533b2304705 100644
+index e7947e17150354859f922240d0ddd8b77e275d42..906d574f1da87b5e81d93d13a8039f4dcffab036 100644
 --- a/codex-rs/core/Cargo.toml
 +++ b/codex-rs/core/Cargo.toml
-@@ -105,6 +105,7 @@ serde_json = { workspace = true }
+@@ -106,6 +106,7 @@ serde_json = { workspace = true }
  sha1 = { workspace = true }
  shlex = { workspace = true }
  similar = { workspace = true }

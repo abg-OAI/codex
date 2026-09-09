@@ -20,10 +20,10 @@ Cover output wakeups, early exit detection, exit-only waits, timeout
 reuse, and the model-visible tool boundary.
 
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index b4e979289267e6ae2743448329b2619b370c562c..b33657619bf863abfea1be42b392ec6ca1907732 100644
+index 581392fb57dff81df5411a95cede4765acefb2b6..927b09dbc3737a49dfae972657cb888e854b6573 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -107,6 +107,7 @@ mod session_startup_prewarm;
+@@ -108,6 +108,7 @@ mod session_startup_prewarm;
  mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
@@ -563,7 +563,7 @@ index 9f9f8a8cf1ea9fbd01f01813e9dcf1ccca6ab1e1..d0ef75556bc481fee669259b8e1e1558
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index ef31ab203458face400cc445a4cfaffda7e06a07..82317ec5732d0edaf1ed347a5c7db73dbbede908 100644
+index 01054b1b504811a5fee21d6bc083c1f5117d52ea..38db95edf7f0d4407ea479285e0a0e953ff38691 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -574,7 +574,7 @@ index ef31ab203458face400cc445a4cfaffda7e06a07..82317ec5732d0edaf1ed347a5c7db73d
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -1099,6 +1100,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1104,6 +1105,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
      if features.enabled(Feature::UnifiedExec) {
          registry.add(ExecCommandHandler::new(options));
          registry.add(WriteStdinHandler);
@@ -626,11 +626,11 @@ index 81946e4b2691dfd34fb9b85ca3ba7a2b6802e84f..df67713ef048edd7b8df42feb99d7ee3
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 5becfea9bc153cfd710990fc42354f76b0d55152..71a20bfe14e098dbb626da2f1f1953f3b211a9ba 100644
+index f19147f6605db85cff4932eb72c4b922a968490a..bb6bdf09c7ab79f1ab5bd05e5d279138ec0d5fc3 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
-@@ -104,6 +104,11 @@ const NETWORK_ACCESS_DENIED_MESSAGE: &str =
- const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
+@@ -105,6 +105,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
+ const MAX_STDIN_APPROVAL_BYTES: usize = 8_000;
  const INTERRUPT: &str = "\u{3}";
 
 +mod interaction;
@@ -1274,10 +1274,10 @@ index 0000000000000000000000000000000000000000..9355e6864b3bc0c06a2e2339d4738af9
 +    assert_eq!(output.process_id, Some(PROCESS_ID));
 +}
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index a31883290bb7ad3eed17d263c1ea1c6f22005a16..6e99fe82bfd4c98d376c76f26eddbbbdfbb16eeb 100644
+index 1c6a629926705a48e9955a1088593dcd3cb67ca5..dea9a449b7c8b8e361b64e2cb37325d4a6d70010 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -152,6 +152,7 @@ mod rollout_compression;
+@@ -154,6 +154,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;

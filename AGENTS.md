@@ -20,6 +20,14 @@ Treat layer patches as generated artifacts:
 edit and review source in a hydrated projection,
 then use `layerctl layer add` or `layerctl layer refresh` to capture it.
 
+`upstream.json` and the ordered layer definitions form one coherent state.
+After advancing `upstream.json`, refresh every layer in order against the new
+upstream tree and each refreshed predecessor.
+Before handoff, verify that a fresh checkout containing only the configured
+upstream tag and commit can apply the complete layer stack.
+Layer application must not depend on historical projection objects,
+published Saffrodex tags, or objects retained by a maintainer's local clone.
+
 Repository-owned guidance, release tooling, the root `.github/workflows/`
 directory, and `layerctl` do not belong in a generated projection.
 Changes needed in every generated source tree belong in

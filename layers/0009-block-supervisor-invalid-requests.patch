@@ -14,7 +14,7 @@ warning.
 Other failures keep retrying, and blocked goals clear any persisted wake.
 
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
-index 18428ba72c632a9a887ff285a86525e5b0c82c4c..2f7c73a6c8755d15d74e31bebe4194455c62af66 100644
+index ef9871fd70bb47119a3364e16e557d4cc5470b41..6e26eb4f6503f4704110e854cfb647698d011a98 100644
 --- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 @@ -6,6 +6,8 @@ use app_test_support::MockResponsesConfig;
@@ -235,10 +235,10 @@ index 2d9bdedde296473dd55dd58a7e3b05e28c512f46..34f11fd5145f121e40f650c8ef650651
  pub(crate) use identity::is_helper_source;
  pub(super) use runtime::begin_goal_edit;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 8b7bfbe9cb684ba4e7e01351dbda9cf7bda0baa3..1430bda99bbf34bdb1ae4f65a83845d170103322 100644
+index 23def2f7ed7b9974766cd5d899c86c82640025e8..d387476eb656d46079d08ca91502a8ad0af92972 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-@@ -25,6 +25,7 @@ use tokio::time::Instant;
+@@ -26,6 +26,7 @@ use tokio::time::Instant;
  use tracing::warn;
 
  use super::HELPER_ROLE_NAME;
@@ -246,7 +246,7 @@ index 8b7bfbe9cb684ba4e7e01351dbda9cf7bda0baa3..1430bda99bbf34bdb1ae4f65a83845d1
  use crate::agent::control::SpawnAgentForkMode;
  use crate::agent::control::SpawnAgentOptions;
  use crate::agent::next_thread_spawn_depth;
-@@ -615,6 +616,19 @@ async fn finish_helper(
+@@ -617,6 +618,19 @@ async fn finish_helper(
          state.active = None;
          action
      };
@@ -266,7 +266,7 @@ index 8b7bfbe9cb684ba4e7e01351dbda9cf7bda0baa3..1430bda99bbf34bdb1ae4f65a83845d1
      if let Err(error) = parent
          .services
          .agent_control
-@@ -624,6 +638,31 @@ async fn finish_helper(
+@@ -626,6 +640,31 @@ async fn finish_helper(
          warn!(%helper_id, "failed to retire Saffron goal supervisor: {error}");
      }
      if action.is_none() {
@@ -299,10 +299,10 @@ index 8b7bfbe9cb684ba4e7e01351dbda9cf7bda0baa3..1430bda99bbf34bdb1ae4f65a83845d1
              format!("helper ended as {terminal_status:?} without selecting an action");
          defer_failure(parent, &runtime, goal_id, description).await;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 58a04a3d295e3be53b95eda8bd875166b5e02ca0..b0e2e9301c4dc44ceba1788d1ac61b8799ed46ef 100644
+index 28cd0cd39ee306053f0f8b12a45c4104e4302f79..22ec630a89c44bbda3b85e1dccf4bb39205a352d 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2061,6 +2061,7 @@ impl Session {
+@@ -2075,6 +2075,7 @@ impl Session {
 
      /// Record a terminal CodexErr before the app-server completion notification is reduced.
      pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {
