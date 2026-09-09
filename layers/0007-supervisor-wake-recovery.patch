@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: abg-OAI <abg@openai.com>
-Date: Thu, 27 Aug 2026 23:11:29 -0700
+From: Abhinav Gupta <abg@openai.com>
+Date: Wed, 9 Sep 2026 00:51:16 +0000
 Subject: Recover scheduled goal wakes
 
 App-server restart and session unload can discard process-local
@@ -8,9 +8,12 @@ supervisor ownership while an active goal and wake schedule remain
 durable.
 
 Let the app server discover bounded active-root candidates, revalidate
-their exact persisted wake identity, and cold-resume due goals under a
+their persisted wake identity, and cold-resume due goals under a
 per-home ownership lock. Unload scheduler-materialized roots only after
 the goal is inactive and the supervisor runtime is quiescent.
+
+Cover recovery with an external client clock and no subscribed client
+so the app server remains responsible for unattended wake execution.
 
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
 index da84311484c85513c358db59c9fba652b6b02522..8d310953b4b50e682cb1bc452b49746a9d7f8f95 100644
@@ -393,7 +396,7 @@ index 0000000000000000000000000000000000000000..ec084660b107a4d5c323218260508daa
 +    }
 +}
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
-index 75e249b84df079ccb9ad5741c4bbe58673f215ca..18428ba72c632a9a887ff285a86525e5b0c82c4c 100644
+index 75e249b84df079ccb9ad5741c4bbe58673f215ca..ef9871fd70bb47119a3364e16e557d4cc5470b41 100644
 --- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 @@ -4,14 +4,26 @@ use anyhow::Context;
@@ -423,7 +426,7 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..18428ba72c632a9a887ff285a86525e5
 
  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
  async fn root_can_edit_its_active_goal_without_changing_other_goal_state() -> Result<()> {
-@@ -243,3 +255,335 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+@@ -243,3 +255,341 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
 
      Ok(())
  }
@@ -476,7 +479,7 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..18428ba72c632a9a887ff285a86525e5
 +}
 +
 +#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-+async fn same_app_server_unloads_snoozed_root_and_recovers_at_deadline() -> Result<()> {
++async fn same_app_server_recovers_snoozed_root_without_client_clock() -> Result<()> {
 +    let server = responses::start_mock_server().await;
 +    let model_responses = responses::mount_sse_sequence(
 +        &server,
@@ -509,6 +512,12 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..18428ba72c632a9a887ff285a86525e5
 +    .await;
 +
 +    let (codex_home, thread_id) = restart_goal_fixture(&server, "wait for the release").await?;
++    let config_path = codex_home.path().join("config.toml");
++    let mut config = std::fs::read_to_string(&config_path)?;
++    config.push_str(
++        "\n[features.current_time_reminder]\nenabled = true\nclock_source = \"external\"\n",
++    );
++    std::fs::write(config_path, config)?;
 +    let mut app_server = start_restart_app(&codex_home).await?;
 +    app_server.initialize().await?;
 +
@@ -1527,10 +1536,10 @@ index d7d83cd74b3a0e42e0e2f79129e592a2395bb2f2..2d9bdedde296473dd55dd58a7e3b05e2
  pub(crate) use runtime::stop;
  pub(crate) use tools::register;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 4ea68723c6495950e90c63e1ab7c62107aafc82c..8b7bfbe9cb684ba4e7e01351dbda9cf7bda0baa3 100644
+index f55655e27042d14884a501b8dba2168b6ec0a1d9..23def2f7ed7b9974766cd5d899c86c82640025e8 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-@@ -43,6 +43,15 @@ pub(super) struct Runtime {
+@@ -44,6 +44,15 @@ pub(super) struct Runtime {
      wake_generation: AtomicU64,
  }
 
@@ -1546,7 +1555,7 @@ index 4ea68723c6495950e90c63e1ab7c62107aafc82c..8b7bfbe9cb684ba4e7e01351dbda9cf7
  #[derive(Default)]
  struct State {
      goal_id: Option<String>,
-@@ -52,6 +61,26 @@ struct State {
+@@ -53,6 +62,26 @@ struct State {
      previous_action: Option<Action>,
  }
 
@@ -1573,7 +1582,7 @@ index 4ea68723c6495950e90c63e1ab7c62107aafc82c..8b7bfbe9cb684ba4e7e01351dbda9cf7
  struct ActiveHelper {
      thread_id: ThreadId,
      goal_revision: codex_state::ThreadGoalRevision,
-@@ -71,6 +100,13 @@ enum GoalEditState {
+@@ -72,6 +101,13 @@ enum GoalEditState {
  pub(super) struct Snooze {
      wake: GoalWake,
      pub(super) deadline: Instant,
@@ -1587,7 +1596,7 @@ index 4ea68723c6495950e90c63e1ab7c62107aafc82c..8b7bfbe9cb684ba4e7e01351dbda9cf7
  }
 
  impl Snooze {
-@@ -85,8 +121,19 @@ impl Snooze {
+@@ -86,8 +122,19 @@ impl Snooze {
                  wake_at_ms: Utc::now().timestamp_millis().saturating_add(delay_millis),
              },
              deadline: Instant::now() + delay,
@@ -1607,7 +1616,7 @@ index 4ea68723c6495950e90c63e1ab7c62107aafc82c..8b7bfbe9cb684ba4e7e01351dbda9cf7
  }
 
  #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
-@@ -181,6 +228,12 @@ pub(crate) async fn start_checkin(
+@@ -182,6 +229,12 @@ pub(crate) async fn start_checkin(
          }
      }
 
@@ -1620,7 +1629,7 @@ index 4ea68723c6495950e90c63e1ab7c62107aafc82c..8b7bfbe9cb684ba4e7e01351dbda9cf7
      match spawn_helper(parent, goal).await {
          Ok(helper_id) => {
              runtime.state.lock().await.active = Some(ActiveHelper {
-@@ -414,6 +467,19 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
+@@ -415,6 +468,19 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
          .get_or_init(Runtime::default)
  }
 
@@ -1640,7 +1649,7 @@ index 4ea68723c6495950e90c63e1ab7c62107aafc82c..8b7bfbe9cb684ba4e7e01351dbda9cf7
  async fn spawn_helper(
      parent: &Arc<Session>,
      goal: &codex_state::ThreadGoal,
-@@ -656,6 +722,46 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -658,6 +724,46 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
      });
  }
 
