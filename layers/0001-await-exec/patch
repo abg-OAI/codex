@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 581392fb57dff81df5411a95cede4765acefb2b6..927b09dbc3737a49dfae972657cb888e854b6573 100644
+index 55d1f474e51b33b0ecfdede491ba2beb72741037..2854d74a280b37a961609e279c8f1f245de2960c 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -108,6 +108,7 @@ mod session_startup_prewarm;
+@@ -107,6 +107,7 @@ mod session_startup_prewarm;
  mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
@@ -575,10 +575,10 @@ index 8dc8f359d4e09cc5db417a67e2923b80323a59c9..2fbad7f8067997db4fa5b0dff65ad52f
  pub(crate) use stdin_approval::TerminalSandboxSource;
 
 diff --git a/codex-rs/core/src/unified_exec/process.rs b/codex-rs/core/src/unified_exec/process.rs
-index 81946e4b2691dfd34fb9b85ca3ba7a2b6802e84f..df67713ef048edd7b8df42feb99d7ee32df3850f 100644
+index 27e21f716b954bfbd25bd132adb67bc5f7f648aa..47e870880ddb8cbf04fe591b5b3363e193e248e5 100644
 --- a/codex-rs/core/src/unified_exec/process.rs
 +++ b/codex-rs/core/src/unified_exec/process.rs
-@@ -196,6 +196,25 @@ impl UnifiedExecProcess {
+@@ -200,6 +200,25 @@ impl UnifiedExecProcess {
          }
      }
 
@@ -605,7 +605,7 @@ index 81946e4b2691dfd34fb9b85ca3ba7a2b6802e84f..df67713ef048edd7b8df42feb99d7ee3
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index f19147f6605db85cff4932eb72c4b922a968490a..bb6bdf09c7ab79f1ab5bd05e5d279138ec0d5fc3 100644
+index c04c1a897a4e97a852181a203113c513c722b350..3d6c634ac85c2f7246a26dbd0da8d82f58d9b67e 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
 @@ -105,6 +105,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
@@ -1253,10 +1253,10 @@ index 0000000000000000000000000000000000000000..9355e6864b3bc0c06a2e2339d4738af9
 +    assert_eq!(output.process_id, Some(PROCESS_ID));
 +}
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index 1c6a629926705a48e9955a1088593dcd3cb67ca5..dea9a449b7c8b8e361b64e2cb37325d4a6d70010 100644
+index 610d96f869e1555d59563b066a2d58b398d92e1a..9aadcb7161b911fd406261efbffb722f23a50361 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -154,6 +154,7 @@ mod rollout_compression;
+@@ -163,6 +163,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;

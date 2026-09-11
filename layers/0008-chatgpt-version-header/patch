@@ -1,8 +1,8 @@
 diff --git a/codex-rs/model-provider-info/src/lib.rs b/codex-rs/model-provider-info/src/lib.rs
-index 3fb3e87a2aa9b034713687b20b7f11c38b182389..6b595edb2f24ff1a3a30f00e2cd6515c4593d330 100644
+index 9c27b15cc4800fbc8138423806e5e794122a211e..4d3333c39ad5b9c042169571a51e1db6c1fd0cab 100644
 --- a/codex-rs/model-provider-info/src/lib.rs
 +++ b/codex-rs/model-provider-info/src/lib.rs
-@@ -59,6 +59,18 @@ const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer su
+@@ -62,6 +62,18 @@ const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer su
  pub const LEGACY_OLLAMA_CHAT_PROVIDER_ID: &str = "ollama-chat";
  pub const OLLAMA_CHAT_PROVIDER_REMOVED_ERROR: &str = "`ollama-chat` is no longer supported.\nHow to fix: replace `ollama-chat` with `ollama` in `model_provider`, `oss_provider`, or `--local-provider`.\nMore info: https://github.com/openai/codex/discussions/7782";
 
@@ -21,7 +21,7 @@ index 3fb3e87a2aa9b034713687b20b7f11c38b182389..6b595edb2f24ff1a3a30f00e2cd6515c
  /// Wire protocol that the provider speaks.
  #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
  #[serde(rename_all = "lowercase")]
-@@ -395,9 +407,12 @@ impl ModelProviderInfo {
+@@ -472,9 +484,12 @@ other non-default provider fields are not supported"
              wire_api: WireApi::Responses,
              query_params: None,
              http_headers: Some(
@@ -38,7 +38,7 @@ index 3fb3e87a2aa9b034713687b20b7f11c38b182389..6b595edb2f24ff1a3a30f00e2cd6515c
              env_http_headers: Some(
                  [
 diff --git a/codex-rs/model-provider-info/src/model_provider_info_tests.rs b/codex-rs/model-provider-info/src/model_provider_info_tests.rs
-index d08af0ffb54c266d81465cd056944e2085889b97..1c4b91e7669fc0890e944cec9cea349f2e5a279b 100644
+index 8e13869cb2fc22c11be79c4e9a8adc7f794d921f..aabe08fb1104245649af9c51d94f58007163a115 100644
 --- a/codex-rs/model-provider-info/src/model_provider_info_tests.rs
 +++ b/codex-rs/model-provider-info/src/model_provider_info_tests.rs
 @@ -154,6 +154,32 @@ fn test_header_auth_uses_chatgpt_codex_base_url() {

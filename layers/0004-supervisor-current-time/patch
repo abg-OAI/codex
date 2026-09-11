@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 7fde17392fb149eb22b8e3adc86cb93480e1d354..d7ca63d4f43f6c16e660df4ed45d42543e0b7d6c 100644
+index d71567b6ae75e2513b095adba65181a008b5adf3..9f04f055bd9cc9f7c78db40083873a5d10258e40 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -6,7 +6,10 @@ use std::sync::atomic::AtomicU64;
@@ -35,7 +35,7 @@ index 7fde17392fb149eb22b8e3adc86cb93480e1d354..d7ca63d4f43f6c16e660df4ed45d4254
      let helper = Box::pin(
          parent
              .services
-@@ -389,9 +398,21 @@ async fn spawn_helper(
+@@ -390,9 +399,21 @@ async fn spawn_helper(
  }
 
  /// Renders one bounded model-visible assignment for the ephemeral helper.
