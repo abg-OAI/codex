@@ -99,7 +99,7 @@ index ac7bdca0b9545a315041032e289bd87e053e5985..d7d83cd74b3a0e42e0e2f79129e592a2
  mod actions;
  pub(crate) mod guidance;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index d7ca63d4f43f6c16e660df4ed45d42543e0b7d6c..f55655e27042d14884a501b8dba2168b6ec0a1d9 100644
+index 9f04f055bd9cc9f7c78db40083873a5d10258e40..296464c930270b348fc026c4e6a83532055b3666 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -29,6 +29,8 @@ use super::HELPER_ROLE_NAME;
@@ -221,7 +221,7 @@ index d7ca63d4f43f6c16e660df4ed45d42543e0b7d6c..f55655e27042d14884a501b8dba2168b
  }
 
  pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
-@@ -515,12 +588,22 @@ async fn defer_failure(
+@@ -516,12 +589,22 @@ async fn defer_failure(
              }),
          })
          .await;
@@ -250,7 +250,7 @@ index d7ca63d4f43f6c16e660df4ed45d42543e0b7d6c..f55655e27042d14884a501b8dba2168b
  }
 
  fn failure_retry_delay(consecutive_failures: u32) -> Duration {
-@@ -547,7 +630,7 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -548,7 +631,7 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
              if state
                  .snooze
                  .as_ref()
@@ -259,7 +259,7 @@ index d7ca63d4f43f6c16e660df4ed45d42543e0b7d6c..f55655e27042d14884a501b8dba2168b
              {
                  state.snooze = None;
                  true
-@@ -556,6 +639,18 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -557,6 +640,18 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
              }
          };
          if should_wake {

@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 929eab5392eabd6c06a3c723060232db7203f597..1ecf0f98b66e9bda3f7d03143aa717b657d0a1cc 100644
+index 46af9c9a9c97129833e0749e46bb1410db436961..6fcf4b73748ba2537b1cd867440ef50d1d725e37 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
-@@ -90,6 +90,7 @@ where
+@@ -94,6 +94,7 @@ where
                  max_goal_token_budget: config.max_goal_token_budget,
              },
          );
@@ -11,10 +11,10 @@ index 929eab5392eabd6c06a3c723060232db7203f597..1ecf0f98b66e9bda3f7d03143aa717b6
      codex_git_attribution::install(
          &mut builder,
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index 281c3814f8ed1886f714c0ccbe00e2439da79c18..2642b618277486246c569c170e2a3587d3d3ba44 100644
+index 402b589f5bc5b8dba121d9cad12354948f663714..6d433cef141d3b6076e0f2d4f5b3734693fffa7c 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
-@@ -90,6 +90,9 @@ mod residency;
+@@ -98,6 +98,9 @@ mod residency;
  mod review;
  mod rollout_migration;
  mod safety_check_downgrade;
@@ -381,7 +381,7 @@ index 0000000000000000000000000000000000000000..0fd0923f472e9e0f024b801939eb2395
 +    Ok(())
 +}
 diff --git a/codex-rs/core/src/agent/control.rs b/codex-rs/core/src/agent/control.rs
-index 51f92fa863fb7d3e305abb984ac457647811d300..c3259e8fee90c0504466ffacd909f0e518d86025 100644
+index 6435d93409613e0b73a930e0ac4bc3bbeccccc40..36110c4e25632649a0e99af04b34b376c0a4ed4f 100644
 --- a/codex-rs/core/src/agent/control.rs
 +++ b/codex-rs/core/src/agent/control.rs
 @@ -4,6 +4,7 @@ use crate::TurnStartOptions;
@@ -392,7 +392,7 @@ index 51f92fa863fb7d3e305abb984ac457647811d300..c3259e8fee90c0504466ffacd909f0e5
  use crate::agent::role::DEFAULT_ROLE_NAME;
  use crate::agent::role::resolve_role_config;
  use crate::agent::status::is_final;
-@@ -445,6 +446,19 @@ impl AgentControl {
+@@ -447,6 +448,19 @@ impl AgentControl {
          Some(thread.config_snapshot().await)
      }
 
@@ -412,7 +412,7 @@ index 51f92fa863fb7d3e305abb984ac457647811d300..c3259e8fee90c0504466ffacd909f0e5
      pub(crate) async fn resolve_agent_reference(
          &self,
          _current_thread_id: ThreadId,
-@@ -735,6 +749,7 @@ impl AgentControl {
+@@ -737,6 +751,7 @@ impl AgentControl {
              agent_path,
              agent_nickname,
              agent_role,
@@ -420,7 +420,7 @@ index 51f92fa863fb7d3e305abb984ac457647811d300..c3259e8fee90c0504466ffacd909f0e5
          })
      }
 
-@@ -747,18 +762,32 @@ impl AgentControl {
+@@ -749,18 +764,32 @@ impl AgentControl {
          depth: i32,
          agent_path: Option<AgentPath>,
          agent_role: Option<String>,
@@ -573,7 +573,7 @@ index 8ad8ddcf9f1820352331bbc1a81df9d06f59887d..cc645546370495ed62bbdd7623e45ca9
 +    );
 +}
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 6dccadb96d3789553c5af291e3ef3384f9300a6d..bcb8961a849bec4a1226afad4d0165e212976f16 100644
+index 306e770bcd6f6dc6fcb0e04981646497482f7347..5bd4d3c40c3ebf2cfbabe3ae5ce5b4740f861d2e 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -254,6 +254,7 @@ impl AgentControl {
@@ -710,7 +710,7 @@ index 6dccadb96d3789553c5af291e3ef3384f9300a6d..bcb8961a849bec4a1226afad4d0165e2
 
          let start_options = TurnStartOptions {
              parent_turn_id: options.parent_turn_id,
-@@ -785,7 +819,7 @@ impl AgentControl {
+@@ -786,7 +820,7 @@ impl AgentControl {
                  .await?;
              }
          }
@@ -719,7 +719,7 @@ index 6dccadb96d3789553c5af291e3ef3384f9300a6d..bcb8961a849bec4a1226afad4d0165e2
              let child_reference = agent_metadata
                  .agent_path
                  .as_ref()
-@@ -947,7 +981,9 @@ impl AgentControl {
+@@ -948,7 +982,9 @@ impl AgentControl {
                      .inherited_user_message = true;
              }
              let response_item = &mut envelope.item;
@@ -730,7 +730,7 @@ index 6dccadb96d3789553c5af291e3ef3384f9300a6d..bcb8961a849bec4a1226afad4d0165e2
                  return false;
              }
              if !retain_forked_developer_message(
-@@ -1005,7 +1041,8 @@ impl AgentControl {
+@@ -1006,7 +1042,8 @@ impl AgentControl {
              true
          };
          forked_rollout_items.retain_mut(|item| {
@@ -740,7 +740,7 @@ index 6dccadb96d3789553c5af291e3ef3384f9300a6d..bcb8961a849bec4a1226afad4d0165e2
                  || destination_history_mode == Some(ThreadHistoryMode::Paginated)
                      && matches!(
                          &*item,
-@@ -1255,6 +1292,7 @@ impl AgentControl {
+@@ -1256,6 +1293,7 @@ impl AgentControl {
                  depth,
                  agent_path.or(resumed_agent_path),
                  resumed_agent_role,
@@ -749,7 +749,7 @@ index 6dccadb96d3789553c5af291e3ef3384f9300a6d..bcb8961a849bec4a1226afad4d0165e2
              )?,
              other => (other, AgentMetadata::default()),
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 61ebf719baa58792864413ff4ae5b15c851fa111..1607a835c5eb16d8338ed2a8490b9f60717bed9c 100644
+index f8cb0e5457b05692b8dffb76d9764e39d37de030..065a82b670bda3a0f8db28ba4f201dbf97b43dc7 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
 @@ -76,6 +76,12 @@ use tokio::time::sleep;
@@ -954,10 +954,10 @@ index 24d204ee56b0ecc2a47077d5b83d86d85a189e95..5795d21650c652f9918c7a6fe4e3da12
  fn replacing_agent_metadata_updates_thread_identity_index() {
      let registry = AgentRegistry::default();
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index ae02620448ed86c4419ad8ca506ee61cd8883888..3ff773c7d1f8bdbf02d3653765dd78ab432f7c83 100644
+index 9fa43519f27f448dff739417dd32249339552735..3fdd92e151d0d09120cd31ee73ceb5c0c574e102 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -281,6 +281,23 @@ impl CodexThread {
+@@ -295,6 +295,23 @@ impl CodexThread {
          self.session.emit_thread_idle_lifecycle_if_idle(cause).await;
      }
 
@@ -982,10 +982,10 @@ index ae02620448ed86c4419ad8ca506ee61cd8883888..3ff773c7d1f8bdbf02d3653765dd78ab
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 927b09dbc3737a49dfae972657cb888e854b6573..3375ed1084acc820d584e766242b1d6febd39e5a 100644
+index 2854d74a280b37a961609e279c8f1f245de2960c..f7e40fd93b3e2305660c1b3328437e0a4d222d23 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -109,6 +109,14 @@ mod skills;
+@@ -108,6 +108,14 @@ mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
@@ -1680,10 +1680,10 @@ index 0000000000000000000000000000000000000000..8cc5a7a75e3f3bfc706be54a46f5740a
 +turn immediately without additional tool calls.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..30e721fdbc2851182217ebd9bbbfafbad6b876e3
+index 0000000000000000000000000000000000000000..db9fa44a187afe3e92f289d979d0733d02abc024
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-@@ -0,0 +1,473 @@
+@@ -0,0 +1,474 @@
 +//! Runtime ownership and lifecycle for one root thread's supervisor helper.
 +
 +use std::sync::Arc;
@@ -1988,6 +1988,7 @@ index 0000000000000000000000000000000000000000..30e721fdbc2851182217ebd9bbbfafba
 +                    fork_mode: Some(SpawnAgentForkMode::FullHistory),
 +                    parent_thread_id: Some(parent.thread_id),
 +                    parent_turn_id: None,
++                    turn_trigger: None,
 +                    root_turn_id: None,
 +                    environments: None,
 +                    multi_agent_v2_usage_hints: None,
@@ -2496,10 +2497,10 @@ index 893a01ce5ad0bb1789d7b27ce5baad5f8a7a01e8..efe282cc73938c574f582581c9695875
  pub(crate) mod await_exec;
 +pub(crate) mod goal_supervisor;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 8ffc144d028b4f339d0ff323bbc804659406bada..28cd0cd39ee306053f0f8b12a45c4104e4302f79 100644
+index d78802086bba95d97c4aa52a03b4f756a6f492d7..a4efca99ca7b2682f0c54b415582dda6da47377b 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2187,6 +2187,9 @@ impl Session {
+@@ -2318,6 +2318,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }
@@ -2510,10 +2511,10 @@ index 8ffc144d028b4f339d0ff323bbc804659406bada..28cd0cd39ee306053f0f8b12a45c4104
          self.forward_child_completion_to_parent(
              turn_context,
 diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
-index 8df4f1cab6c39453f26866c1e40c7cf233f398b2..46ec7e05efb2d1cb730de2c93b0bc72fe4ea85bf 100644
+index fdf3487abc683ae64f75c7d933df9ef73e5a54e3..f91dbe6577d7e46d1584e1b16b89482afe1f5c42 100644
 --- a/codex-rs/core/src/session/turn_context.rs
 +++ b/codex-rs/core/src/session/turn_context.rs
-@@ -705,6 +705,22 @@ impl Session {
+@@ -785,6 +785,22 @@ impl Session {
          config
      }
 
@@ -2537,7 +2538,7 @@ index 8df4f1cab6c39453f26866c1e40c7cf233f398b2..46ec7e05efb2d1cb730de2c93b0bc72f
      #[instrument(name = "turn_context.make", level = "trace", skip_all)]
      pub(crate) fn make_turn_context(
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index d976a0ea29d77c2d65373efd740e8cafa8a226cc..cbbf0c5bcd2a8cdf3d08224e4f263fd3bd99edad 100644
+index 3a03c7b24abc6c799ad5f1ddb8175dd07ef2c204..b601f4e07496e5f587b2195d73d073d4e8b3f27a 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -332,6 +332,7 @@ impl Session {
@@ -2568,10 +2569,10 @@ index 38db95edf7f0d4407ea479285e0a0e953ff38691..1323faf17165c0b3595800c79bb4d30f
      let hosted_specs = if crate::guardian::is_basic_session_source(&turn_context.session_source) {
          Vec::new()
 diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
-index 84fa4204ba41947d2d7ea638d94183b87b8d547d..126266b919fc63711d7a94be99abd3cec1610bc7 100644
+index 477290c751c715b06378169826be3540086d4a67..9d3ec0aacfadf2692d05e1d06f36a7a82cb947a7 100644
 --- a/codex-rs/ext/goal/src/runtime.rs
 +++ b/codex-rs/ext/goal/src/runtime.rs
-@@ -434,10 +434,20 @@ impl GoalRuntimeHandle {
+@@ -453,10 +453,20 @@ impl GoalRuntimeHandle {
              .map_err(|err| err.to_string())?
          else {
              self.inner.accounting_state.clear_active_goal();
@@ -2592,7 +2593,7 @@ index 84fa4204ba41947d2d7ea638d94183b87b8d547d..126266b919fc63711d7a94be99abd3ce
              return Ok(());
          }
          let start_options = thread
-@@ -445,10 +455,7 @@ impl GoalRuntimeHandle {
+@@ -464,10 +474,7 @@ impl GoalRuntimeHandle {
              .get::<TurnStartOptions>()
              .map(|options| options.as_ref().clone())
              .unwrap_or_default();
