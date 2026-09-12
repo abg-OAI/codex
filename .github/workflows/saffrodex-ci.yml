@@ -148,8 +148,12 @@ jobs:
       - name: Run core unit and Saffron integration tests
         working-directory: ${{ steps.projection.outputs.path }}
         run: |
-          just test --cargo-profile ci-test -p codex-core --lib
           just test --cargo-profile ci-test \
+            --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
+            -p codex-core \
+            --lib
+          just test --cargo-profile ci-test \
+            --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
             -p codex-app-server \
             --test all \
             saffron_goal_supervisor
