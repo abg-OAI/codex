@@ -303,7 +303,9 @@ impl CodexThread {
         &self,
         goal: &codex_state::ThreadGoal,
     ) -> Result<bool, String> {
-        crate::saffron::goal_supervisor::start_checkin(&self.session, goal).await
+        crate::saffron::goal_supervisor::start_checkin(&self.session, goal)
+            .await
+            .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
     }
 
     /// Clears process-local supervisor state after a goal becomes inactive.

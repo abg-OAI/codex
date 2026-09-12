@@ -90,6 +90,13 @@ pub async fn inter_agent_communication(
         .enqueue_mailbox_communication(communication, start_options)
         .await;
     crate::agent_communication::emit_agent_communication_receive(&sub_id);
+    if trigger_turn {
+        crate::saffron::goal_supervisor::claim_root_continuation(
+            sess,
+            crate::saffron::goal_supervisor::ContinuationOwner::TriggeringMailbox,
+        )
+        .await;
+    }
     if trigger_turn || sess.has_outstanding_durable_sleep() {
         sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
             .await;
