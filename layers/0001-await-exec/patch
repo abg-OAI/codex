@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 55d1f474e51b33b0ecfdede491ba2beb72741037..2854d74a280b37a961609e279c8f1f245de2960c 100644
+index a8f76ae3592942c5ccf8a7386b93dfaa72b39f7f..98e65b28c6ce74d5211cd8a58dc600c8c774a523 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -107,6 +107,7 @@ mod session_startup_prewarm;
@@ -12,7 +12,7 @@ index 55d1f474e51b33b0ecfdede491ba2beb72741037..2854d74a280b37a961609e279c8f1f24
  mod unified_exec;
 diff --git a/codex-rs/core/src/saffron/await_exec/handler.rs b/codex-rs/core/src/saffron/await_exec/handler.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8b047fbd533f0134b7467ee1e5a36a89970783ef
+index 0000000000000000000000000000000000000000..5e82be2c1d848f4a559b49ef727a269c965c1aa6
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/await_exec/handler.rs
 @@ -0,0 +1,338 @@
@@ -350,7 +350,7 @@ index 0000000000000000000000000000000000000000..8b047fbd533f0134b7467ee1e5a36a89
 +                    "output"
 +                ],
 +                "additionalProperties": false
-+            })),
++            }).into()),
 +        })],
 +    })
 +}
@@ -542,7 +542,7 @@ index 9f9f8a8cf1ea9fbd01f01813e9dcf1ccca6ab1e1..d0ef75556bc481fee669259b8e1e1558
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 01054b1b504811a5fee21d6bc083c1f5117d52ea..38db95edf7f0d4407ea479285e0a0e953ff38691 100644
+index 1f308ab5f349b5bfa749e98572d7d909088e6f77..422cec0310e9fa0475e473deab32bf3c86ee3bc4 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -562,7 +562,7 @@ index 01054b1b504811a5fee21d6bc083c1f5117d52ea..38db95edf7f0d4407ea479285e0a0e95
          // Managed requirements are the only configuration path that can keep
          // unified exec disabled. Preserve command execution without exposing a
 diff --git a/codex-rs/core/src/unified_exec/mod.rs b/codex-rs/core/src/unified_exec/mod.rs
-index 8dc8f359d4e09cc5db417a67e2923b80323a59c9..2fbad7f8067997db4fa5b0dff65ad52fe5d6e702 100644
+index 8f6c61fdeec686c4de5bda1e828106b4f1252482..ffb5f15ae0baaba9cd330ce2843023eb31970bf4 100644
 --- a/codex-rs/core/src/unified_exec/mod.rs
 +++ b/codex-rs/core/src/unified_exec/mod.rs
 @@ -67,6 +67,8 @@ pub(crate) use process::NoopSpawnLifecycle;
@@ -605,10 +605,10 @@ index 27e21f716b954bfbd25bd132adb67bc5f7f648aa..47e870880ddb8cbf04fe591b5b3363e1
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index c04c1a897a4e97a852181a203113c513c722b350..3d6c634ac85c2f7246a26dbd0da8d82f58d9b67e 100644
+index e3be5f38e0fcee839732d51a2c0334608b991555..c17e6cd11a8f06468f70bbdf4e2ac30e5b59acf0 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
-@@ -105,6 +105,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
+@@ -106,6 +106,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
  const MAX_STDIN_APPROVAL_BYTES: usize = 8_000;
  const INTERRUPT: &str = "\u{3}";
 
@@ -1253,17 +1253,17 @@ index 0000000000000000000000000000000000000000..9355e6864b3bc0c06a2e2339d4738af9
 +    assert_eq!(output.process_id, Some(PROCESS_ID));
 +}
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index 610d96f869e1555d59563b066a2d58b398d92e1a..9aadcb7161b911fd406261efbffb722f23a50361 100644
+index 67cfcb47eb9bc97208a78775617dff1278dcdb51..e3ada0cb8fcbcc12b049f19e6efee2afcb4825e6 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -163,6 +163,7 @@ mod rollout_compression;
+@@ -168,6 +168,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;
 +mod saffrodex_await_exec;
+ mod scenarios;
  mod search_tool;
  mod settings_commits;
- mod settings_constraints;
 diff --git a/codex-rs/core/tests/suite/saffrodex_await_exec.rs b/codex-rs/core/tests/suite/saffrodex_await_exec.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..fc3a56f6853078e850e179fcad59de63c964b17e
