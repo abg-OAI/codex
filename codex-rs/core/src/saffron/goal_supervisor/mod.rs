@@ -5,9 +5,9 @@
 //! root threads: it forks a short-lived helper with the parent's full history,
 //! lets the helper choose one bounded action, and then retires the helper.
 //!
-//! Helper identity, snooze deadlines, retry state, and continuity hints are
-//! intentionally in memory. A restart discards them and the normal goal idle
-//! lifecycle reconstructs supervision from the durable active goal.
+//! Helper identity, retry counters, and continuity hints remain process-local.
+//! Snooze and retry deadlines are also recorded in Saffron's auxiliary store,
+//! allowing a new runtime to preserve their absolute wake time.
 
 mod actions;
 pub(crate) mod guidance;
