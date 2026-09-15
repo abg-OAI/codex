@@ -273,6 +273,11 @@ impl Session {
         input: Vec<TurnInput>,
         task: T,
     ) {
+        crate::saffron::goal_supervisor::claim_root_continuation(
+            self,
+            crate::saffron::goal_supervisor::ContinuationOwner::RootTurn,
+        )
+        .await;
         self.abort_all_tasks(TurnAbortReason::Replaced).await;
         self.clear_connector_selection().await;
         self.start_task(turn_context, input, task).await;
@@ -458,6 +463,11 @@ impl Session {
             let active_turn = active_turn.get_or_insert_with(ActiveTurn::default);
             Arc::clone(&active_turn.turn_state)
         };
+        crate::saffron::goal_supervisor::claim_root_continuation(
+            self,
+            crate::saffron::goal_supervisor::ContinuationOwner::RootTurn,
+        )
+        .await;
 
         let (input, mut start_options) =
             self.input_queue.get_pending_input(&self.active_turn).await;
