@@ -6,6 +6,8 @@ use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
 use app_test_support::create_fake_rollout;
 use app_test_support::create_mock_responses_server_repeating_assistant;
+use codex_app_server_protocol::ThreadGoalStatus;
+use codex_app_server_protocol::ThreadGoalUpdatedNotification;
 use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadLoadedListResponse;
 use codex_app_server_protocol::ThreadStartParams;
@@ -22,6 +24,7 @@ use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
 use wiremock::MockServer;
+use wiremock::ResponseTemplate;
 
 const RESTART_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -252,6 +255,79 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
             .is_some_and(|output| output.contains("3600")),
         "the edit should not consume the required disposition action"
     );
+
+    Ok(())
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn terminal_invalid_request_blocks_parent_goal() -> Result<()> {
+    let server = responses::start_mock_server().await;
+    let model_responses = responses::mount_response_sequence(
+        &server,
+        vec![
+            responses::sse_response(responses::sse(vec![
+                responses::ev_response_created("parent-create-goal"),
+                responses::ev_function_call(
+                    "create-goal-call",
+                    "create_goal",
+                    &json!({ "objective": "wait for the deployment" }).to_string(),
+                ),
+                responses::ev_completed("parent-create-goal"),
+            ])),
+            responses::sse_response(responses::sse(vec![
+                responses::ev_response_created("parent-idle"),
+                responses::ev_assistant_message("parent-message", "Waiting for deployment."),
+                responses::ev_completed("parent-idle"),
+            ])),
+            ResponseTemplate::new(/*status*/ 400).set_body_json(json!({
+                "error": {
+                    "message": "this model requires a newer Codex version",
+                    "type": "invalid_request_error",
+                    "param": null,
+                    "code": null,
+                }
+            })),
+        ],
+    )
+    .await;
+
+    let codex_home = TempDir::new()?;
+    MockResponsesConfig::new(&server.uri())
+        .enable_feature(Feature::Goals)
+        .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
+        .write(codex_home.path())?;
+    let mut app_server = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_managed_config()
+        .build_initialized()
+        .await?;
+    let thread = app_server
+        .start_thread(ThreadStartParams::default())
+        .await?;
+    app_server
+        .start_turn_and_wait_for_completion(TurnStartParams {
+            thread_id: thread.thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "Track the deployment until it completes.".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+
+    let goal = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let notification: ThreadGoalUpdatedNotification =
+                app_server.read_notification("thread/goal/updated").await?;
+            if notification.goal.status == ThreadGoalStatus::Blocked {
+                return Ok::<_, anyhow::Error>(notification.goal);
+            }
+        }
+    })
+    .await
+    .context("supervisor did not block the goal")??;
+
+    assert_eq!(goal.status, ThreadGoalStatus::Blocked);
+    assert_eq!(model_responses.requests().len(), 3);
 
     Ok(())
 }
