@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 254d3a5a923cf7960c0aceb7193c10abee5d77b3..b443d5a463c236e849ca0b73f4055c743f491915 100644
+index 77b31d6baf36af2689961b12aac0cd0869fd7a6c..0db07c93f06a346ef74fe8e6c3c869b397b6acf5 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -303,7 +303,9 @@ impl CodexThread {
+@@ -304,7 +304,9 @@ impl CodexThread {
          &self,
          goal: &codex_state::ThreadGoal,
      ) -> Result<bool, String> {
@@ -974,10 +974,10 @@ index f7509cb64a40e79e22e985c7a1c0a580146305a8..980e8950cb48ad9c4a802e96579651e6
  fn failure_retry_is_exponential_and_capped() {
      assert_eq!(failure_retry_delay(1), Duration::from_secs(60));
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index cf173b468865a62912e58123d8e59c13a5ed9d80..6927eaac285330ca26510c9a93006af5aa962d52 100644
+index dc739a59bfc477aaf9b289aec504224c6a450684..dff04b35cc3f1bc3c534f8b258ca64ce72ca68c8 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
-@@ -90,6 +90,13 @@ pub async fn inter_agent_communication(
+@@ -86,6 +86,13 @@ pub async fn inter_agent_communication(
          .enqueue_mailbox_communication(communication, start_options)
          .await;
      crate::agent_communication::emit_agent_communication_receive(&sub_id);
