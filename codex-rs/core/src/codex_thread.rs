@@ -247,6 +247,17 @@ impl CodexThread {
         self.io.shutdown_and_wait().await
     }
 
+    /// Requests shutdown if the session is still idle when this operation is handled.
+    ///
+    /// Returns after the session accepts or rejects the request. Call
+    /// [`Self::wait_until_terminated`] after an accepted request when teardown
+    /// must finish before the caller continues.
+    pub async fn request_shutdown_if_idle(&self) -> CodexResult<bool> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.submit(Op::ShutdownIfIdle { reply: reply_tx }).await?;
+        reply_rx.await.map_err(|_| CodexErr::InternalAgentDied)
+    }
+
     /// Wait until the underlying session loop has terminated.
     pub async fn wait_until_terminated(&self) {
         self.io.session_loop_termination.clone().await;
@@ -320,7 +331,7 @@ impl CodexThread {
     /// deferred core task is not discarded before its durable state changes.
     #[doc(hidden)]
     pub async fn should_retain_while_idle(&self) -> bool {
-        crate::saffron::goal_supervisor::should_retain_while_idle(&self.session).await
+        self.session.should_retain_while_idle().await
     }
 
     /// Returns whether the settled snooze can be reconstructed after unloading.

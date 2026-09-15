@@ -665,6 +665,9 @@ pub enum Op {
     InterAgentCommunication {
         communication: InterAgentCommunication,
         start_options: TurnStartOptions,
+        /// Signals after Core has accepted the message into the recipient mailbox
+        /// and completed the requested wake decision.
+        accepted: Option<oneshot::Sender<()>>,
     },
 
     /// Approve a command execution
@@ -751,6 +754,15 @@ pub enum Op {
 
     /// Request to shut down codex instance.
     Shutdown,
+
+    /// Shut down only if no work currently requires this thread to remain loaded.
+    ///
+    /// The session submission queue evaluates this after all earlier submissions,
+    /// so callers cannot act on an idle observation that predates queued work.
+    ShutdownIfIdle {
+        /// Reports whether the session committed to shutdown.
+        reply: oneshot::Sender<bool>,
+    },
 
     /// Execute a user-initiated one-off shell command (triggered by "!cmd").
     ///
@@ -959,6 +971,7 @@ impl Op {
             Self::Review { .. } => "review",
             Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
             Self::Shutdown => "shutdown",
+            Self::ShutdownIfIdle { .. } => "shutdown_if_idle",
             Self::RunUserShellCommand { .. } => "run_user_shell_command",
         }
     }

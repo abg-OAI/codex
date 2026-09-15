@@ -2739,7 +2739,6 @@ async fn plaintext_multi_agent_v2_completion_sends_agent_message(
 async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> Result<()> {
     const SPAWN_WORKER_PROMPT: &str = "spawn the completion-routing worker";
     const SPAWN_REQUESTER_PROMPT: &str = "spawn the completion-routing requester";
-    const READ_RESULT_PROMPT: &str = "read the completion-routing worker result";
     const WORKER_INITIAL_TASK: &str = "finish the worker initial task";
     const REQUESTER_TASK: &str = "ask the sibling worker to do more";
     const WORKER_FOLLOWUP_TASK: &str = "finish the peer-requested worker task";
@@ -2815,12 +2814,42 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
         ]),
     )
     .await;
+    let initial_worker_result_request = mount_sse_once_match(
+        &server,
+        |request: &wiremock::Request| {
+            request_has_input_type(request, "agent_message")
+                && body_contains(request, "initial worker finished")
+        },
+        sse(vec![
+            ev_response_created("resp-routing-root-initial-result"),
+            ev_assistant_message("msg-routing-root-initial-result", "initial result received"),
+            ev_completed("resp-routing-root-initial-result"),
+        ]),
+    )
+    .await;
 
     submit_turn_with_trigger(&test, SPAWN_WORKER_PROMPT, "automation_cron_scheduled").await?;
     let worker_thread_id = created_threads.recv().await?;
     let worker_thread = test.thread_manager.get_thread(worker_thread_id).await?;
     wait_for_event(worker_thread.as_ref(), |event| {
         matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    let initial_root_turn_id = wait_for_requests(&initial_worker_result_request)
+        .await?
+        .into_iter()
+        .find_map(|request| {
+            let body = request.body_json();
+            (body["client_metadata"]["thread_id"] == json!(root_thread_id)).then(|| {
+                body["client_metadata"]["turn_id"]
+                    .as_str()
+                    .expect("initial result turn ID")
+                    .to_string()
+            })
+        })
+        .expect("initial worker result request");
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(completed) if completed.turn_id == initial_root_turn_id)
     })
     .await;
 
@@ -2914,6 +2943,21 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
             .await,
         );
     }
+    let root_result_request = mount_sse_once_match(
+        &server,
+        |request: &wiremock::Request| {
+            request_has_input_type(request, "agent_message")
+                && body_contains(request, "Sender: /root/worker")
+                && body_contains(request, "Task name: /root")
+                && body_contains(request, "peer follow-up finished")
+        },
+        sse(vec![
+            ev_response_created("resp-routing-root-result"),
+            ev_assistant_message("msg-routing-root-result", "result received"),
+            ev_completed("resp-routing-root-result"),
+        ]),
+    )
+    .await;
 
     submit_turn_with_trigger(&test, SPAWN_REQUESTER_PROMPT, "composer").await?;
     let requester_thread_id = created_threads.recv().await?;
@@ -2994,51 +3038,7 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
         )
     );
 
-    // Fresh turn input is sampled before queued mail is drained. Let that first
-    // request complete successfully so the next request can include the result.
-    mount_sse_once_match(
-        &server,
-        |request: &wiremock::Request| {
-            body_contains(request, READ_RESULT_PROMPT)
-                && !body_contains(request, "peer follow-up finished")
-        },
-        sse(vec![ev_completed("resp-routing-root-before-mail")]),
-    )
-    .await;
-    let root_result_request = mount_sse_once_match(
-        &server,
-        |request: &wiremock::Request| {
-            body_contains(request, READ_RESULT_PROMPT)
-                && body_contains(request, "Sender: /root/worker")
-                && body_contains(request, "peer follow-up finished")
-        },
-        sse(vec![
-            ev_response_created("resp-routing-root-result"),
-            ev_assistant_message("msg-routing-root-result", "result received"),
-            ev_completed("resp-routing-root-result"),
-        ]),
-    )
-    .await;
-    test.submit_turn(READ_RESULT_PROMPT).await?;
-    let root_request = root_result_request
-        .requests()
-        .into_iter()
-        .find(|request| {
-            request.body_json()["client_metadata"]["thread_id"] == json!(root_thread_id)
-                && request.body_contains_text(READ_RESULT_PROMPT)
-                && request.body_contains_text("peer follow-up finished")
-        })
-        .expect("root result request");
-    assert!(
-        root_request
-            .inputs_of_type("agent_message")
-            .iter()
-            .any(|item| {
-                item["author"] == "/root/worker"
-                    && item["recipient"] == "/root"
-                    && item.to_string().contains("peer follow-up finished")
-            })
-    );
+    assert_eq!(wait_for_requests(&root_result_request).await?.len(), 1);
 
     Ok(())
 }
