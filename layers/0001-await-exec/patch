@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index a8f76ae3592942c5ccf8a7386b93dfaa72b39f7f..98e65b28c6ce74d5211cd8a58dc600c8c774a523 100644
+index ea8e1b29f55b928bbd03c3292abcc9e590f73eed..c9b0e05bceec0433ff6b9a174cb89a0641c4732f 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -107,6 +107,7 @@ mod session_startup_prewarm;
+@@ -109,6 +109,7 @@ mod session_startup_prewarm;
  mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
@@ -542,7 +542,7 @@ index 9f9f8a8cf1ea9fbd01f01813e9dcf1ccca6ab1e1..d0ef75556bc481fee669259b8e1e1558
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 1f308ab5f349b5bfa749e98572d7d909088e6f77..422cec0310e9fa0475e473deab32bf3c86ee3bc4 100644
+index ac1ca687bc43c193f9b8128a4682045e6645bb7a..401f62b83668ab6d9b96d3be7cc1e8c7d5b6d37d 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -553,7 +553,7 @@ index 1f308ab5f349b5bfa749e98572d7d909088e6f77..422cec0310e9fa0475e473deab32bf3c
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -1104,6 +1105,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1061,6 +1062,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
      if features.enabled(Feature::UnifiedExec) {
          registry.add(ExecCommandHandler::new(options));
          registry.add(WriteStdinHandler);
@@ -1253,10 +1253,10 @@ index 0000000000000000000000000000000000000000..9355e6864b3bc0c06a2e2339d4738af9
 +    assert_eq!(output.process_id, Some(PROCESS_ID));
 +}
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index 67cfcb47eb9bc97208a78775617dff1278dcdb51..e3ada0cb8fcbcc12b049f19e6efee2afcb4825e6 100644
+index 59e4019e6ea74bd36c518ad4097755d6f37b876f..3a7f829739b74e0557a5bab2e082dd6e376b6c89 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -168,6 +168,7 @@ mod rollout_compression;
+@@ -171,6 +171,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;
