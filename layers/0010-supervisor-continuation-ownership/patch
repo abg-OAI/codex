@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 77b31d6baf36af2689961b12aac0cd0869fd7a6c..0db07c93f06a346ef74fe8e6c3c869b397b6acf5 100644
+index 7e88d87ab9d00e2e524367510b593659d2b5949d..da1763769fe32c4b5b51579bfb9d33e6dd2424fc 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -304,7 +304,9 @@ impl CodexThread {
@@ -992,7 +992,7 @@ index dc739a59bfc477aaf9b289aec504224c6a450684..dff04b35cc3f1bc3c534f8b258ca64ce
          sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
              .await;
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index b601f4e07496e5f587b2195d73d073d4e8b3f27a..f9bf541c37cb45e3a0467b35339a7d8b1e3b1101 100644
+index a0f876426e417c2ebad6a97753b2b91346c9b063..96b7554b8bc84d0aa0519852bee623b3073da72c 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -273,6 +273,11 @@ impl Session {
@@ -1007,7 +1007,7 @@ index b601f4e07496e5f587b2195d73d073d4e8b3f27a..f9bf541c37cb45e3a0467b35339a7d8b
          self.abort_all_tasks(TurnAbortReason::Replaced).await;
          self.clear_connector_selection().await;
          self.start_task(turn_context, input, task).await;
-@@ -458,6 +463,11 @@ impl Session {
+@@ -457,6 +462,11 @@ impl Session {
              let active_turn = active_turn.get_or_insert_with(ActiveTurn::default);
              Arc::clone(&active_turn.turn_state)
          };

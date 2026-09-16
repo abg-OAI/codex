@@ -181,7 +181,7 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
 
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 2333b8d15f48d14badfb5155f60c8312fd5045d4..1e7712a5e0b64a05a80f6499e723c55e9091f8bb 100644
+index 7c02e41f9662d25a53aa1092d355b629e45f992c..20ca388f887d25a309c1e589812da04199367d6f 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -302,10 +302,9 @@ impl CodexThread {
@@ -780,12 +780,12 @@ index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c06
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index d22d7a287c4938c5728387ccdfab3d8c25312972..b7f1cfdaa5afeb89ecc5db06bcad0ca40e22f66c 100644
+index 8cbcf1d2247915d6c54be58431e17533528ea4eb..31d5b2cb3db8959629b608852d87a0a4873aac62 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -153,14 +153,7 @@ pub(crate) fn build_tool_router(
      };
-     let mut registry = ToolRegistry::default();
+     let mut registry = ToolRegistry::with_allowed_tools(session.allowed_tools.clone());
      add_core_tool_sources(&context, &mut registry);
 -    if saffron::goal_supervisor::is_helper_source(&turn_context.session_source)
 -        && session
@@ -797,8 +797,8 @@ index d22d7a287c4938c5728387ccdfab3d8c25312972..b7f1cfdaa5afeb89ecc5db06bcad0ca4
 -    }
 +    saffron::register_tools(session, turn_context, &mut registry);
 
-     let hosted_specs = if crate::guardian::is_basic_session_source(&turn_context.session_source) {
-         Vec::new()
+     let registered_mcp_tools = session.services.mcp_handler_cache.append_mcp_tools(
+         mcp,
 diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
 index 9ba5aac20a4310b9cb747d78cc9623f5d4e8f2c8..4eeb45b0520ae072a5a0b9caf96c1f21b0892230 100644
 --- a/codex-rs/ext/goal/src/runtime.rs
