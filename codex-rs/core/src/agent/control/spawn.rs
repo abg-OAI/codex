@@ -762,6 +762,11 @@ impl AgentControl {
         if let Some(residency_slot) = residency_slot {
             residency_slot.commit(new_thread.thread_id);
         }
+        // Bridge the interval before the initial turn installs its task-owned
+        // guard. A failed submission drops this guard with the spawn future.
+        let _spawn_ancestor_retention_guard = notification_source.as_ref().and_then(|source| {
+            self.ancestor_turn_retention_guard(multi_agent_version, source, new_thread.thread_id)
+        });
 
         if !hidden_helper
             && let Some(SessionSource::SubAgent(

@@ -865,6 +865,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                 /*trigger_turn*/ false,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await?;
     codex
@@ -877,6 +878,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                 /*trigger_turn*/ false,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await?;
     let delegated_task_ciphertext = format!("delegated compact task{}", "x".repeat(40_000));
@@ -890,6 +892,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                 /*trigger_turn*/ true,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await?;
     wait_for_turn_complete(&codex).await;
@@ -906,6 +909,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                 /*trigger_turn*/ true,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await?;
     wait_for_turn_complete(&codex).await;
