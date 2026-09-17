@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 7e88d87ab9d00e2e524367510b593659d2b5949d..da1763769fe32c4b5b51579bfb9d33e6dd2424fc 100644
+index 45f525b7f9649da6d09e004e7dac217d359e8ef8..f8654ae4d1d8c318445998889f68d4d9438b630e 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -304,7 +304,9 @@ impl CodexThread {
+@@ -305,7 +305,9 @@ impl CodexThread {
          &self,
          goal: &codex_state::ThreadGoal,
      ) -> Result<bool, String> {

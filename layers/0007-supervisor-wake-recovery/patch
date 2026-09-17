@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 7c2e274b36c1e23f143e80170eb384bfaed644d6..aba77ebc95bdde68ae233204eb3a5b7daaa5ad46 100644
+index 6d9457157ca1e7ece1b1f0aacc7a2205ccd702a5..3a1ac070d56920d0390ba9233082a2f8de487a28 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -74,6 +74,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
@@ -44,7 +44,7 @@ index 7c2e274b36c1e23f143e80170eb384bfaed644d6..aba77ebc95bdde68ae233204eb3a5b7d
          let turn_processor = TurnRequestProcessor::new(
              auth_manager,
              Arc::clone(&thread_manager),
-@@ -598,6 +619,7 @@ impl MessageProcessor {
+@@ -597,6 +618,7 @@ impl MessageProcessor {
              project_processor,
              remote_control_processor,
              search_processor,
@@ -52,7 +52,7 @@ index 7c2e274b36c1e23f143e80170eb384bfaed644d6..aba77ebc95bdde68ae233204eb3a5b7d
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -612,6 +634,9 @@ impl MessageProcessor {
+@@ -611,6 +633,9 @@ impl MessageProcessor {
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
          self.skills_watcher.shutdown();
@@ -752,10 +752,10 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..ef9871fd70bb47119a3364e16e557d4c
 +        .collect()
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 20ca388f887d25a309c1e589812da04199367d6f..7e88d87ab9d00e2e524367510b593659d2b5949d 100644
+index 7d9e69b72f13558e2dc838404892c6746946d176..45f525b7f9649da6d09e004e7dac217d359e8ef8 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -312,6 +312,21 @@ impl CodexThread {
+@@ -313,6 +313,21 @@ impl CodexThread {
          crate::saffron::goal_supervisor::stop(&self.session).await;
      }
 
