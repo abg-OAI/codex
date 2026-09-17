@@ -31,7 +31,9 @@ impl AgentControl {
         &self,
         thread: &CodexThread,
     ) -> CodexResult<()> {
-        if thread.session.active_turn.lock().await.is_some() {
+        if thread.session.active_turn.lock().await.is_some()
+            || self.state.is_hidden_thread(thread.session.thread_id)
+        {
             return Ok(());
         }
         let config = thread.session.get_config().await;
@@ -63,9 +65,11 @@ impl AgentControl {
         &self,
         multi_agent_version: MultiAgentVersion,
         session_source: &SessionSource,
+        thread_id: codex_protocol::ThreadId,
     ) -> Option<AgentExecutionGuard> {
-        is_execution_limited(multi_agent_version, session_source)
-            .then(|| Arc::clone(&self.agent_execution_limiter).guard())
+        (is_execution_limited(multi_agent_version, session_source)
+            && !self.state.is_hidden_thread(thread_id))
+        .then(|| Arc::clone(&self.agent_execution_limiter).guard())
     }
 }
 
