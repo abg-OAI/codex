@@ -1,0 +1,1021 @@
+diff --git a/codex-rs/linux-sandbox/src/bwrap.rs b/codex-rs/linux-sandbox/src/bwrap.rs
+index 418d28db037f63f11b3e78dfda79c53b00e81d79..e66eacc5a02a79d46d0315a13b06e749d2bf337b 100644
+--- a/codex-rs/linux-sandbox/src/bwrap.rs
++++ b/codex-rs/linux-sandbox/src/bwrap.rs
+@@ -423,7 +423,7 @@ fn create_filesystem_args(
+     options: BwrapOptions,
+ ) -> Result<BwrapArgs> {
+     let daemon_directory = codex_uds::prepare_shared_daemon_socket_directory()?;
+-    crate::daemon_mounts::reject_daemon_mount_aliases(
++    let daemon_mounts = crate::daemon_mounts::discover_daemon_socket_mounts(
+         &daemon_directory,
+         options
+             .mask_wslg_distro
+@@ -571,14 +571,14 @@ fn create_filesystem_args(
+                 args.push("--ro-bind".to_string());
+                 args.push(path_to_string(&mount_root));
+                 args.push(path_to_string(&mount_root));
+-                append_daemon_socket_mask(&mut args, &mount_root, &daemon_directory)?;
++                append_daemon_socket_masks(&mut args, &mount_root, daemon_mounts.directories())?;
+             }
+         }
+
+         args
+     };
+     if args[0] == "--ro-bind" {
+-        append_daemon_socket_mask(&mut args, Path::new("/"), &daemon_directory)?;
++        append_daemon_socket_masks(&mut args, Path::new("/"), daemon_mounts.directories())?;
+     }
+     let mut bwrap_args = BwrapArgs {
+         args,
+@@ -637,7 +637,11 @@ fn create_filesystem_args(
+         bwrap_args.args.push("--bind".to_string());
+         bwrap_args.args.push(path_to_string(mount_root));
+         bwrap_args.args.push(path_to_string(mount_root));
+-        append_daemon_socket_mask(&mut bwrap_args.args, mount_root, &daemon_directory)?;
++        append_daemon_socket_masks(
++            &mut bwrap_args.args,
++            mount_root,
++            daemon_mounts.directories(),
++        )?;
+
+         let mut read_only_subpaths: Vec<PathBuf> = writable_root
+             .read_only_subpaths
+@@ -664,7 +668,12 @@ fn create_filesystem_args(
+         );
+         read_only_subpaths.sort_by_key(|path| path_depth(path));
+         for subpath in read_only_subpaths {
+-            append_read_only_subpath_args(&mut bwrap_args, &subpath, &allowed_write_paths)?;
++            append_read_only_subpath_args(
++                &mut bwrap_args,
++                &subpath,
++                &allowed_write_paths,
++                &daemon_mounts,
++            )?;
+         }
+         // Protect the registry only where a writable bind exposes it. Apply
+         // this before deny masks so a denied parent stays hidden, rather than
+@@ -777,19 +786,25 @@ fn append_metadata_path_masks_for_writable_root(
+
+ // Mask immediately after every bind that exposes the directory, before policy
+ // deny masks can hide its parent. Use the mount destination for read-root aliases.
+-fn append_daemon_socket_mask(
++fn append_daemon_socket_masks<'a>(
+     args: &mut Vec<String>,
+     mount_root: &Path,
+-    daemon_directory: &Path,
++    daemon_directories: impl IntoIterator<Item = &'a Path>,
+ ) -> Result<()> {
+     let source = fs::canonicalize(mount_root)?;
+-    if source.starts_with(daemon_directory) {
+-        return Err(CodexErr::Fatal(
+-            "app-server socket directory cannot be a sandbox mount root".to_string(),
+-        ));
++    let mut destinations = BTreeSet::new();
++    for daemon_directory in daemon_directories {
++        if source.starts_with(daemon_directory) {
++            return Err(CodexErr::Fatal(
++                "app-server socket directory cannot be a sandbox mount root".to_string(),
++            ));
++        }
++        if let Ok(relative) = daemon_directory.strip_prefix(&source) {
++            destinations.insert(mount_root.join(relative));
++        }
+     }
+-    if let Ok(relative) = daemon_directory.strip_prefix(source) {
+-        let destination = path_to_string(&mount_root.join(relative));
++    for destination in destinations {
++        let destination = path_to_string(&destination);
+         args.extend([
+             "--perms".to_string(),
+             "000".to_string(),
+@@ -1130,6 +1145,7 @@ fn append_read_only_subpath_args(
+     bwrap_args: &mut BwrapArgs,
+     subpath: &Path,
+     allowed_write_paths: &[PathBuf],
++    daemon_mounts: &crate::daemon_mounts::DaemonSocketMounts,
+ ) -> Result<()> {
+     if let Some(symlink) = first_writable_symlink_component_in_path(subpath, allowed_write_paths) {
+         /*
+@@ -1175,11 +1191,7 @@ fn append_read_only_subpath_args(
+         bwrap_args.args.push("--ro-bind".to_string());
+         bwrap_args.args.push(path_to_string(subpath));
+         bwrap_args.args.push(path_to_string(subpath));
+-        append_daemon_socket_mask(
+-            &mut bwrap_args.args,
+-            subpath,
+-            &codex_uds::shared_daemon_socket_directory()?,
+-        )?;
++        append_daemon_socket_masks(&mut bwrap_args.args, subpath, daemon_mounts.directories())?;
+     }
+     Ok(())
+ }
+@@ -2175,84 +2187,86 @@ mod tests {
+                 PathBuf::from("/dev/.codex"),
+             ]
+         );
+-        let daemon_directory =
+-            path_to_string(&codex_uds::shared_daemon_socket_directory().unwrap());
++        let daemon_directory = codex_uds::shared_daemon_socket_directory().unwrap();
++        let daemon_mounts = crate::daemon_mounts::discover_daemon_socket_mounts(
++            &daemon_directory,
++            /*masked_root*/ None,
++        )
++        .unwrap();
++        let daemon_mask_args: Vec<String> = daemon_mounts
++            .directories()
++            .flat_map(|directory| {
++                let directory = path_to_string(directory);
++                [
++                    "--perms".to_string(),
++                    "000".to_string(),
++                    "--tmpfs".to_string(),
++                    directory.clone(),
++                    "--remount-ro".to_string(),
++                    directory,
++                ]
++            })
++            .collect();
++        assert_eq!(&args.args[..5], ["--ro-bind", "/", "/", "--dev", "/dev"],);
++        assert_eq!(&args.args[5..5 + daemon_mask_args.len()], daemon_mask_args);
++
++        let root_write = 5 + daemon_mask_args.len();
++        assert_eq!(&args.args[root_write..root_write + 3], ["--bind", "/", "/"]);
+         assert_eq!(
+-            args.args,
+-            vec![
+-                // Start from a read-only view of the full filesystem.
+-                "--ro-bind".to_string(),
+-                "/".to_string(),
+-                "/".to_string(),
+-                // Recreate a writable /dev inside the sandbox.
+-                "--dev".to_string(),
+-                "/dev".to_string(),
+-                "--perms".to_string(),
+-                "000".to_string(),
+-                "--tmpfs".to_string(),
+-                daemon_directory.clone(),
+-                "--remount-ro".to_string(),
+-                daemon_directory.clone(),
+-                // Make the writable root itself writable again.
+-                "--bind".to_string(),
+-                "/".to_string(),
+-                "/".to_string(),
+-                "--perms".to_string(),
+-                "000".to_string(),
+-                "--tmpfs".to_string(),
+-                daemon_directory.clone(),
+-                "--remount-ro".to_string(),
+-                daemon_directory,
+-                // Mask the default metadata path names under the writable root.
+-                // Because the root is `/` in this test, these carveout paths
+-                // appear directly below `/`.
+-                "--perms".to_string(),
+-                "555".to_string(),
+-                "--tmpfs".to_string(),
+-                "/.git".to_string(),
+-                "--remount-ro".to_string(),
+-                "/.git".to_string(),
+-                "--perms".to_string(),
+-                "555".to_string(),
+-                "--tmpfs".to_string(),
+-                "/.agents".to_string(),
+-                "--remount-ro".to_string(),
+-                "/.agents".to_string(),
+-                "--perms".to_string(),
+-                "555".to_string(),
+-                "--tmpfs".to_string(),
+-                "/.codex".to_string(),
+-                "--remount-ro".to_string(),
+-                "/.codex".to_string(),
+-                "--ro-bind".to_string(),
+-                path_to_string(&synthetic_mount_registry_root()),
+-                path_to_string(&synthetic_mount_registry_root()),
+-                // Rebind /dev after the root bind so device nodes remain
+-                // writable/usable inside the writable root.
+-                "--bind".to_string(),
+-                "/dev".to_string(),
+-                "/dev".to_string(),
+-                // Then mask the metadata names that would otherwise be
+-                // creatable below the writable /dev bind.
+-                "--perms".to_string(),
+-                "555".to_string(),
+-                "--tmpfs".to_string(),
+-                "/dev/.git".to_string(),
+-                "--remount-ro".to_string(),
+-                "/dev/.git".to_string(),
+-                "--perms".to_string(),
+-                "555".to_string(),
+-                "--tmpfs".to_string(),
+-                "/dev/.agents".to_string(),
+-                "--remount-ro".to_string(),
+-                "/dev/.agents".to_string(),
+-                "--perms".to_string(),
+-                "555".to_string(),
+-                "--tmpfs".to_string(),
+-                "/dev/.codex".to_string(),
+-                "--remount-ro".to_string(),
+-                "/dev/.codex".to_string(),
+-            ]
++            &args.args[root_write + 3..root_write + 3 + daemon_mask_args.len()],
++            daemon_mask_args,
++        );
++
++        for path in [
++            "/.git",
++            "/.agents",
++            "/.codex",
++            "/dev/.git",
++            "/dev/.agents",
++            "/dev/.codex",
++        ] {
++            assert_empty_directory_mounted_read_only(&args.args, Path::new(path));
++        }
++        let registry = path_to_string(&synthetic_mount_registry_root());
++        let registry_bind = args
++            .args
++            .windows(3)
++            .position(|window| window == ["--ro-bind", &registry, &registry])
++            .expect("synthetic registry bind");
++        let dev_write = args
++            .args
++            .windows(3)
++            .position(|window| window == ["--bind", "/dev", "/dev"])
++            .expect("writable dev bind");
++        assert!(root_write < registry_bind && registry_bind < dev_write);
++    }
++
++    #[test]
++    fn masks_every_daemon_directory_exposed_by_a_bind() {
++        let directories = [
++            Path::new("/volume/tmp/codex-daemon-1000"),
++            Path::new("/tmp/codex-daemon-1000"),
++        ];
++        let mut args = Vec::new();
++
++        append_daemon_socket_masks(&mut args, Path::new("/"), directories).unwrap();
++
++        assert_eq!(
++            args,
++            [
++                "--perms",
++                "000",
++                "--tmpfs",
++                "/tmp/codex-daemon-1000",
++                "--remount-ro",
++                "/tmp/codex-daemon-1000",
++                "--perms",
++                "000",
++                "--tmpfs",
++                "/volume/tmp/codex-daemon-1000",
++                "--remount-ro",
++                "/volume/tmp/codex-daemon-1000",
++            ],
+         );
+     }
+
+diff --git a/codex-rs/linux-sandbox/src/daemon_mounts.rs b/codex-rs/linux-sandbox/src/daemon_mounts.rs
+index 50a65636b48badd2e23b96b44de7517c0a2c95d3..b4c6f8370e58f762d14fbebbcf42695b83d777b0 100644
+--- a/codex-rs/linux-sandbox/src/daemon_mounts.rs
++++ b/codex-rs/linux-sandbox/src/daemon_mounts.rs
+@@ -1,4 +1,4 @@
+-//! Reject host mount aliases that would bypass the privileged socket directory mask.
++//! Discover every visible path to the privileged socket directory.
+ //! Mount roots describe filesystem identity; canonical paths alone miss bind mounts.
+
+ use rustix::fs::AtFlags;
+@@ -13,10 +13,27 @@ use std::os::unix::fs::MetadataExt;
+ use std::path::Path;
+ use std::path::PathBuf;
+
+-pub(crate) fn reject_daemon_mount_aliases(
++type Mount<'a> = (&'a [u8], &'a [u8], &'a [u8], PathBuf, PathBuf);
++
++/// Paths that must be masked after a bubblewrap bind exposes their backing filesystem.
++///
++/// Each path names the complete daemon directory. Aliases of a file or subdirectory are
++/// rejected during discovery because masking their mount destinations would not establish
++/// that every path to the rest of the daemon directory is protected.
++pub(crate) struct DaemonSocketMounts {
++    directories: BTreeSet<PathBuf>,
++}
++
++impl DaemonSocketMounts {
++    pub(crate) fn directories(&self) -> impl Iterator<Item = &Path> {
++        self.directories.iter().map(PathBuf::as_path)
++    }
++}
++
++pub(crate) fn discover_daemon_socket_mounts(
+     directory: &Path,
+     masked_root: Option<&Path>,
+-) -> io::Result<()> {
++) -> io::Result<DaemonSocketMounts> {
+     let directory_file = fs::File::open(directory)?;
+     let device = directory_file.metadata()?.dev();
+     let mount_id = fs::read_to_string(format!("/proc/self/fdinfo/{}", directory_file.as_raw_fd()))
+@@ -51,7 +68,7 @@ fn check_mounts(
+     mount_id: Option<&str>,
+     mountinfo: &[u8],
+     masked_root: Option<&Path>,
+-) -> io::Result<()> {
++) -> io::Result<DaemonSocketMounts> {
+     let invalid = || io::Error::other("cannot establish app-server socket mount isolation");
+     let mut mounts = Vec::new();
+     for line in mountinfo
+@@ -66,7 +83,7 @@ fn check_mounts(
+         let destination = mount_path(destination)?;
+         mounts.push((*id, *parent, *mount_device, root, destination));
+     }
+-    let (location, containing_mount) = if let Some(mount_id) = mount_id {
++    let location = if let Some(mount_id) = mount_id {
+         // fdinfo/statx identifies the opened mount, which may have been covered
+         // by another mount before we read mountinfo.
+         let selected = mounts
+@@ -100,7 +117,7 @@ fn check_mounts(
+             visible_child = Some(destination);
+             current = mounts.iter().find(|(id, ..)| id == parent);
+         }
+-        (root.join(relative), Some((mount_id, destination)))
++        root.join(relative)
+     } else {
+         // Without a mount ID, require every possible containing mount to agree
+         // on the backing location, and do not assume any aliases are hidden.
+@@ -117,46 +134,90 @@ fn check_mounts(
+         if locations.len() != 1 {
+             return Err(invalid());
+         }
+-        (locations.into_iter().next().ok_or_else(invalid)?, None)
++        locations.into_iter().next().ok_or_else(invalid)?
+     };
++    let mut directories = BTreeSet::new();
+     for (id, _, mount_device, root, destination) in &mounts {
+-        // Nested mounts can introduce another filesystem (or an individual socket) under the mask.
+-        let nested = destination != directory && destination.starts_with(directory);
+-        let alias = if *mount_device == device.as_bytes() {
+-            if let Ok(relative) = location.strip_prefix(root) {
+-                Some(destination.join(relative))
+-            } else if root.starts_with(&location) {
+-                Some(destination.clone())
+-            } else {
+-                None
++        if *mount_device != device.as_bytes() {
++            continue;
++        }
++        if let Ok(relative) = location.strip_prefix(root) {
++            let alias = destination.join(relative);
++            if masked_root.is_some_and(|masked_root| alias.starts_with(masked_root))
++                || path_is_covered_by_descendant_mount(id, &alias, &mounts)?
++            {
++                continue;
+             }
+-        } else {
+-            None
+-        };
+-        if nested
+-            || alias.is_some_and(|path| {
+-                // An ancestor's path beneath this mount is hidden by it. Keep
+-                // checking other mounts, including aliases mounted beneath it.
+-                let hidden = containing_mount.is_some_and(|(mount_id, containing_mount)| {
+-                    *id != mount_id.as_bytes()
+-                        && containing_mount.starts_with(destination)
+-                        && path.starts_with(containing_mount)
+-                });
+-                !path.starts_with(directory)
+-                    && !masked_root.is_some_and(|root| path.starts_with(root))
+-                    && !hidden
+-            })
++            directories.insert(alias);
++        } else if root.starts_with(&location)
++            && !masked_root.is_some_and(|masked_root| destination.starts_with(masked_root))
++            && !path_is_covered_by_descendant_mount(id, destination, &mounts)?
+         {
+-            return Err(io::Error::new(
+-                io::ErrorKind::PermissionDenied,
+-                format!(
+-                    "app-server socket directory has an unsupported host mount at {}; remove the bind-mount alias or nested mount before starting the sandbox",
+-                    destination.display()
+-                ),
++            return Err(unsupported_mount(destination));
++        }
++    }
++    if !directories.contains(directory) {
++        return Err(invalid());
++    }
++    for (_, _, _, _, destination) in &mounts {
++        if directories
++            .iter()
++            .any(|directory| destination != directory && destination.starts_with(directory))
++        {
++            return Err(unsupported_mount(destination));
++        }
++    }
++    Ok(DaemonSocketMounts { directories })
++}
++
++fn path_is_covered_by_descendant_mount(
++    mount_id: &[u8],
++    path: &Path,
++    mounts: &[Mount<'_>],
++) -> io::Result<bool> {
++    for (id, _, _, _, destination) in mounts {
++        if *id != mount_id
++            && path.starts_with(destination)
++            && mount_is_descendant_of(id, mount_id, mounts)?
++        {
++            return Ok(true);
++        }
++    }
++    Ok(false)
++}
++
++fn mount_is_descendant_of(
++    mount_id: &[u8],
++    ancestor_id: &[u8],
++    mounts: &[Mount<'_>],
++) -> io::Result<bool> {
++    let mut current = mounts.iter().find(|(id, ..)| *id == mount_id);
++    let mut visited = BTreeSet::new();
++    while let Some((id, parent, ..)) = current {
++        if !visited.insert(*id) {
++            return Err(io::Error::other(
++                "cannot establish app-server socket mount isolation",
+             ));
+         }
++        if *parent == ancestor_id {
++            return Ok(true);
++        }
++        if id == parent {
++            return Ok(false);
++        }
++        current = mounts.iter().find(|(id, ..)| id == parent);
+     }
+-    Ok(())
++    Ok(false)
++}
++
++fn unsupported_mount(destination: &Path) -> io::Error {
++    io::Error::new(
++        io::ErrorKind::PermissionDenied,
++        format!(
++            "app-server socket directory has an unsupported host mount at {}; remove the bind-mount alias or nested mount before starting the sandbox",
++            destination.display()
++        ),
++    )
+ }
+
+ fn mount_path(encoded: &[u8]) -> io::Result<PathBuf> {
+diff --git a/codex-rs/linux-sandbox/src/daemon_mounts_tests.rs b/codex-rs/linux-sandbox/src/daemon_mounts_tests.rs
+index 058ed2b2e006ac502a8179fe596618e1f22dca86..5969d20bf157c746410ffa563adad415b67d0b88 100644
+--- a/codex-rs/linux-sandbox/src/daemon_mounts_tests.rs
++++ b/codex-rs/linux-sandbox/src/daemon_mounts_tests.rs
+@@ -8,25 +8,20 @@ fn check_mounts(
+     device: &str,
+     mount_id: Option<&str>,
+     mountinfo: &[u8],
+-) -> io::Result<()> {
++) -> io::Result<DaemonSocketMounts> {
+     super::check_mounts(
+         directory, device, mount_id, mountinfo, /*masked_root*/ None,
+     )
+ }
+
+-#[test_case("/tmp", "/host-tmp", false; "ancestor alias")]
+-#[test_case("/tmp/codex-daemon-1000", "/alias", false; "directory alias")]
+-#[test_case("/tmp/codex-daemon-1000/rpc.sock", "/alias.sock", false; "socket alias")]
+-#[test_case("/", "/host", false; "root alias")]
+-#[test_case("/workspace", "/project", true; "unrelated project bind")]
+-#[test_case("/tmp", "/tmp", true; "same location")]
+-#[test_case("/tmp", "/host\\040tmp", false; "escaped alias")]
+-#[test_case("/other", "/tmp/codex-daemon-1000/nested", false; "nested mount")]
+-fn rejects_only_mounts_that_compromise_the_directory(root: &str, destination: &str, allowed: bool) {
++#[test_case("/tmp", "/host-tmp", "/host-tmp/codex-daemon-1000"; "ancestor alias")]
++#[test_case("/tmp/codex-daemon-1000", "/alias", "/alias"; "directory alias")]
++#[test_case("/", "/host", "/host/tmp/codex-daemon-1000"; "root alias")]
++#[test_case("/tmp", "/host\\040tmp", "/host tmp/codex-daemon-1000"; "escaped alias")]
++fn discovers_complete_directory_aliases(root: &str, destination: &str, expected_alias: &str) {
+     let mounts =
+         format!("1 0 0:1 / / rw - ext4 disk rw\n2 1 0:1 {root} {destination} rw - ext4 disk rw\n");
+-    let visible_mount = if destination == "/tmp" { "2" } else { "1" };
+-    for mount_id in [Some(visible_mount), None] {
++    for mount_id in [Some("1"), None] {
+         assert_eq!(
+             check_mounts(
+                 Path::new("/tmp/codex-daemon-1000"),
+@@ -34,24 +29,75 @@ fn rejects_only_mounts_that_compromise_the_directory(root: &str, destination: &s
+                 mount_id,
+                 mounts.as_bytes()
+             )
+-            .is_ok(),
+-            allowed,
++            .unwrap()
++            .directories,
++            BTreeSet::from([
++                PathBuf::from("/tmp/codex-daemon-1000"),
++                PathBuf::from(expected_alias),
++            ]),
+             "mount_id: {mount_id:?}"
+         );
+     }
+ }
+
++#[test_case("/tmp/codex-daemon-1000/rpc.sock", "/alias.sock"; "socket alias")]
++#[test_case("/tmp/codex-daemon-1000/private", "/private"; "subdirectory alias")]
++#[test_case("/other", "/tmp/codex-daemon-1000/nested"; "nested mount")]
++fn rejects_mounts_that_expose_less_than_the_complete_directory(root: &str, destination: &str) {
++    let mounts =
++        format!("1 0 0:1 / / rw - ext4 disk rw\n2 1 0:1 {root} {destination} rw - ext4 disk rw\n");
++    for mount_id in [Some("1"), None] {
++        assert!(
++            check_mounts(
++                Path::new("/tmp/codex-daemon-1000"),
++                "0:1",
++                mount_id,
++                mounts.as_bytes(),
++            )
++            .is_err(),
++            "mount_id: {mount_id:?}",
++        );
++    }
++}
++
++#[test_case("/workspace", "/project"; "unrelated project bind")]
++#[test_case("/tmp", "/tmp"; "same location")]
++fn ignores_mounts_without_an_additional_directory_alias(root: &str, destination: &str) {
++    let mounts =
++        format!("1 0 0:1 / / rw - ext4 disk rw\n2 1 0:1 {root} {destination} rw - ext4 disk rw\n");
++    let visible_mount = if destination == "/tmp" { "2" } else { "1" };
++    for mount_id in [Some(visible_mount), None] {
++        assert_eq!(
++            check_mounts(
++                Path::new("/tmp/codex-daemon-1000"),
++                "0:1",
++                mount_id,
++                mounts.as_bytes(),
++            )
++            .unwrap()
++            .directories,
++            BTreeSet::from([PathBuf::from("/tmp/codex-daemon-1000")]),
++            "mount_id: {mount_id:?}",
++        );
++    }
++}
++
+ #[test]
+-fn rejects_alias_when_tmp_is_itself_a_bind_mount() {
++fn discovers_source_alias_when_tmp_is_itself_a_bind_mount() {
+     let mounts = b"1 0 0:1 / / rw - ext4 disk rw\n2 1 0:1 /backing/tmp /tmp rw - ext4 disk rw\n";
+-    assert!(
++    assert_eq!(
+         check_mounts(
+             Path::new("/tmp/codex-daemon-1000"),
+             "0:1",
+             Some("2"),
+             mounts
+         )
+-        .is_err()
++        .unwrap()
++        .directories,
++        BTreeSet::from([
++            PathBuf::from("/backing/tmp/codex-daemon-1000"),
++            PathBuf::from("/tmp/codex-daemon-1000"),
++        ]),
+     );
+     // A hidden deeper mount must not override the actual /tmp backing location.
+     let hidden = [
+@@ -59,14 +105,19 @@ fn rejects_alias_when_tmp_is_itself_a_bind_mount() {
+         b"3 1 0:1 /tmp/codex-daemon-1000 /tmp/codex-daemon-1000 rw - ext4 disk rw\n",
+     ]
+     .concat();
+-    assert!(
++    assert_eq!(
+         check_mounts(
+             Path::new("/tmp/codex-daemon-1000"),
+             "0:1",
+             Some("2"),
+             &hidden
+         )
+-        .is_err()
++        .unwrap()
++        .directories,
++        BTreeSet::from([
++            PathBuf::from("/backing/tmp/codex-daemon-1000"),
++            PathBuf::from("/tmp/codex-daemon-1000"),
++        ]),
+     );
+ }
+
+@@ -97,9 +148,14 @@ fn rejects_open_mount_that_has_been_covered() {
+     let exposed = format!(
+         "{mounts}4 1 0:1 /tmp/private-new/tmp/codex-daemon-1000 /outside rw - ext4 disk rw\n"
+     );
+-    for mount_id in [Some("2"), Some("3"), None] {
+-        assert!(check_mounts(directory, "0:1", mount_id, exposed.as_bytes()).is_err());
+-    }
++    assert!(check_mounts(directory, "0:1", Some("2"), exposed.as_bytes()).is_err());
++    assert_eq!(
++        check_mounts(directory, "0:1", Some("3"), exposed.as_bytes())
++            .unwrap()
++            .directories,
++        BTreeSet::from([directory.to_path_buf(), PathBuf::from("/outside")]),
++    );
++    assert!(check_mounts(directory, "0:1", None, exposed.as_bytes()).is_err());
+ }
+
+ #[test]
+@@ -116,37 +172,66 @@ fn rejects_mount_hidden_by_an_ancestor_overmount() {
+
+ #[test_case("/tmp/systemd-private-service/tmp", "/"; "tmp on root filesystem")]
+ #[test_case("/systemd-private-service/tmp", "/tmp"; "tmp on separate filesystem")]
+-fn accepts_private_tmp_bind_but_rejects_exposed_aliases(root: &str, parent: &str) {
++fn discovers_complete_aliases_for_private_tmp_bind(root: &str, parent: &str) {
+     let directory = Path::new("/tmp/codex-daemon-1000");
+     let mounts =
+         format!("1 0 0:1 / {parent} rw - ext4 disk rw\n2 1 0:1 {root} /tmp rw - ext4 disk rw\n");
+-    assert!(check_mounts(directory, "0:1", Some("2"), mounts.as_bytes()).is_ok());
++    assert_eq!(
++        check_mounts(directory, "0:1", Some("2"), mounts.as_bytes())
++            .unwrap()
++            .directories,
++        BTreeSet::from([directory.to_path_buf()]),
++    );
+     // PrivateTmp remains ambiguous when neither fdinfo nor statx supplies an ID.
+     assert!(check_mounts(directory, "0:1", /*mount_id*/ None, mounts.as_bytes()).is_err());
+
+-    // A real alias beneath /tmp is not hidden by the private /tmp mount.
+-    for (alias_root, destination) in [
+-        (root.to_owned(), "/tmp/exposed"),
+-        (
+-            format!("{root}/codex-daemon-1000/rpc.sock"),
+-            "/tmp/alias.sock",
+-        ),
+-        ("/".to_owned(), "/host"),
+-    ] {
+-        let exposed = format!("{mounts}3 2 0:1 {alias_root} {destination} rw - ext4 disk rw\n");
+-        assert!(check_mounts(directory, "0:1", Some("2"), exposed.as_bytes()).is_err());
+-    }
++    let directory_alias = format!("{mounts}3 2 0:1 {root} /tmp/exposed rw - ext4 disk rw\n");
++    assert_eq!(
++        check_mounts(directory, "0:1", Some("2"), directory_alias.as_bytes())
++            .unwrap()
++            .directories,
++        BTreeSet::from([
++            directory.to_path_buf(),
++            PathBuf::from("/tmp/exposed/codex-daemon-1000"),
++        ]),
++    );
++
++    let root_alias = format!("{mounts}3 2 0:1 / /host rw - ext4 disk rw\n");
++    assert!(check_mounts(directory, "0:1", Some("2"), root_alias.as_bytes()).is_ok());
++
++    let socket_alias = format!(
++        "{mounts}3 2 0:1 {root}/codex-daemon-1000/rpc.sock /tmp/alias.sock rw - ext4 disk rw\n"
++    );
++    assert!(check_mounts(directory, "0:1", Some("2"), socket_alias.as_bytes()).is_err());
+ }
+
+ #[test]
+-fn masked_wslg_alias_does_not_allow_other_exposed_aliases() {
++fn masked_wslg_alias_is_omitted_without_hiding_other_aliases() {
+     let mounts = "1 0 0:1 / / rw - ext4 disk rw\n2 1 0:1 / /mnt/wslg/distro rw - ext4 disk rw\n";
+     let directory = Path::new("/tmp/codex-daemon-1000");
+     let mask = Some(Path::new(crate::bwrap::WSLG_DISTRO_ROOT));
+     let exposed = format!("{mounts}3 1 0:1 /tmp /host-tmp rw - ext4 disk rw\n");
++    let socket_alias =
++        format!("{mounts}3 1 0:1 /tmp/codex-daemon-1000/rpc.sock /alias.sock rw - ext4 disk rw\n");
+     for mount_id in [Some("1"), None] {
+-        assert!(check_mounts(directory, "0:1", mount_id, mounts.as_bytes()).is_err());
+-        assert!(super::check_mounts(directory, "0:1", mount_id, mounts.as_bytes(), mask).is_ok());
+-        assert!(super::check_mounts(directory, "0:1", mount_id, exposed.as_bytes(), mask).is_err());
++        assert!(check_mounts(directory, "0:1", mount_id, mounts.as_bytes()).is_ok());
++        assert_eq!(
++            super::check_mounts(directory, "0:1", mount_id, mounts.as_bytes(), mask)
++                .unwrap()
++                .directories,
++            BTreeSet::from([directory.to_path_buf()]),
++        );
++        assert_eq!(
++            super::check_mounts(directory, "0:1", mount_id, exposed.as_bytes(), mask)
++                .unwrap()
++                .directories,
++            BTreeSet::from([
++                PathBuf::from("/host-tmp/codex-daemon-1000"),
++                directory.to_path_buf(),
++            ]),
++        );
++        assert!(
++            super::check_mounts(directory, "0:1", mount_id, socket_alias.as_bytes(), mask).is_err()
++        );
+     }
+ }
+diff --git a/codex-rs/linux-sandbox/src/linux_run_main_tests.rs b/codex-rs/linux-sandbox/src/linux_run_main_tests.rs
+index 583e7b8e8bdec802feb6076df16726f182f5c6fa..262a3fc099d8db7389d86b587093d990417b9dfc 100644
+--- a/codex-rs/linux-sandbox/src/linux_run_main_tests.rs
++++ b/codex-rs/linux-sandbox/src/linux_run_main_tests.rs
+@@ -72,39 +72,13 @@ fn inserts_bwrap_argv0_before_command_separator() {
+         /*supports_argv0*/ true,
+         "/tmp/codex-arg0-session/codex-linux-sandbox".to_string(),
+     );
+-    let daemon_directory = codex_uds::shared_daemon_socket_directory()
+-        .unwrap()
+-        .display()
+-        .to_string();
++    let command_separator = argv
++        .iter()
++        .position(|argument| argument == "--")
++        .expect("bwrap command separator");
+     assert_eq!(
+-        argv,
+-        vec![
+-            "bwrap".to_string(),
+-            "--new-session".to_string(),
+-            "--die-with-parent".to_string(),
+-            "--ro-bind".to_string(),
+-            "/".to_string(),
+-            "/".to_string(),
+-            "--dev".to_string(),
+-            "/dev".to_string(),
+-            "--perms".to_string(),
+-            "000".to_string(),
+-            "--tmpfs".to_string(),
+-            daemon_directory.clone(),
+-            "--remount-ro".to_string(),
+-            daemon_directory,
+-            "--unshare-user".to_string(),
+-            "--unshare-pid".to_string(),
+-            "--unshare-ipc".to_string(),
+-            "--proc".to_string(),
+-            "/proc".to_string(),
+-            "--cap-drop".to_string(),
+-            "ALL".to_string(),
+-            "--argv0".to_string(),
+-            "codex-linux-sandbox".to_string(),
+-            "--".to_string(),
+-            "/bin/true".to_string(),
+-        ]
++        &argv[command_separator - 2..],
++        ["--argv0", "codex-linux-sandbox", "--", "/bin/true"]
+     );
+ }
+
+diff --git a/codex-rs/linux-sandbox/tests/suite/daemon_sockets_tests.rs b/codex-rs/linux-sandbox/tests/suite/daemon_sockets_tests.rs
+index 30889d0f9d6abbe70068503940b3cd9539da6266..cd1a416fcbd66873c7083255deaa8a4bca6645f4 100644
+--- a/codex-rs/linux-sandbox/tests/suite/daemon_sockets_tests.rs
++++ b/codex-rs/linux-sandbox/tests/suite/daemon_sockets_tests.rs
+@@ -3,6 +3,20 @@ use pretty_assertions::assert_eq;
+ use std::os::fd::AsRawFd;
+ use std::os::unix::net::UnixListener;
+ use std::os::unix::net::UnixStream;
++use std::path::Path;
++
++fn install_sandbox_runtime(root: &Path) -> bool {
++    let Some(bwrap) =
++        std::env::var_os("CODEX_TEST_BWRAP").or_else(|| std::env::var_os("CARGO_BIN_EXE_bwrap"))
++    else {
++        return false;
++    };
++    std::fs::copy(codex_linux_sandbox_exe(), root.join("sandbox")).unwrap();
++    let resources = root.join("codex-resources");
++    std::fs::create_dir(&resources).unwrap();
++    std::fs::copy(bwrap, resources.join("bwrap")).unwrap();
++    true
++}
+
+ #[tokio::test]
+ async fn private_tmp_mount_preserves_daemon_socket_isolation() {
+@@ -14,7 +28,10 @@ async fn private_tmp_mount_preserves_daemon_socket_isolation() {
+     let test_executable = std::env::current_exe().unwrap();
+     // Keep both executables available after the original /tmp is hidden.
+     std::fs::copy(&test_executable, private.path().join("test")).unwrap();
+-    std::fs::copy(codex_linux_sandbox_exe(), private.path().join("sandbox")).unwrap();
++    if !install_sandbox_runtime(private.path()) {
++        eprintln!("skipping private tmp test: bundled bubblewrap is unavailable");
++        return;
++    }
+     let (_, test_module) = module_path!().split_once("::").unwrap();
+     let fixture_test = format!("{test_module}::private_tmp_fixture");
+     // Mount setup needs capabilities, which bubblewrap only accepts as namespace root.
+@@ -50,6 +67,148 @@ async fn private_tmp_mount_preserves_daemon_socket_isolation() {
+     assert!(String::from_utf8_lossy(&output.stdout).contains("private-tmp-validated"));
+ }
+
++#[tokio::test]
++async fn bind_mounted_tmp_parent_alias_preserves_daemon_socket_isolation() {
++    if should_skip_bwrap_tests().await {
++        return;
++    }
++    // Keep the backing tree outside /tmp so it remains addressable after the
++    // fixture bind-mounts the tree's tmp directory over /tmp.
++    let volume = tempfile::tempdir_in("/var/tmp").unwrap();
++    let temporary_root = volume.path().join("tmp");
++    std::fs::create_dir(&temporary_root).unwrap();
++    let test_executable = std::env::current_exe().unwrap();
++    std::fs::copy(&test_executable, temporary_root.join("test")).unwrap();
++    if !install_sandbox_runtime(&temporary_root) {
++        eprintln!("skipping mount alias test: bundled bubblewrap is unavailable");
++        return;
++    }
++    let (_, test_module) = module_path!().split_once("::").unwrap();
++    let fixture_test = format!("{test_module}::bind_mounted_tmp_parent_alias_fixture");
++    let output = tokio::process::Command::new("unshare")
++        .args([
++            "--user",
++            "--map-root-user",
++            "--mount",
++            "--propagation",
++            "private",
++            "--",
++        ])
++        .arg(test_executable)
++        .args([
++            "--exact",
++            &fixture_test,
++            "--ignored",
++            "--nocapture",
++            "--test-threads=1",
++        ])
++        .env("CODEX_TEST_ALIAS_VOLUME", volume.path())
++        .kill_on_drop(true)
++        .output()
++        .await
++        .unwrap();
++    if output.status.code() == Some(77)
++        || String::from_utf8_lossy(&output.stderr).starts_with("unshare:")
++    {
++        eprintln!("skipping mount alias test: user/mount namespaces are unavailable");
++        return;
++    }
++    assert_eq!(output.status.code(), Some(0), "{output:?}");
++    assert!(String::from_utf8_lossy(&output.stdout).contains("mount-alias-isolated"));
++}
++
++#[test]
++#[ignore = "invoked inside a disposable mount namespace"]
++fn bind_mounted_tmp_parent_alias_fixture() {
++    let Some(volume) = std::env::var_os("CODEX_TEST_ALIAS_VOLUME") else {
++        return;
++    };
++    let volume = PathBuf::from(volume);
++    let mount = std::process::Command::new("mount")
++        .arg("--bind")
++        .arg(volume.join("tmp"))
++        .arg("/tmp")
++        .output()
++        .unwrap();
++    if !mount.status.success() {
++        std::process::exit(/*code*/ 77);
++    }
++    let alias = PathBuf::from("/tmp/volume-alias");
++    std::fs::create_dir(&alias).unwrap();
++    let mount = std::process::Command::new("mount")
++        .arg("--bind")
++        .arg(&volume)
++        .arg(&alias)
++        .output()
++        .unwrap();
++    assert!(mount.status.success(), "{mount:?}");
++
++    let root = codex_uds::prepare_shared_daemon_socket_directory().unwrap();
++    let endpoint = root.join("rpc.sock");
++    let relative_endpoint = root.strip_prefix("/tmp").unwrap().join("rpc.sock");
++    let source_endpoint = volume.join("tmp").join(&relative_endpoint);
++    let alias_endpoint = alias.join("tmp").join(relative_endpoint);
++    let unrelated = PathBuf::from("/tmp/other.sock");
++    let _daemon = UnixListener::bind(&endpoint).unwrap();
++    let _other = UnixListener::bind(&unrelated).unwrap();
++    UnixStream::connect(&endpoint).expect("host can reach daemon");
++    UnixStream::connect(&source_endpoint).expect("host can reach daemon source alias");
++    UnixStream::connect(&alias_endpoint).expect("host can reach daemon alias");
++
++    let profile = PermissionProfile::workspace_write_with(
++        &[AbsolutePathBuf::from_absolute_path("/tmp").unwrap()],
++        NetworkSandboxPolicy::Enabled,
++        /*exclude_tmpdir_env_var*/ true,
++        /*exclude_slash_tmp*/ false,
++    );
++    let mut command = std::process::Command::new("/tmp/sandbox");
++    command
++        .args(["--sandbox-policy-cwd", "/tmp", "--permission-profile"])
++        .arg(serde_json::to_string(&profile).unwrap())
++        .arg("--")
++        .current_dir("/tmp");
++    let (_, test_module) = module_path!().split_once("::").unwrap();
++    let client_test = format!("{test_module}::bind_mounted_tmp_parent_alias_client");
++    let output = command
++        .args([
++            "/tmp/test",
++            "--exact",
++            &client_test,
++            "--ignored",
++            "--nocapture",
++            "--test-threads=1",
++        ])
++        .env("CODEX_TEST_DAEMON_SOCKET", &endpoint)
++        .env("CODEX_TEST_DAEMON_SOCKET_SOURCE", &source_endpoint)
++        .env("CODEX_TEST_DAEMON_SOCKET_ALIAS", &alias_endpoint)
++        .env("CODEX_TEST_UNRELATED_SOCKET", &unrelated)
++        .env("CODEX_TEST_WRITABLE_ALIAS", alias.join("tmp"))
++        .output()
++        .unwrap();
++    assert_eq!(output.status.code(), Some(0), "{output:?}");
++    assert!(String::from_utf8_lossy(&output.stdout).contains("mount-alias-isolated"));
++}
++
++#[test]
++#[ignore = "invoked inside the mount alias sandbox"]
++fn bind_mounted_tmp_parent_alias_client() {
++    println!("mount-alias-client-started");
++    for variable in [
++        "CODEX_TEST_DAEMON_SOCKET",
++        "CODEX_TEST_DAEMON_SOCKET_SOURCE",
++        "CODEX_TEST_DAEMON_SOCKET_ALIAS",
++    ] {
++        let endpoint = std::env::var_os(variable).unwrap();
++        assert!(UnixStream::connect(endpoint).is_err(), "daemon reachable");
++    }
++    let unrelated = std::env::var_os("CODEX_TEST_UNRELATED_SOCKET").unwrap();
++    UnixStream::connect(unrelated).expect("unrelated socket reachable");
++    std::fs::write("/tmp/primary-write", b"ok").unwrap();
++    let alias = PathBuf::from(std::env::var_os("CODEX_TEST_WRITABLE_ALIAS").unwrap());
++    std::fs::write(alias.join("alias-write"), b"ok").unwrap();
++    println!("mount-alias-isolated");
++}
++
+ #[test]
+ #[ignore = "invoked inside a disposable mount namespace"]
+ fn private_tmp_fixture() {
+@@ -98,7 +257,7 @@ fn private_tmp_fixture() {
+     assert_eq!(output.status.code(), Some(0), "{output:?}");
+     assert!(String::from_utf8_lossy(&output.stdout).contains("private-tmp-isolated"));
+
+-    // A real alias below the private mount must still prevent startup.
++    // A complete directory alias is safe when the sandbox masks both paths.
+     std::fs::create_dir("/tmp/alias").unwrap();
+     let mount = std::process::Command::new("mount")
+         .arg("--bind")
+@@ -108,10 +267,12 @@ fn private_tmp_fixture() {
+         .unwrap();
+     assert!(mount.status.success(), "{mount:?}");
+     UnixStream::connect("/tmp/alias/rpc.sock").expect("host can reach alias");
+-    let output = command.output().unwrap();
+-    assert!(!output.status.success(), "{output:?}");
+-    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported host mount"));
+-    assert!(!String::from_utf8_lossy(&output.stdout).contains("private-tmp-client-started"));
++    let output = command
++        .env("CODEX_TEST_DAEMON_SOCKET_ALIAS", "/tmp/alias/rpc.sock")
++        .output()
++        .unwrap();
++    assert_eq!(output.status.code(), Some(0), "{output:?}");
++    assert!(String::from_utf8_lossy(&output.stdout).contains("private-tmp-isolated"));
+     println!("private-tmp-validated");
+ }
+
+@@ -123,12 +284,18 @@ fn private_tmp_client() {
+     };
+     println!("private-tmp-client-started");
+     assert!(UnixStream::connect(endpoint).is_err(), "daemon reachable");
++    if let Some(alias) = std::env::var_os("CODEX_TEST_DAEMON_SOCKET_ALIAS") {
++        assert!(
++            UnixStream::connect(alias).is_err(),
++            "daemon alias reachable"
++        );
++    }
+     UnixStream::connect("/tmp/other.sock").expect("unrelated socket reachable");
+     println!("private-tmp-isolated");
+ }
+
+ #[tokio::test]
+-async fn daemon_socket_bind_mount_alias_rejects_sandbox_startup() {
++async fn daemon_socket_file_bind_mount_alias_rejects_sandbox_startup() {
+     if should_skip_bwrap_tests().await {
+         return;
+     }
+@@ -142,12 +309,14 @@ async fn daemon_socket_bind_mount_alias_rejects_sandbox_startup() {
+     );
+     let script = r#"
+ import pathlib, socket, subprocess, sys
+-root, alias, endpoint, helper, profile = sys.argv[1:]
+-mount = subprocess.run(['mount', '--bind', root, alias], capture_output=True)
++endpoint, alias_directory, helper, profile = sys.argv[1:]
++alias = pathlib.Path(alias_directory) / 'rpc.sock'
++alias.touch()
++mount = subprocess.run(['mount', '--bind', endpoint, alias], capture_output=True)
+ if mount.returncode:
+     sys.exit(77)
+ try:
+-    socket.socket(socket.AF_UNIX).connect(str(pathlib.Path(alias) / endpoint))
++    socket.socket(socket.AF_UNIX).connect(str(alias))
+     result = subprocess.run([helper, '--sandbox-policy-cwd', '/', '--permission-profile', profile,
+         '--', 'sh', '-c', 'echo command-started'], capture_output=True)
+     assert result.returncode != 0, result
+@@ -167,9 +336,8 @@ finally:
+             "--",
+         ])
+         .args(["python3", "-c", script])
+-        .arg(&root)
++        .arg(private.path().join("rpc.sock"))
+         .arg(alias.path())
+-        .arg(private.path().strip_prefix(&root).unwrap().join("rpc.sock"))
+         .arg(codex_linux_sandbox_exe())
+         .arg(serde_json::to_string(&profile).unwrap())
+         .kill_on_drop(true)
