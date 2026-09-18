@@ -181,7 +181,7 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
 
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 9e71342469da53ed1122313f341ce1952d4c38a4..7d9e69b72f13558e2dc838404892c6746946d176 100644
+index 6004edf4c2086920a3b456a61a5474134711eae1..c5240f2f4d39a99e1a7311ca3e9e84f8fcfc79bf 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -303,10 +303,9 @@ impl CodexThread {
@@ -780,10 +780,10 @@ index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c06
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index bc1d1f39cef052fd1bd90976e13e6a671200f77f..596714d094cc0de7bb679d1c610972804801641b 100644
+index 273dea43ad687c80dacd67e513d6323158af1e8d..ced3b17271f7ca557d7f4db7a2c0b5f12a1cf9c6 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
-@@ -152,14 +152,7 @@ pub(crate) fn build_tool_router(
+@@ -147,14 +147,7 @@ pub(crate) fn build_tool_router(
      };
      let mut registry = ToolRegistry::with_allowed_tools(session.allowed_tools.clone());
      add_core_tool_sources(&context, &mut registry);

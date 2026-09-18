@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 6d9457157ca1e7ece1b1f0aacc7a2205ccd702a5..3a1ac070d56920d0390ba9233082a2f8de487a28 100644
+index 7bc5c527de6b4f0a3d4ae96d69f3e1099b9262d2..6f07ac5d7302d4fded211557b12925e599fa2f09 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -74,6 +74,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
@@ -63,7 +63,7 @@ index 6d9457157ca1e7ece1b1f0aacc7a2205ccd702a5..3a1ac070d56920d0390ba9233082a2f8
 
      pub(crate) async fn process_request(
 diff --git a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
-index 82c12ed9e55b8f78926fe726b54a69bccad5ed77..059c1f85e558643997dd839371081e8941d4eb44 100644
+index ba11862efffbfe6704201f897b1f7bb93708c77f..0d2e7e4e2a53945506645ee9bcf7223867618a63 100644
 --- a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
 @@ -371,6 +371,10 @@ pub(super) async fn ensure_listener_task_running(
@@ -123,10 +123,10 @@ index 0000000000000000000000000000000000000000..934f511d414d2f698f028b926fb1c147
 +    assert!(unloading_state.should_unload_now());
 +}
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index e8e2c3ab0a15ecf24a2152051b9cdd9276135d70..78dc7a1b90c1c950c9dd11f3ac17ceef7fed1e39 100644
+index 973f05a0bba19404bb99bbb21b00c9355a6b4081..8d036be12210444cf062ae4cd184f926d3155299 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -279,6 +279,15 @@ fn has_model_resume_override(
+@@ -280,6 +280,15 @@ fn has_model_resume_override(
              .is_some_and(|overrides| overrides.contains_key("model_reasoning_effort"))
  }
 
@@ -142,7 +142,7 @@ index e8e2c3ab0a15ecf24a2152051b9cdd9276135d70..78dc7a1b90c1c950c9dd11f3ac17ceef
  fn has_permission_override(
      request_overrides: Option<&HashMap<String, serde_json::Value>>,
      typesafe_overrides: &ConfigOverrides,
-@@ -6330,6 +6339,8 @@ fn build_thread_from_loaded_snapshot(
+@@ -6331,6 +6340,8 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -752,7 +752,7 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..ef9871fd70bb47119a3364e16e557d4c
 +        .collect()
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 7d9e69b72f13558e2dc838404892c6746946d176..45f525b7f9649da6d09e004e7dac217d359e8ef8 100644
+index c5240f2f4d39a99e1a7311ca3e9e84f8fcfc79bf..6e5e15b326e2ee0f12f80bad21271b45fec0633b 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -313,6 +313,21 @@ impl CodexThread {
@@ -778,10 +778,10 @@ index 7d9e69b72f13558e2dc838404892c6746946d176..45f525b7f9649da6d09e004e7dac217d
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 105473c9c2a8036ee752c4c023791334360128ac..154aeeb8fb4badd5fe37613030dc1288f987f31f 100644
+index 53b6d56415399c7ca2485e41a772fc21afef71dc..91313bdeeb2355b913e215c9439289f052c6166f 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -131,6 +131,9 @@ pub use codex_prompts as review_prompts;
+@@ -133,6 +133,9 @@ pub use codex_prompts as review_prompts;
  mod thread_manager;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;

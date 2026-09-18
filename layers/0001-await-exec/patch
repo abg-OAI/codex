@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index ea8e1b29f55b928bbd03c3292abcc9e590f73eed..c9b0e05bceec0433ff6b9a174cb89a0641c4732f 100644
+index b5d16bb817fe6f658c67520185613957db40c589..b74038ff526f58c48a36cca95c9d908ee8d8c285 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -109,6 +109,7 @@ mod session_startup_prewarm;
+@@ -111,6 +111,7 @@ mod session_startup_prewarm;
  mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
@@ -542,7 +542,7 @@ index 9f9f8a8cf1ea9fbd01f01813e9dcf1ccca6ab1e1..d0ef75556bc481fee669259b8e1e1558
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 3cfee595e484c6f2d5905e38b2d3bc777779cf54..0e37c6266e542fa6bd531a301424e1a2ff5135d2 100644
+index e471bb90e75bb057c1413c3584182c4e46b999d7..1b09bfd0eaf20ca200d3135e07f96d6d7e110116 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -553,7 +553,7 @@ index 3cfee595e484c6f2d5905e38b2d3bc777779cf54..0e37c6266e542fa6bd531a301424e1a2
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -1067,6 +1068,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1062,6 +1063,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
      if features.enabled(Feature::UnifiedExec) {
          registry.add(ExecCommandHandler::new(options));
          registry.add(WriteStdinHandler);
@@ -605,10 +605,10 @@ index 27e21f716b954bfbd25bd132adb67bc5f7f648aa..47e870880ddb8cbf04fe591b5b3363e1
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index e3be5f38e0fcee839732d51a2c0334608b991555..c17e6cd11a8f06468f70bbdf4e2ac30e5b59acf0 100644
+index 015f7c9c6015d6f89fd3164bb2dc2c90e6062ece..edbd3beeacf81ac35918d8d4d0119f9e78cfca21 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
-@@ -106,6 +106,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
+@@ -107,6 +107,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
  const MAX_STDIN_APPROVAL_BYTES: usize = 8_000;
  const INTERRUPT: &str = "\u{3}";
 
@@ -1253,10 +1253,10 @@ index 0000000000000000000000000000000000000000..9355e6864b3bc0c06a2e2339d4738af9
 +    assert_eq!(output.process_id, Some(PROCESS_ID));
 +}
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index e751f952ec35c04c81a7d74508ef584573572e36..59936bf3e16186083d343f47d8d83b9919d16f7d 100644
+index 3e7d8588e76156eaa54105b0a07ef7587bfb9360..5266faf2f957f242b070449c38bd92f7d7403059 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -173,6 +173,7 @@ mod rollout_compression;
+@@ -176,6 +176,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;
