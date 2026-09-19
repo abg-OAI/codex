@@ -423,7 +423,7 @@ fn create_filesystem_args(
     options: BwrapOptions,
 ) -> Result<BwrapArgs> {
     let daemon_directory = codex_uds::prepare_shared_daemon_socket_directory()?;
-    crate::daemon_mounts::reject_daemon_mount_aliases(
+    let daemon_mounts = crate::daemon_mounts::discover_daemon_socket_mounts(
         &daemon_directory,
         options
             .mask_wslg_distro
@@ -571,14 +571,14 @@ fn create_filesystem_args(
                 args.push("--ro-bind".to_string());
                 args.push(path_to_string(&mount_root));
                 args.push(path_to_string(&mount_root));
-                append_daemon_socket_mask(&mut args, &mount_root, &daemon_directory)?;
+                append_daemon_socket_masks(&mut args, &mount_root, daemon_mounts.directories())?;
             }
         }
 
         args
     };
     if args[0] == "--ro-bind" {
-        append_daemon_socket_mask(&mut args, Path::new("/"), &daemon_directory)?;
+        append_daemon_socket_masks(&mut args, Path::new("/"), daemon_mounts.directories())?;
     }
     let mut bwrap_args = BwrapArgs {
         args,
@@ -637,7 +637,11 @@ fn create_filesystem_args(
         bwrap_args.args.push("--bind".to_string());
         bwrap_args.args.push(path_to_string(mount_root));
         bwrap_args.args.push(path_to_string(mount_root));
-        append_daemon_socket_mask(&mut bwrap_args.args, mount_root, &daemon_directory)?;
+        append_daemon_socket_masks(
+            &mut bwrap_args.args,
+            mount_root,
+            daemon_mounts.directories(),
+        )?;
 
         let mut read_only_subpaths: Vec<PathBuf> = writable_root
             .read_only_subpaths
@@ -664,7 +668,12 @@ fn create_filesystem_args(
         );
         read_only_subpaths.sort_by_key(|path| path_depth(path));
         for subpath in read_only_subpaths {
-            append_read_only_subpath_args(&mut bwrap_args, &subpath, &allowed_write_paths)?;
+            append_read_only_subpath_args(
+                &mut bwrap_args,
+                &subpath,
+                &allowed_write_paths,
+                &daemon_mounts,
+            )?;
         }
         // Protect the registry only where a writable bind exposes it. Apply
         // this before deny masks so a denied parent stays hidden, rather than
@@ -777,19 +786,25 @@ fn append_metadata_path_masks_for_writable_root(
 
 // Mask immediately after every bind that exposes the directory, before policy
 // deny masks can hide its parent. Use the mount destination for read-root aliases.
-fn append_daemon_socket_mask(
+fn append_daemon_socket_masks<'a>(
     args: &mut Vec<String>,
     mount_root: &Path,
-    daemon_directory: &Path,
+    daemon_directories: impl IntoIterator<Item = &'a Path>,
 ) -> Result<()> {
     let source = fs::canonicalize(mount_root)?;
-    if source.starts_with(daemon_directory) {
-        return Err(CodexErr::Fatal(
-            "app-server socket directory cannot be a sandbox mount root".to_string(),
-        ));
+    let mut destinations = BTreeSet::new();
+    for daemon_directory in daemon_directories {
+        if source.starts_with(daemon_directory) {
+            return Err(CodexErr::Fatal(
+                "app-server socket directory cannot be a sandbox mount root".to_string(),
+            ));
+        }
+        if let Ok(relative) = daemon_directory.strip_prefix(&source) {
+            destinations.insert(mount_root.join(relative));
+        }
     }
-    if let Ok(relative) = daemon_directory.strip_prefix(source) {
-        let destination = path_to_string(&mount_root.join(relative));
+    for destination in destinations {
+        let destination = path_to_string(&destination);
         args.extend([
             "--perms".to_string(),
             "000".to_string(),
@@ -1130,6 +1145,7 @@ fn append_read_only_subpath_args(
     bwrap_args: &mut BwrapArgs,
     subpath: &Path,
     allowed_write_paths: &[PathBuf],
+    daemon_mounts: &crate::daemon_mounts::DaemonSocketMounts,
 ) -> Result<()> {
     if let Some(symlink) = first_writable_symlink_component_in_path(subpath, allowed_write_paths) {
         /*
@@ -1175,11 +1191,7 @@ fn append_read_only_subpath_args(
         bwrap_args.args.push("--ro-bind".to_string());
         bwrap_args.args.push(path_to_string(subpath));
         bwrap_args.args.push(path_to_string(subpath));
-        append_daemon_socket_mask(
-            &mut bwrap_args.args,
-            subpath,
-            &codex_uds::shared_daemon_socket_directory()?,
-        )?;
+        append_daemon_socket_masks(&mut bwrap_args.args, subpath, daemon_mounts.directories())?;
     }
     Ok(())
 }
@@ -2175,84 +2187,86 @@ mod tests {
                 PathBuf::from("/dev/.codex"),
             ]
         );
-        let daemon_directory =
-            path_to_string(&codex_uds::shared_daemon_socket_directory().unwrap());
+        let daemon_directory = codex_uds::shared_daemon_socket_directory().unwrap();
+        let daemon_mounts = crate::daemon_mounts::discover_daemon_socket_mounts(
+            &daemon_directory,
+            /*masked_root*/ None,
+        )
+        .unwrap();
+        let daemon_mask_args: Vec<String> = daemon_mounts
+            .directories()
+            .flat_map(|directory| {
+                let directory = path_to_string(directory);
+                [
+                    "--perms".to_string(),
+                    "000".to_string(),
+                    "--tmpfs".to_string(),
+                    directory.clone(),
+                    "--remount-ro".to_string(),
+                    directory,
+                ]
+            })
+            .collect();
+        assert_eq!(&args.args[..5], ["--ro-bind", "/", "/", "--dev", "/dev"],);
+        assert_eq!(&args.args[5..5 + daemon_mask_args.len()], daemon_mask_args);
+
+        let root_write = 5 + daemon_mask_args.len();
+        assert_eq!(&args.args[root_write..root_write + 3], ["--bind", "/", "/"]);
         assert_eq!(
-            args.args,
-            vec![
-                // Start from a read-only view of the full filesystem.
-                "--ro-bind".to_string(),
-                "/".to_string(),
-                "/".to_string(),
-                // Recreate a writable /dev inside the sandbox.
-                "--dev".to_string(),
-                "/dev".to_string(),
-                "--perms".to_string(),
-                "000".to_string(),
-                "--tmpfs".to_string(),
-                daemon_directory.clone(),
-                "--remount-ro".to_string(),
-                daemon_directory.clone(),
-                // Make the writable root itself writable again.
-                "--bind".to_string(),
-                "/".to_string(),
-                "/".to_string(),
-                "--perms".to_string(),
-                "000".to_string(),
-                "--tmpfs".to_string(),
-                daemon_directory.clone(),
-                "--remount-ro".to_string(),
-                daemon_directory,
-                // Mask the default metadata path names under the writable root.
-                // Because the root is `/` in this test, these carveout paths
-                // appear directly below `/`.
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/.git".to_string(),
-                "--remount-ro".to_string(),
-                "/.git".to_string(),
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/.agents".to_string(),
-                "--remount-ro".to_string(),
-                "/.agents".to_string(),
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/.codex".to_string(),
-                "--remount-ro".to_string(),
-                "/.codex".to_string(),
-                "--ro-bind".to_string(),
-                path_to_string(&synthetic_mount_registry_root()),
-                path_to_string(&synthetic_mount_registry_root()),
-                // Rebind /dev after the root bind so device nodes remain
-                // writable/usable inside the writable root.
-                "--bind".to_string(),
-                "/dev".to_string(),
-                "/dev".to_string(),
-                // Then mask the metadata names that would otherwise be
-                // creatable below the writable /dev bind.
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/dev/.git".to_string(),
-                "--remount-ro".to_string(),
-                "/dev/.git".to_string(),
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/dev/.agents".to_string(),
-                "--remount-ro".to_string(),
-                "/dev/.agents".to_string(),
-                "--perms".to_string(),
-                "555".to_string(),
-                "--tmpfs".to_string(),
-                "/dev/.codex".to_string(),
-                "--remount-ro".to_string(),
-                "/dev/.codex".to_string(),
-            ]
+            &args.args[root_write + 3..root_write + 3 + daemon_mask_args.len()],
+            daemon_mask_args,
+        );
+
+        for path in [
+            "/.git",
+            "/.agents",
+            "/.codex",
+            "/dev/.git",
+            "/dev/.agents",
+            "/dev/.codex",
+        ] {
+            assert_empty_directory_mounted_read_only(&args.args, Path::new(path));
+        }
+        let registry = path_to_string(&synthetic_mount_registry_root());
+        let registry_bind = args
+            .args
+            .windows(3)
+            .position(|window| window == ["--ro-bind", &registry, &registry])
+            .expect("synthetic registry bind");
+        let dev_write = args
+            .args
+            .windows(3)
+            .position(|window| window == ["--bind", "/dev", "/dev"])
+            .expect("writable dev bind");
+        assert!(root_write < registry_bind && registry_bind < dev_write);
+    }
+
+    #[test]
+    fn masks_every_daemon_directory_exposed_by_a_bind() {
+        let directories = [
+            Path::new("/volume/tmp/codex-daemon-1000"),
+            Path::new("/tmp/codex-daemon-1000"),
+        ];
+        let mut args = Vec::new();
+
+        append_daemon_socket_masks(&mut args, Path::new("/"), directories).unwrap();
+
+        assert_eq!(
+            args,
+            [
+                "--perms",
+                "000",
+                "--tmpfs",
+                "/tmp/codex-daemon-1000",
+                "--remount-ro",
+                "/tmp/codex-daemon-1000",
+                "--perms",
+                "000",
+                "--tmpfs",
+                "/volume/tmp/codex-daemon-1000",
+                "--remount-ro",
+                "/volume/tmp/codex-daemon-1000",
+            ],
         );
     }
 
