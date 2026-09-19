@@ -23,6 +23,7 @@ use codex_protocol::user_input::UserInput;
 use codex_utils_output_truncation::truncate_text;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
+use tracing::debug;
 use tracing::warn;
 
 use super::HELPER_ROLE_NAME;
@@ -40,15 +41,18 @@ const MAX_CHECKIN_PROMPT_TOKENS: usize = 1_000;
 
 /// Ephemeral state attached to the supervised parent thread.
 pub(super) struct Runtime {
+    /// Serializes transfers between idle supervision and root-owned work.
     transition: Arc<Mutex<()>>,
     state: Mutex<State>,
+    /// Revokes helpers that lose the continuation race after spawning.
+    continuation_generation: AtomicU64,
     wake_generation: AtomicU64,
 }
 
 impl Runtime {
     async fn idle_disposition(&self) -> IdleDisposition {
-        // Transitions intentionally clear State while awaiting helper work.
-        // Wait for that transition to settle before interpreting empty State.
+        // Related ownership fields change under the transition lock. Wait for
+        // that transfer to settle before interpreting State.
         let _transition = Arc::clone(&self.transition).lock_owned().await;
         self.state.lock().await.idle_disposition()
     }
@@ -57,6 +61,7 @@ impl Runtime {
 #[derive(Default)]
 struct State {
     goal_id: Option<String>,
+    starting: Option<ContinuationPermit>,
     active: Option<ActiveHelper>,
     snooze: Option<Snooze>,
     consecutive_failures: u32,
@@ -65,7 +70,7 @@ struct State {
 
 impl State {
     fn idle_disposition(&self) -> IdleDisposition {
-        if self.active.is_some() {
+        if self.starting.is_some() || self.active.is_some() {
             return IdleDisposition::ProcessLocalWork;
         }
         match self.snooze.as_ref().map(|snooze| snooze.idle_retention) {
@@ -85,9 +90,39 @@ enum IdleDisposition {
 
 struct ActiveHelper {
     thread_id: ThreadId,
+    continuation: ContinuationPermit,
     goal_revision: codex_state::ThreadGoalRevision,
     edit_state: GoalEditState,
     action: Option<Action>,
+}
+
+/// Capability held by one supervisor attempt until root work supersedes it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ContinuationPermit(u64);
+
+/// Root-side work that takes responsibility for continued progress.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ContinuationOwner {
+    RootTurn,
+    TriggeringMailbox,
+}
+
+/// Result of assigning responsibility for an idle goal continuation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckinStart {
+    OutsideScope,
+    Starting,
+    Started { helper_id: ThreadId },
+    AlreadyRunning { helper_id: ThreadId },
+    Deferred { owner: ContinuationOwner },
+    Scheduled,
+    RetryScheduled,
+}
+
+impl CheckinStart {
+    pub(crate) fn is_saffron_owned(self) -> bool {
+        !matches!(self, Self::OutsideScope)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -152,54 +187,80 @@ impl Default for Runtime {
         Self {
             transition: Arc::new(Mutex::new(())),
             state: Mutex::new(State::default()),
+            continuation_generation: AtomicU64::new(0),
             wake_generation: AtomicU64::new(0),
         }
     }
 }
 
+impl Runtime {
+    fn claim_continuation(&self) -> ContinuationPermit {
+        ContinuationPermit(self.continuation_generation.fetch_add(1, Ordering::AcqRel) + 1)
+    }
+
+    fn supersede_continuation(&self) {
+        self.continuation_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn owns_continuation(&self, permit: ContinuationPermit) -> bool {
+        self.continuation_generation.load(Ordering::Acquire) == permit.0
+    }
+}
+
 /// Replaces normal root-goal continuation with one supervisor check-in.
 ///
-/// `Ok(false)` means this is not a root thread and the goal extension should
-/// retain its normal continuation behavior. `Ok(true)` means Saffron owns this
-/// idle transition, including any deferred retry.
+/// [`CheckinStart::OutsideScope`] leaves continuation to the goal extension.
+/// Every other outcome identifies the owner or durable state that will make
+/// the next attempt.
 pub(crate) async fn start_checkin(
     parent: &Arc<Session>,
     goal: &codex_state::ThreadGoal,
-) -> Result<bool, String> {
+) -> Result<CheckinStart, String> {
     let goal_id = goal.goal_id.as_str();
     let parent_source = parent.session_source().await;
     if matches!(parent_source, SessionSource::SubAgent(_)) {
-        return Ok(false);
+        return Ok(CheckinStart::OutsideScope);
     }
 
     let runtime = runtime(parent);
     let _transition = Arc::clone(&runtime.transition).lock_owned().await;
 
-    if parent.active_turn.lock().await.is_some()
-        || parent
-            .input_queue
-            .has_pending_input(&parent.active_turn)
-            .await
-    {
-        return Ok(true);
+    if parent.active_turn.lock().await.is_some() {
+        return Ok(CheckinStart::Deferred {
+            owner: ContinuationOwner::RootTurn,
+        });
+    }
+    if parent.input_queue.has_trigger_turn_mailbox_items().await {
+        return Ok(CheckinStart::Deferred {
+            owner: ContinuationOwner::TriggeringMailbox,
+        });
     }
 
     let now = Instant::now();
-    let active = runtime
-        .state
-        .lock()
-        .await
-        .active
-        .as_ref()
-        .map(|active| (active.thread_id, active.goal_revision.goal_id().to_string()));
-    if let Some((helper_id, active_goal_id)) = active {
+    let (starting, active) = {
+        let state = runtime.state.lock().await;
+        let active = state.active.as_ref().map(|active| {
+            (
+                active.thread_id,
+                active.continuation,
+                active.goal_revision.goal_id().to_string(),
+            )
+        });
+        (state.starting, active)
+    };
+    if starting.is_some_and(|permit| runtime.owns_continuation(permit)) {
+        return Ok(CheckinStart::Starting);
+    }
+    if let Some((helper_id, continuation, active_goal_id)) = active {
         if active_goal_id == goal_id
+            && runtime.owns_continuation(continuation)
             && matches!(
                 parent.services.agent_control.get_status(helper_id).await,
                 AgentStatus::PendingInit | AgentStatus::Running
             )
         {
-            return Ok(true);
+            settle_persisted_wake(parent, goal, &runtime, continuation).await;
+            return Ok(CheckinStart::AlreadyRunning { helper_id });
         }
         let _ = parent
             .services
@@ -222,7 +283,7 @@ pub(crate) async fn start_checkin(
             && snooze.deadline > now
         {
             schedule_wake(parent, &runtime, snooze.clone());
-            return Ok(true);
+            return Ok(CheckinStart::Scheduled);
         }
         state.active = None;
         if state.snooze.take().is_some() {
@@ -232,36 +293,113 @@ pub(crate) async fn start_checkin(
 
     if let Some(snooze) = restore_persisted_snooze(parent, goal).await? {
         runtime.state.lock().await.snooze = Some(snooze.clone());
-        schedule_wake(parent, &runtime, snooze);
-        return Ok(true);
+        if snooze.deadline > Instant::now() {
+            schedule_wake(parent, &runtime, snooze);
+            return Ok(CheckinStart::Scheduled);
+        }
+        runtime.state.lock().await.snooze = None;
     }
 
-    match spawn_helper(parent, goal).await {
+    let continuation = runtime.claim_continuation();
+    runtime.state.lock().await.starting = Some(continuation);
+    drop(_transition);
+    let spawn_result = spawn_helper(parent, goal).await;
+
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    let parent_is_idle = parent.active_turn.lock().await.is_none();
+    let has_triggering_mail = parent.input_queue.has_trigger_turn_mailbox_items().await;
+    let owns_continuation = parent_is_idle
+        && !has_triggering_mail
+        && runtime.owns_continuation(continuation)
+        && runtime.state.lock().await.starting == Some(continuation);
+    if !owns_continuation {
+        runtime
+            .state
+            .lock()
+            .await
+            .starting
+            .take_if(|starting| *starting == continuation);
+        drop(_transition);
+        if let Ok(helper_id) = spawn_result {
+            let _ = parent
+                .services
+                .agent_control
+                .shutdown_live_agent(helper_id)
+                .await;
+        }
+        let owner = if parent_is_idle && has_triggering_mail {
+            ContinuationOwner::TriggeringMailbox
+        } else {
+            ContinuationOwner::RootTurn
+        };
+        return Ok(CheckinStart::Deferred { owner });
+    }
+
+    runtime.state.lock().await.starting = None;
+    match spawn_result {
         Ok(helper_id) => {
             runtime.state.lock().await.active = Some(ActiveHelper {
                 thread_id: helper_id,
+                continuation,
                 goal_revision: codex_state::ThreadGoalRevision::capture(goal),
                 edit_state: GoalEditState::Available,
                 action: None,
             });
+            settle_persisted_wake(parent, goal, &runtime, continuation).await;
             watch_helper(Arc::downgrade(parent), helper_id, goal_id.to_string());
+            Ok(CheckinStart::Started { helper_id })
         }
         Err(error) => {
             warn!(thread_id = %parent.thread_id, "failed to spawn Saffron goal supervisor: {error}");
-            defer_failure(parent, &runtime, goal_id, error).await;
+            defer_failure(parent, &runtime, goal_id, error).await?;
+            Ok(CheckinStart::RetryScheduled)
         }
     }
-    Ok(true)
+}
+
+/// Transfers autonomous continuation to root work and revokes an idle helper.
+///
+/// Selection of a supervisor action uses the same transition lock. Whichever
+/// side acquires the lock first owns the next side effect; helpers that have
+/// not selected an action are retired when root work wins.
+pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: ContinuationOwner) {
+    if matches!(parent.session_source().await, SessionSource::SubAgent(_)) {
+        return;
+    }
+    let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    runtime.supersede_continuation();
+    debug!(thread_id = %parent.thread_id, ?owner, "root work claimed continuation");
+    let helper_id = {
+        let mut state = runtime.state.lock().await;
+        state.starting = None;
+        state
+            .active
+            .take_if(|active| {
+                active.action.is_none() && active.edit_state != GoalEditState::InFlight
+            })
+            .map(|active| active.thread_id)
+    };
+    drop(_transition);
+    if let Some(helper_id) = helper_id {
+        let _ = parent
+            .services
+            .agent_control
+            .shutdown_live_agent(helper_id)
+            .await;
+    }
 }
 
 /// Cancels process-local supervision when no active goal remains.
 pub(crate) async fn stop(parent: &Arc<Session>) {
     let runtime = runtime(parent);
     let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    runtime.supersede_continuation();
     runtime.wake_generation.fetch_add(1, Ordering::AcqRel);
     let helper_id = {
         let mut state = runtime.state.lock().await;
         state.goal_id = None;
+        state.starting = None;
         state.snooze = None;
         state.consecutive_failures = 0;
         state.previous_action = None;
@@ -311,6 +449,10 @@ pub(super) async fn select_action(
     action: Action,
 ) -> Result<String, String> {
     let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    if parent.active_turn.lock().await.is_some() {
+        return Err("the parent started a turn before this action was selected".to_string());
+    }
     let mut state = runtime.state.lock().await;
     let Some(active) = state
         .active
@@ -319,6 +461,9 @@ pub(super) async fn select_action(
     else {
         return Err("this supervisor helper is no longer active".to_string());
     };
+    if !runtime.owns_continuation(active.continuation) {
+        return Err("the parent claimed continuation before this action was selected".to_string());
+    }
     if active.action.is_some() {
         return Err("a supervisor action was already selected for this check-in".to_string());
     }
@@ -336,6 +481,10 @@ pub(in crate::saffron) async fn begin_goal_edit(
     helper_id: ThreadId,
 ) -> Result<codex_state::ThreadGoalRevision, String> {
     let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    if parent.active_turn.lock().await.is_some() {
+        return Err("the parent started a turn before this goal edit began".to_string());
+    }
     let mut state = runtime.state.lock().await;
     let Some(active) = state
         .active
@@ -344,6 +493,9 @@ pub(in crate::saffron) async fn begin_goal_edit(
     else {
         return Err("this supervisor helper is no longer active".to_string());
     };
+    if !runtime.owns_continuation(active.continuation) {
+        return Err("the parent claimed continuation before this goal edit began".to_string());
+    }
     if active.action.is_some() {
         return Err("the supervisor disposition was already selected".to_string());
     }
@@ -606,7 +758,7 @@ async fn finish_helper(
 ) {
     let runtime = runtime(parent);
     let _transition = Arc::clone(&runtime.transition).lock_owned().await;
-    let action = {
+    let (action, continuation_is_current) = {
         let mut state = runtime.state.lock().await;
         let Some(active) = state
             .active
@@ -616,8 +768,9 @@ async fn finish_helper(
             return;
         };
         let action = active.action.clone();
+        let continuation_is_current = runtime.owns_continuation(active.continuation);
         state.active = None;
-        action
+        (action, continuation_is_current)
     };
     let terminal_failure = if action.is_none() {
         match parent
@@ -640,6 +793,9 @@ async fn finish_helper(
     {
         warn!(%helper_id, "failed to retire Saffron goal supervisor: {error}");
     }
+    if !continuation_is_current && action.is_none() {
+        return;
+    }
     if action.is_none() {
         if let Some(terminal_failure) = terminal_failure {
             match failure::block_goal(parent, goal_id, &terminal_failure).await {
@@ -655,20 +811,31 @@ async fn finish_helper(
                     return;
                 }
                 Err(error) => {
-                    defer_failure(
+                    if let Err(retry_error) = defer_failure(
                         parent,
                         &runtime,
                         goal_id,
                         format!("failed to block goal after terminal helper error: {error}"),
                     )
-                    .await;
+                    .await
+                    {
+                        warn!(
+                            thread_id = %parent.thread_id,
+                            "failed to schedule Saffron supervisor retry: {retry_error}"
+                        );
+                    }
                     return;
                 }
             }
         }
         let description =
             format!("helper ended as {terminal_status:?} without selecting an action");
-        defer_failure(parent, &runtime, goal_id, description).await;
+        if let Err(retry_error) = defer_failure(parent, &runtime, goal_id, description).await {
+            warn!(
+                thread_id = %parent.thread_id,
+                "failed to schedule Saffron supervisor retry: {retry_error}"
+            );
+        }
     }
 }
 
@@ -677,7 +844,7 @@ async fn defer_failure(
     runtime: &Arc<Runtime>,
     goal_id: &str,
     error: String,
-) {
+) -> Result<(), String> {
     let delay = {
         let mut state = runtime.state.lock().await;
         state.consecutive_failures = state.consecutive_failures.saturating_add(1);
@@ -704,11 +871,17 @@ async fn defer_failure(
                 runtime.state.lock().await.snooze = Some(snooze.clone());
             }
             schedule_wake(parent, runtime, snooze);
+            Ok(())
         }
-        Err(goal_error) => warn!(
-            thread_id = %parent.thread_id,
-            "failed to schedule Saffron supervisor failure retry: {goal_error}"
-        ),
+        Err(goal_error) => {
+            warn!(
+                thread_id = %parent.thread_id,
+                "failed to schedule Saffron supervisor failure retry: {goal_error}"
+            );
+            Err(format!(
+                "Saffron goal supervisor failed and its retry could not be scheduled: {goal_error}"
+            ))
+        }
     }
 }
 
@@ -731,32 +904,16 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
         if runtime.wake_generation.load(Ordering::Acquire) != generation {
             return;
         }
-        let should_wake = {
-            let mut state = runtime.state.lock().await;
-            if state
-                .snooze
-                .as_ref()
-                .is_some_and(|current| current.wake == snooze.wake)
-            {
-                state.snooze = None;
-                true
-            } else {
-                false
-            }
-        };
+        let should_wake = runtime
+            .state
+            .lock()
+            .await
+            .snooze
+            .as_ref()
+            .is_some_and(|current| current.wake == snooze.wake);
         if should_wake {
-            if let Some(state_db) = parent.services.state_db.as_ref() {
-                let clear_result = match SaffronStore::open(state_db.sqlite()).await {
-                    Ok(store) => store.clear_goal_wake(&snooze.wake).await.map(|_| ()),
-                    Err(error) => Err(error),
-                };
-                if let Err(error) = clear_result {
-                    warn!(
-                        thread_id = %parent.thread_id,
-                        "failed to clear due Saffron supervisor wake: {error}"
-                    );
-                }
-            }
+            // The idle continuation settles durable state after it establishes
+            // a successor owner. Until then, this wake remains recoverable.
             parent
                 .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Completed)
                 .await;
@@ -788,20 +945,49 @@ async fn restore_persisted_snooze(
     {
         return Ok(None);
     }
-    if wake.wake_at_ms <= now_millis {
-        store
-            .clear_goal_wake(&wake)
-            .await
-            .map_err(|error| error.to_string())?;
-        return Ok(None);
-    }
-    let remaining_millis =
-        u64::try_from(wake.wake_at_ms - now_millis).map_err(|error| error.to_string())?;
+    let remaining_millis = u64::try_from(wake.wake_at_ms.saturating_sub(now_millis).max(0))
+        .map_err(|error| error.to_string())?;
     Ok(Some(Snooze {
         wake,
         deadline: Instant::now() + Duration::from_millis(remaining_millis),
         idle_retention: IdleRetention::Reconstructible,
     }))
+}
+
+/// Removes a due wake only after the supplied supervisor claim is current.
+async fn settle_persisted_wake(
+    parent: &Session,
+    goal: &codex_state::ThreadGoal,
+    runtime: &Runtime,
+    continuation: ContinuationPermit,
+) {
+    if !runtime.owns_continuation(continuation) {
+        return;
+    }
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return;
+    };
+    let result = async {
+        let store = SaffronStore::open(state_db.sqlite()).await?;
+        let Some(wake) = store.get_goal_wake(parent.thread_id).await? else {
+            return Ok::<(), anyhow::Error>(());
+        };
+        if wake.goal_id == goal.goal_id
+            && wake.goal_objective == goal.objective
+            && wake.goal_updated_at_ms == goal.updated_at.timestamp_millis()
+            && wake.wake_at_ms <= Utc::now().timestamp_millis()
+        {
+            store.clear_goal_wake(&wake).await?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = result {
+        warn!(
+            thread_id = %parent.thread_id,
+            "failed to settle due Saffron supervisor wake: {error}"
+        );
+    }
 }
 
 #[cfg(test)]
