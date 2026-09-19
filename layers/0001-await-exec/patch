@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index b5d16bb817fe6f658c67520185613957db40c589..b74038ff526f58c48a36cca95c9d908ee8d8c285 100644
+index 38b87f4dcce17ceb6726963a419040d46bb95112..f54a5b0245b88aa6998ceb8e823b4f3a3fb5d519 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -111,6 +111,7 @@ mod session_startup_prewarm;
+@@ -135,6 +135,7 @@ mod session_startup_prewarm;
  mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
@@ -542,7 +542,7 @@ index 9f9f8a8cf1ea9fbd01f01813e9dcf1ccca6ab1e1..d0ef75556bc481fee669259b8e1e1558
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index e471bb90e75bb057c1413c3584182c4e46b999d7..1b09bfd0eaf20ca200d3135e07f96d6d7e110116 100644
+index 90cfdf5c69e4af13dc62dd31cdb537e2e4b7bb4d..3e1dff5093504f9c425a74d40df5fe3b25cf2ca9 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -562,7 +562,7 @@ index e471bb90e75bb057c1413c3584182c4e46b999d7..1b09bfd0eaf20ca200d3135e07f96d6d
          // Managed requirements are the only configuration path that can keep
          // unified exec disabled. Preserve command execution without exposing a
 diff --git a/codex-rs/core/src/unified_exec/mod.rs b/codex-rs/core/src/unified_exec/mod.rs
-index 8f6c61fdeec686c4de5bda1e828106b4f1252482..ffb5f15ae0baaba9cd330ce2843023eb31970bf4 100644
+index 3645306c27c8157cafe42cde651dcf15ab66607f..ce26d9448350e9c4c9fc308604317d228159cd8f 100644
 --- a/codex-rs/core/src/unified_exec/mod.rs
 +++ b/codex-rs/core/src/unified_exec/mod.rs
 @@ -67,6 +67,8 @@ pub(crate) use process::NoopSpawnLifecycle;
@@ -605,7 +605,7 @@ index 27e21f716b954bfbd25bd132adb67bc5f7f648aa..47e870880ddb8cbf04fe591b5b3363e1
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 015f7c9c6015d6f89fd3164bb2dc2c90e6062ece..edbd3beeacf81ac35918d8d4d0119f9e78cfca21 100644
+index 105783518d33132887ee9ab3eb88b1487a52b53f..fa8f359e843997468c9780ceefc9cdca3a331887 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
 @@ -107,6 +107,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
@@ -1098,10 +1098,10 @@ index 0000000000000000000000000000000000000000..48703e1e17e967453c9fbc5c0f870c85
 +mod tests;
 diff --git a/codex-rs/core/src/unified_exec/process_manager/interaction_tests.rs b/codex-rs/core/src/unified_exec/process_manager/interaction_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9355e6864b3bc0c06a2e2339d4738af92d280ea4
+index 0000000000000000000000000000000000000000..0c3c4b17c6553a6c3efd713d021a4f3396b2ae8a
 --- /dev/null
 +++ b/codex-rs/core/src/unified_exec/process_manager/interaction_tests.rs
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,152 @@
 +use std::sync::Arc;
 +use std::sync::Weak;
 +use std::sync::atomic::AtomicBool;
@@ -1145,7 +1145,9 @@ index 0000000000000000000000000000000000000000..9355e6864b3bc0c06a2e2339d4738af9
 +            tty: false,
 +            environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
 +            permissions: TerminalPermissions::for_launch(
-+                turn.environments.primary().expect("turn environment"),
++                turn.initial_environments
++                    .primary()
++                    .expect("turn environment"),
 +                &turn,
 +                TerminalSandboxSource::Native,
 +                crate::sandboxing::SandboxPermissions::UseDefault,
@@ -1253,10 +1255,10 @@ index 0000000000000000000000000000000000000000..9355e6864b3bc0c06a2e2339d4738af9
 +    assert_eq!(output.process_id, Some(PROCESS_ID));
 +}
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index 3e7d8588e76156eaa54105b0a07ef7587bfb9360..5266faf2f957f242b070449c38bd92f7d7403059 100644
+index 2e0e3914d9dd6583dae57134b776ba6a18ba6a3a..562a75bc6c82cd29060d0b03dd02e906cd8c675c 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -176,6 +176,7 @@ mod rollout_compression;
+@@ -180,6 +180,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;

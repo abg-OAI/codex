@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 6e5e15b326e2ee0f12f80bad21271b45fec0633b..a4a728c07528623df112e7a55803eeffea08a1c9 100644
+index ea8d6439e1689de6046c86a84698fa79a991a159..b47d25563d9adc3324f7e10b18819d8bac465f3c 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -305,7 +305,9 @@ impl CodexThread {
+@@ -308,7 +308,9 @@ impl CodexThread {
          &self,
          goal: &codex_state::ThreadGoal,
      ) -> Result<bool, String> {
@@ -29,7 +29,7 @@ index 34f11fd5145f121e40f650c8ef650651eaaace99..d362c5529ee66e755a819ece8d887e40
  pub(super) use runtime::commit_goal_edit;
  pub(crate) use runtime::has_reconstructible_snooze;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index e1abc361138604a65784cb76b70073ddc78d905f..192c403517ab9589cd9a1c4c522ec4eece62e4c2 100644
+index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1bbc19932 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -23,6 +23,7 @@ use codex_protocol::user_input::UserInput;
@@ -992,7 +992,7 @@ index dcea9a99d24e9b1ecf7fcfaa20f3966b0ce63bca..19b0797455654dce727b62770b65b786
          sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
              .await;
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index a0f876426e417c2ebad6a97753b2b91346c9b063..96b7554b8bc84d0aa0519852bee623b3073da72c 100644
+index 30222ee8a3581af729c978b23f8407e5f5a82578..f8f8ae7a72f6b670e0c8fab0b4d6e577bf2133de 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -273,6 +273,11 @@ impl Session {
@@ -1007,7 +1007,7 @@ index a0f876426e417c2ebad6a97753b2b91346c9b063..96b7554b8bc84d0aa0519852bee623b3
          self.abort_all_tasks(TurnAbortReason::Replaced).await;
          self.clear_connector_selection().await;
          self.start_task(turn_context, input, task).await;
-@@ -457,6 +462,11 @@ impl Session {
+@@ -467,6 +472,11 @@ impl Session {
              let active_turn = active_turn.get_or_insert_with(ActiveTurn::default);
              Arc::clone(&active_turn.turn_state)
          };
@@ -1017,5 +1017,5 @@ index a0f876426e417c2ebad6a97753b2b91346c9b063..96b7554b8bc84d0aa0519852bee623b3
 +        )
 +        .await;
 
-         let (input, mut start_options) =
-             self.input_queue.get_pending_input(&self.active_turn).await;
+         self.services
+             .models_manager

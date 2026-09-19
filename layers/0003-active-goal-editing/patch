@@ -181,10 +181,10 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
 
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 6004edf4c2086920a3b456a61a5474134711eae1..c5240f2f4d39a99e1a7311ca3e9e84f8fcfc79bf 100644
+index 60278875807a1d6a23838136a2f545eaad7c1ac9..eb7f97ca2c5ce8f4b70dfc2c990e11e37eebdf07 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -303,10 +303,9 @@ impl CodexThread {
+@@ -306,10 +306,9 @@ impl CodexThread {
      /// goal extension can retain its ordinary continuation behavior.
      pub async fn start_saffron_goal_supervisor_checkin(
          &self,
@@ -566,7 +566,7 @@ index 8cc5a7a75e3f3bfc706be54a46f5740a4010fd44..b37ee40bcbb20d03f464655b6975199d
 +supervisor action. After the action tool returns, end your turn immediately
 +without additional tool calls.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index db9fa44a187afe3e92f289d979d0733d02abc024..d71567b6ae75e2513b095adba65181a008b5adf3 100644
+index 25d254d6cae609207c1f61a26ff258b24184cb98..29cc6606b20c6ff13887995f928d9f45ee3df36b 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -14,7 +14,6 @@ use codex_protocol::protocol::Event;
@@ -780,7 +780,7 @@ index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c06
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 273dea43ad687c80dacd67e513d6323158af1e8d..ced3b17271f7ca557d7f4db7a2c0b5f12a1cf9c6 100644
+index 21d069f49d48cacdf3c2d212c3ce9abbb9927685..a13e220787d6bfa69e78baa4d4b6948e91430790 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -147,14 +147,7 @@ pub(crate) fn build_tool_router(

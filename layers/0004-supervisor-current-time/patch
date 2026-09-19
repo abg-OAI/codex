@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index d71567b6ae75e2513b095adba65181a008b5adf3..9f04f055bd9cc9f7c78db40083873a5d10258e40 100644
+index 29cc6606b20c6ff13887995f928d9f45ee3df36b..96eb8a7658c4c767fa8e04618e39e478f84ffc47 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -6,7 +6,10 @@ use std::sync::atomic::AtomicU64;
