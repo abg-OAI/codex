@@ -1,4 +1,4 @@
-//! Reject host mount aliases that would bypass the privileged socket directory mask.
+//! Discover every visible path to the privileged socket directory.
 //! Mount roots describe filesystem identity; canonical paths alone miss bind mounts.
 
 use rustix::fs::AtFlags;
@@ -13,10 +13,27 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::path::PathBuf;
 
-pub(crate) fn reject_daemon_mount_aliases(
+type Mount<'a> = (&'a [u8], &'a [u8], &'a [u8], PathBuf, PathBuf);
+
+/// Paths that must be masked after a bubblewrap bind exposes their backing filesystem.
+///
+/// Each path names the complete daemon directory. Aliases of a file or subdirectory are
+/// rejected during discovery because masking their mount destinations would not establish
+/// that every path to the rest of the daemon directory is protected.
+pub(crate) struct DaemonSocketMounts {
+    directories: BTreeSet<PathBuf>,
+}
+
+impl DaemonSocketMounts {
+    pub(crate) fn directories(&self) -> impl Iterator<Item = &Path> {
+        self.directories.iter().map(PathBuf::as_path)
+    }
+}
+
+pub(crate) fn discover_daemon_socket_mounts(
     directory: &Path,
     masked_root: Option<&Path>,
-) -> io::Result<()> {
+) -> io::Result<DaemonSocketMounts> {
     let directory_file = fs::File::open(directory)?;
     let device = directory_file.metadata()?.dev();
     let mount_id = fs::read_to_string(format!("/proc/self/fdinfo/{}", directory_file.as_raw_fd()))
@@ -51,7 +68,7 @@ fn check_mounts(
     mount_id: Option<&str>,
     mountinfo: &[u8],
     masked_root: Option<&Path>,
-) -> io::Result<()> {
+) -> io::Result<DaemonSocketMounts> {
     let invalid = || io::Error::other("cannot establish app-server socket mount isolation");
     let mut mounts = Vec::new();
     for line in mountinfo
@@ -66,7 +83,7 @@ fn check_mounts(
         let destination = mount_path(destination)?;
         mounts.push((*id, *parent, *mount_device, root, destination));
     }
-    let (location, containing_mount) = if let Some(mount_id) = mount_id {
+    let location = if let Some(mount_id) = mount_id {
         // fdinfo/statx identifies the opened mount, which may have been covered
         // by another mount before we read mountinfo.
         let selected = mounts
@@ -100,7 +117,7 @@ fn check_mounts(
             visible_child = Some(destination);
             current = mounts.iter().find(|(id, ..)| id == parent);
         }
-        (root.join(relative), Some((mount_id, destination)))
+        root.join(relative)
     } else {
         // Without a mount ID, require every possible containing mount to agree
         // on the backing location, and do not assume any aliases are hidden.
@@ -117,46 +134,90 @@ fn check_mounts(
         if locations.len() != 1 {
             return Err(invalid());
         }
-        (locations.into_iter().next().ok_or_else(invalid)?, None)
+        locations.into_iter().next().ok_or_else(invalid)?
     };
+    let mut directories = BTreeSet::new();
     for (id, _, mount_device, root, destination) in &mounts {
-        // Nested mounts can introduce another filesystem (or an individual socket) under the mask.
-        let nested = destination != directory && destination.starts_with(directory);
-        let alias = if *mount_device == device.as_bytes() {
-            if let Ok(relative) = location.strip_prefix(root) {
-                Some(destination.join(relative))
-            } else if root.starts_with(&location) {
-                Some(destination.clone())
-            } else {
-                None
+        if *mount_device != device.as_bytes() {
+            continue;
+        }
+        if let Ok(relative) = location.strip_prefix(root) {
+            let alias = destination.join(relative);
+            if masked_root.is_some_and(|masked_root| alias.starts_with(masked_root))
+                || path_is_covered_by_descendant_mount(id, &alias, &mounts)?
+            {
+                continue;
             }
-        } else {
-            None
-        };
-        if nested
-            || alias.is_some_and(|path| {
-                // An ancestor's path beneath this mount is hidden by it. Keep
-                // checking other mounts, including aliases mounted beneath it.
-                let hidden = containing_mount.is_some_and(|(mount_id, containing_mount)| {
-                    *id != mount_id.as_bytes()
-                        && containing_mount.starts_with(destination)
-                        && path.starts_with(containing_mount)
-                });
-                !path.starts_with(directory)
-                    && !masked_root.is_some_and(|root| path.starts_with(root))
-                    && !hidden
-            })
+            directories.insert(alias);
+        } else if root.starts_with(&location)
+            && !masked_root.is_some_and(|masked_root| destination.starts_with(masked_root))
+            && !path_is_covered_by_descendant_mount(id, destination, &mounts)?
         {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!(
-                    "app-server socket directory has an unsupported host mount at {}; remove the bind-mount alias or nested mount before starting the sandbox",
-                    destination.display()
-                ),
-            ));
+            return Err(unsupported_mount(destination));
         }
     }
-    Ok(())
+    if !directories.contains(directory) {
+        return Err(invalid());
+    }
+    for (_, _, _, _, destination) in &mounts {
+        if directories
+            .iter()
+            .any(|directory| destination != directory && destination.starts_with(directory))
+        {
+            return Err(unsupported_mount(destination));
+        }
+    }
+    Ok(DaemonSocketMounts { directories })
+}
+
+fn path_is_covered_by_descendant_mount(
+    mount_id: &[u8],
+    path: &Path,
+    mounts: &[Mount<'_>],
+) -> io::Result<bool> {
+    for (id, _, _, _, destination) in mounts {
+        if *id != mount_id
+            && path.starts_with(destination)
+            && mount_is_descendant_of(id, mount_id, mounts)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn mount_is_descendant_of(
+    mount_id: &[u8],
+    ancestor_id: &[u8],
+    mounts: &[Mount<'_>],
+) -> io::Result<bool> {
+    let mut current = mounts.iter().find(|(id, ..)| *id == mount_id);
+    let mut visited = BTreeSet::new();
+    while let Some((id, parent, ..)) = current {
+        if !visited.insert(*id) {
+            return Err(io::Error::other(
+                "cannot establish app-server socket mount isolation",
+            ));
+        }
+        if *parent == ancestor_id {
+            return Ok(true);
+        }
+        if id == parent {
+            return Ok(false);
+        }
+        current = mounts.iter().find(|(id, ..)| id == parent);
+    }
+    Ok(false)
+}
+
+fn unsupported_mount(destination: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "app-server socket directory has an unsupported host mount at {}; remove the bind-mount alias or nested mount before starting the sandbox",
+            destination.display()
+        ),
+    )
 }
 
 fn mount_path(encoded: &[u8]) -> io::Result<PathBuf> {

@@ -3,6 +3,20 @@ use pretty_assertions::assert_eq;
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
+use std::path::Path;
+
+fn install_sandbox_runtime(root: &Path) -> bool {
+    let Some(bwrap) =
+        std::env::var_os("CODEX_TEST_BWRAP").or_else(|| std::env::var_os("CARGO_BIN_EXE_bwrap"))
+    else {
+        return false;
+    };
+    std::fs::copy(codex_linux_sandbox_exe(), root.join("sandbox")).unwrap();
+    let resources = root.join("codex-resources");
+    std::fs::create_dir(&resources).unwrap();
+    std::fs::copy(bwrap, resources.join("bwrap")).unwrap();
+    true
+}
 
 #[tokio::test]
 async fn private_tmp_mount_preserves_daemon_socket_isolation() {
@@ -14,7 +28,10 @@ async fn private_tmp_mount_preserves_daemon_socket_isolation() {
     let test_executable = std::env::current_exe().unwrap();
     // Keep both executables available after the original /tmp is hidden.
     std::fs::copy(&test_executable, private.path().join("test")).unwrap();
-    std::fs::copy(codex_linux_sandbox_exe(), private.path().join("sandbox")).unwrap();
+    if !install_sandbox_runtime(private.path()) {
+        eprintln!("skipping private tmp test: bundled bubblewrap is unavailable");
+        return;
+    }
     let (_, test_module) = module_path!().split_once("::").unwrap();
     let fixture_test = format!("{test_module}::private_tmp_fixture");
     // Mount setup needs capabilities, which bubblewrap only accepts as namespace root.
@@ -48,6 +65,148 @@ async fn private_tmp_mount_preserves_daemon_socket_isolation() {
     }
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(String::from_utf8_lossy(&output.stdout).contains("private-tmp-validated"));
+}
+
+#[tokio::test]
+async fn bind_mounted_tmp_parent_alias_preserves_daemon_socket_isolation() {
+    if should_skip_bwrap_tests().await {
+        return;
+    }
+    // Keep the backing tree outside /tmp so it remains addressable after the
+    // fixture bind-mounts the tree's tmp directory over /tmp.
+    let volume = tempfile::tempdir_in("/var/tmp").unwrap();
+    let temporary_root = volume.path().join("tmp");
+    std::fs::create_dir(&temporary_root).unwrap();
+    let test_executable = std::env::current_exe().unwrap();
+    std::fs::copy(&test_executable, temporary_root.join("test")).unwrap();
+    if !install_sandbox_runtime(&temporary_root) {
+        eprintln!("skipping mount alias test: bundled bubblewrap is unavailable");
+        return;
+    }
+    let (_, test_module) = module_path!().split_once("::").unwrap();
+    let fixture_test = format!("{test_module}::bind_mounted_tmp_parent_alias_fixture");
+    let output = tokio::process::Command::new("unshare")
+        .args([
+            "--user",
+            "--map-root-user",
+            "--mount",
+            "--propagation",
+            "private",
+            "--",
+        ])
+        .arg(test_executable)
+        .args([
+            "--exact",
+            &fixture_test,
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("CODEX_TEST_ALIAS_VOLUME", volume.path())
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    if output.status.code() == Some(77)
+        || String::from_utf8_lossy(&output.stderr).starts_with("unshare:")
+    {
+        eprintln!("skipping mount alias test: user/mount namespaces are unavailable");
+        return;
+    }
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("mount-alias-isolated"));
+}
+
+#[test]
+#[ignore = "invoked inside a disposable mount namespace"]
+fn bind_mounted_tmp_parent_alias_fixture() {
+    let Some(volume) = std::env::var_os("CODEX_TEST_ALIAS_VOLUME") else {
+        return;
+    };
+    let volume = PathBuf::from(volume);
+    let mount = std::process::Command::new("mount")
+        .arg("--bind")
+        .arg(volume.join("tmp"))
+        .arg("/tmp")
+        .output()
+        .unwrap();
+    if !mount.status.success() {
+        std::process::exit(/*code*/ 77);
+    }
+    let alias = PathBuf::from("/tmp/volume-alias");
+    std::fs::create_dir(&alias).unwrap();
+    let mount = std::process::Command::new("mount")
+        .arg("--bind")
+        .arg(&volume)
+        .arg(&alias)
+        .output()
+        .unwrap();
+    assert!(mount.status.success(), "{mount:?}");
+
+    let root = codex_uds::prepare_shared_daemon_socket_directory().unwrap();
+    let endpoint = root.join("rpc.sock");
+    let relative_endpoint = root.strip_prefix("/tmp").unwrap().join("rpc.sock");
+    let source_endpoint = volume.join("tmp").join(&relative_endpoint);
+    let alias_endpoint = alias.join("tmp").join(relative_endpoint);
+    let unrelated = PathBuf::from("/tmp/other.sock");
+    let _daemon = UnixListener::bind(&endpoint).unwrap();
+    let _other = UnixListener::bind(&unrelated).unwrap();
+    UnixStream::connect(&endpoint).expect("host can reach daemon");
+    UnixStream::connect(&source_endpoint).expect("host can reach daemon source alias");
+    UnixStream::connect(&alias_endpoint).expect("host can reach daemon alias");
+
+    let profile = PermissionProfile::workspace_write_with(
+        &[AbsolutePathBuf::from_absolute_path("/tmp").unwrap()],
+        NetworkSandboxPolicy::Enabled,
+        /*exclude_tmpdir_env_var*/ true,
+        /*exclude_slash_tmp*/ false,
+    );
+    let mut command = std::process::Command::new("/tmp/sandbox");
+    command
+        .args(["--sandbox-policy-cwd", "/tmp", "--permission-profile"])
+        .arg(serde_json::to_string(&profile).unwrap())
+        .arg("--")
+        .current_dir("/tmp");
+    let (_, test_module) = module_path!().split_once("::").unwrap();
+    let client_test = format!("{test_module}::bind_mounted_tmp_parent_alias_client");
+    let output = command
+        .args([
+            "/tmp/test",
+            "--exact",
+            &client_test,
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("CODEX_TEST_DAEMON_SOCKET", &endpoint)
+        .env("CODEX_TEST_DAEMON_SOCKET_SOURCE", &source_endpoint)
+        .env("CODEX_TEST_DAEMON_SOCKET_ALIAS", &alias_endpoint)
+        .env("CODEX_TEST_UNRELATED_SOCKET", &unrelated)
+        .env("CODEX_TEST_WRITABLE_ALIAS", alias.join("tmp"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("mount-alias-isolated"));
+}
+
+#[test]
+#[ignore = "invoked inside the mount alias sandbox"]
+fn bind_mounted_tmp_parent_alias_client() {
+    println!("mount-alias-client-started");
+    for variable in [
+        "CODEX_TEST_DAEMON_SOCKET",
+        "CODEX_TEST_DAEMON_SOCKET_SOURCE",
+        "CODEX_TEST_DAEMON_SOCKET_ALIAS",
+    ] {
+        let endpoint = std::env::var_os(variable).unwrap();
+        assert!(UnixStream::connect(endpoint).is_err(), "daemon reachable");
+    }
+    let unrelated = std::env::var_os("CODEX_TEST_UNRELATED_SOCKET").unwrap();
+    UnixStream::connect(unrelated).expect("unrelated socket reachable");
+    std::fs::write("/tmp/primary-write", b"ok").unwrap();
+    let alias = PathBuf::from(std::env::var_os("CODEX_TEST_WRITABLE_ALIAS").unwrap());
+    std::fs::write(alias.join("alias-write"), b"ok").unwrap();
+    println!("mount-alias-isolated");
 }
 
 #[test]
@@ -98,7 +257,7 @@ fn private_tmp_fixture() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(String::from_utf8_lossy(&output.stdout).contains("private-tmp-isolated"));
 
-    // A real alias below the private mount must still prevent startup.
+    // A complete directory alias is safe when the sandbox masks both paths.
     std::fs::create_dir("/tmp/alias").unwrap();
     let mount = std::process::Command::new("mount")
         .arg("--bind")
@@ -108,10 +267,12 @@ fn private_tmp_fixture() {
         .unwrap();
     assert!(mount.status.success(), "{mount:?}");
     UnixStream::connect("/tmp/alias/rpc.sock").expect("host can reach alias");
-    let output = command.output().unwrap();
-    assert!(!output.status.success(), "{output:?}");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported host mount"));
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("private-tmp-client-started"));
+    let output = command
+        .env("CODEX_TEST_DAEMON_SOCKET_ALIAS", "/tmp/alias/rpc.sock")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("private-tmp-isolated"));
     println!("private-tmp-validated");
 }
 
@@ -123,12 +284,18 @@ fn private_tmp_client() {
     };
     println!("private-tmp-client-started");
     assert!(UnixStream::connect(endpoint).is_err(), "daemon reachable");
+    if let Some(alias) = std::env::var_os("CODEX_TEST_DAEMON_SOCKET_ALIAS") {
+        assert!(
+            UnixStream::connect(alias).is_err(),
+            "daemon alias reachable"
+        );
+    }
     UnixStream::connect("/tmp/other.sock").expect("unrelated socket reachable");
     println!("private-tmp-isolated");
 }
 
 #[tokio::test]
-async fn daemon_socket_bind_mount_alias_rejects_sandbox_startup() {
+async fn daemon_socket_file_bind_mount_alias_rejects_sandbox_startup() {
     if should_skip_bwrap_tests().await {
         return;
     }
@@ -142,12 +309,14 @@ async fn daemon_socket_bind_mount_alias_rejects_sandbox_startup() {
     );
     let script = r#"
 import pathlib, socket, subprocess, sys
-root, alias, endpoint, helper, profile = sys.argv[1:]
-mount = subprocess.run(['mount', '--bind', root, alias], capture_output=True)
+endpoint, alias_directory, helper, profile = sys.argv[1:]
+alias = pathlib.Path(alias_directory) / 'rpc.sock'
+alias.touch()
+mount = subprocess.run(['mount', '--bind', endpoint, alias], capture_output=True)
 if mount.returncode:
     sys.exit(77)
 try:
-    socket.socket(socket.AF_UNIX).connect(str(pathlib.Path(alias) / endpoint))
+    socket.socket(socket.AF_UNIX).connect(str(alias))
     result = subprocess.run([helper, '--sandbox-policy-cwd', '/', '--permission-profile', profile,
         '--', 'sh', '-c', 'echo command-started'], capture_output=True)
     assert result.returncode != 0, result
@@ -167,9 +336,8 @@ finally:
             "--",
         ])
         .args(["python3", "-c", script])
-        .arg(&root)
+        .arg(private.path().join("rpc.sock"))
         .arg(alias.path())
-        .arg(private.path().strip_prefix(&root).unwrap().join("rpc.sock"))
         .arg(codex_linux_sandbox_exe())
         .arg(serde_json::to_string(&profile).unwrap())
         .kill_on_drop(true)
