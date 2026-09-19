@@ -16,6 +16,7 @@ use crate::config::RolloutBudgetConfig;
 use crate::context::SubagentNotification;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::rollout_budget::RolloutBudget;
+use crate::saffron::subagent_completion::AncestorTurnRetention;
 use crate::session::emit_subagent_session_started;
 use crate::session::multi_agents::ResolvedMultiAgentV2UsageHints;
 use crate::session_prefix::format_inter_agent_completion_message;
@@ -142,6 +143,7 @@ pub(crate) struct AgentControl {
     state: Arc<AgentRegistry>,
     v2_residency: Arc<V2Residency>,
     agent_execution_limiter: Arc<AgentExecutionLimiter>,
+    ancestor_turn_retention: Arc<AncestorTurnRetention>,
     /// Session-scoped state shared by the root thread and every cloned sub-agent control handle.
     rollout_budget: Arc<RolloutBudget>,
     /// The user-selected root routing tier, shared by the entire agent tree.
@@ -172,6 +174,7 @@ impl AgentControl {
             state: Arc::default(),
             v2_residency: Arc::default(),
             agent_execution_limiter: Arc::default(),
+            ancestor_turn_retention: Arc::default(),
             rollout_budget: Arc::default(),
             root_service_tier: Arc::new(ArcSwapOption::from(None)),
         };
@@ -252,6 +255,29 @@ impl AgentControl {
         .await
     }
 
+    /// Delivers triggering terminal mail and waits until the recipient can act on it.
+    ///
+    /// This path intentionally skips the ordinary preflight capacity check. A
+    /// nested parent must be allowed to accept its child's terminal handoff
+    /// while that child still owns the final execution slot.
+    pub(crate) async fn send_terminal_inter_agent_communication(
+        &self,
+        agent_id: ThreadId,
+        communication: InterAgentCommunication,
+        agent_communication_context: AgentCommunicationContext,
+        start_options: TurnStartOptions,
+    ) -> CodexResult<String> {
+        let state = self.upgrade()?;
+        self.send_inter_agent_communication_after_capacity_check(
+            agent_id,
+            &state,
+            communication,
+            agent_communication_context,
+            start_options,
+        )
+        .await
+    }
+
     pub(crate) async fn emit_sub_agent_activity(
         &self,
         thread_id: ThreadId,
@@ -309,14 +335,43 @@ impl AgentControl {
         context: AgentCommunicationContext,
         start_options: TurnStartOptions,
     ) -> CodexResult<String> {
-        self.submit_inter_agent_communication(
-            agent_id,
-            state,
-            communication,
-            context,
-            start_options,
-        )
-        .await
+        let trigger_turn = communication.trigger_turn;
+        let (accepted_tx, accepted_rx) = trigger_turn.then(tokio::sync::oneshot::channel).unzip();
+        // Bridge the recipient's ancestry until its submission handler starts
+        // the turn and installs the task-owned retention guard.
+        let _recipient_turn_retention_guard = if trigger_turn {
+            let thread = state.get_thread(agent_id).await?;
+            let config = thread.session.get_config().await;
+            let multi_agent_version = thread
+                .multi_agent_version()
+                .unwrap_or_else(|| config.multi_agent_version_from_features());
+            self.ancestor_turn_retention_guard(
+                multi_agent_version,
+                &thread.session_source,
+                agent_id,
+            )
+        } else {
+            None
+        };
+        let submission_id = self
+            .submit_inter_agent_communication(
+                agent_id,
+                state,
+                communication,
+                context,
+                start_options,
+                accepted_tx,
+            )
+            .await?;
+        let Some(accepted_rx) = accepted_rx else {
+            return Ok(submission_id);
+        };
+        let result = accepted_rx
+            .await
+            .map(|()| submission_id)
+            .map_err(|_| CodexErr::InternalAgentDied);
+        self.handle_thread_request_result(agent_id, state, result)
+            .await
     }
 
     async fn submit_inter_agent_communication(
@@ -326,6 +381,7 @@ impl AgentControl {
         communication: InterAgentCommunication,
         context: AgentCommunicationContext,
         start_options: TurnStartOptions,
+        accepted: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> CodexResult<String> {
         let communication_for_log =
             crate::agent_communication::logging_enabled().then(|| communication.clone());
@@ -347,6 +403,7 @@ impl AgentControl {
                         Op::InterAgentCommunication {
                             communication,
                             start_options,
+                            accepted,
                         },
                         parent_turn_id,
                         root_turn_id,

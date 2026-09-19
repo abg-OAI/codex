@@ -2507,14 +2507,14 @@ impl Session {
             parent_agent_path,
             Vec::new(),
             message,
-            /*trigger_turn*/ false,
+            /*trigger_turn*/ true,
         );
         let context =
             AgentCommunicationContext::new(AgentCommunicationKind::Result, self.thread_id);
         if let Err(err) = self
             .services
             .agent_control
-            .send_inter_agent_communication(
+            .send_terminal_inter_agent_communication(
                 parent_thread_id,
                 communication,
                 context,
