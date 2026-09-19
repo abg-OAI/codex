@@ -63,7 +63,7 @@ index 7bc5c527de6b4f0a3d4ae96d69f3e1099b9262d2..6f07ac5d7302d4fded211557b12925e5
 
      pub(crate) async fn process_request(
 diff --git a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
-index ba11862efffbfe6704201f897b1f7bb93708c77f..0d2e7e4e2a53945506645ee9bcf7223867618a63 100644
+index b0fa49b4babcc5802a9968ea26bc230add7cba17..b2a9403f3ae3a12a43016df3731f8b068339d6db 100644
 --- a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
 @@ -371,6 +371,10 @@ pub(super) async fn ensure_listener_task_running(
@@ -123,7 +123,7 @@ index 0000000000000000000000000000000000000000..934f511d414d2f698f028b926fb1c147
 +    assert!(unloading_state.should_unload_now());
 +}
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 973f05a0bba19404bb99bbb21b00c9355a6b4081..8d036be12210444cf062ae4cd184f926d3155299 100644
+index b7affb2367ad0ea7f0ea785289dfe51d8c10ee63..811a9f1796f97e99902ab998f6583b1df6360f73 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
 @@ -280,6 +280,15 @@ fn has_model_resume_override(
@@ -142,7 +142,7 @@ index 973f05a0bba19404bb99bbb21b00c9355a6b4081..8d036be12210444cf062ae4cd184f926
  fn has_permission_override(
      request_overrides: Option<&HashMap<String, serde_json::Value>>,
      typesafe_overrides: &ConfigOverrides,
-@@ -6331,6 +6340,8 @@ fn build_thread_from_loaded_snapshot(
+@@ -6302,6 +6311,8 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -752,10 +752,10 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..ef9871fd70bb47119a3364e16e557d4c
 +        .collect()
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index c5240f2f4d39a99e1a7311ca3e9e84f8fcfc79bf..6e5e15b326e2ee0f12f80bad21271b45fec0633b 100644
+index eb7f97ca2c5ce8f4b70dfc2c990e11e37eebdf07..ea8d6439e1689de6046c86a84698fa79a991a159 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -313,6 +313,21 @@ impl CodexThread {
+@@ -316,6 +316,21 @@ impl CodexThread {
          crate::saffron::goal_supervisor::stop(&self.session).await;
      }
 
@@ -778,10 +778,10 @@ index c5240f2f4d39a99e1a7311ca3e9e84f8fcfc79bf..6e5e15b326e2ee0f12f80bad21271b45
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 53b6d56415399c7ca2485e41a772fc21afef71dc..91313bdeeb2355b913e215c9439289f052c6166f 100644
+index 4d247c1e4f8ffbd91ee0d0c60bda64b0c385e5a8..db482ec7f675ff339b6bccf2a76638de3b0ad8e8 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -133,6 +133,9 @@ pub use codex_prompts as review_prompts;
+@@ -157,6 +157,9 @@ pub use codex_prompts as review_prompts;
  mod thread_manager;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
@@ -1519,7 +1519,7 @@ index d7d83cd74b3a0e42e0e2f79129e592a2395bb2f2..2d9bdedde296473dd55dd58a7e3b05e2
  pub(crate) use runtime::stop;
  pub(crate) use tools::register;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 296464c930270b348fc026c4e6a83532055b3666..f45c713f477dccabca2495983a218a3fe2af8474 100644
+index ad2bc68b156584ddb7dec0ecaadab642ab631d11..c6981bb444c91204a1908c98d738db9d4e7336e5 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -44,6 +44,15 @@ pub(super) struct Runtime {

@@ -99,13 +99,13 @@ index ac7bdca0b9545a315041032e289bd87e053e5985..d7d83cd74b3a0e42e0e2f79129e592a2
  mod actions;
  pub(crate) mod guidance;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 9f04f055bd9cc9f7c78db40083873a5d10258e40..296464c930270b348fc026c4e6a83532055b3666 100644
+index 96eb8a7658c4c767fa8e04618e39e478f84ffc47..ad2bc68b156584ddb7dec0ecaadab642ab631d11 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -29,6 +29,8 @@ use super::HELPER_ROLE_NAME;
- use crate::agent::control::SpawnAgentForkMode;
- use crate::agent::control::SpawnAgentOptions;
  use crate::agent::next_thread_spawn_depth;
+ use crate::agent::types::SpawnAgentForkMode;
+ use crate::agent::types::SpawnAgentOptions;
 +use crate::saffron::storage::GoalWake;
 +use crate::saffron::storage::SaffronStore;
  use crate::session::session::Session;
