@@ -6,7 +6,10 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use chrono::DateTime;
+use chrono::Utc;
 use codex_extension_api::ThreadIdleCause;
+use codex_features::Feature;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AgentStatus;
@@ -345,6 +348,10 @@ async fn spawn_helper(
 ) -> Result<ThreadId, String> {
     let mut config = parent.effective_session_config().await;
     config.ephemeral = true;
+    // The check-in prompt supplies server time. Inheriting a client-backed
+    // reminder would make a cold wake depend on the unloaded root's subscriber.
+    let _ = config.features.disable(Feature::CurrentTimeReminder);
+    config.current_time_reminder = None;
     config.developer_instructions = Some(match config.developer_instructions.take() {
         Some(existing) => format!("{existing}\n\n{}", include_str!("prompt.md")),
         None => include_str!("prompt.md").to_string(),
@@ -359,7 +366,9 @@ async fn spawn_helper(
         agent_role: Some(HELPER_ROLE_NAME.to_string()),
     });
     let continuity = continuity(parent, goal).await;
-    let prompt = render_checkin_prompt(parent.thread_id, &goal.objective, &continuity);
+    let checkin_time = Utc::now();
+    let prompt =
+        render_checkin_prompt(parent.thread_id, checkin_time, &goal.objective, &continuity);
     let helper = Box::pin(
         parent
             .services
@@ -390,9 +399,21 @@ async fn spawn_helper(
 }
 
 /// Renders one bounded model-visible assignment for the ephemeral helper.
-fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str) -> String {
+///
+/// The time comes from the app server rather than the parent session's clock.
+/// A scheduled check-in can cold-load an unsubscribed thread, so consulting an
+/// external client clock here would make the wake depend on that absent client.
+/// The value stays in the prefix that middle truncation preserves so inherited
+/// history cannot become the helper's only evidence of the current time.
+fn render_checkin_prompt(
+    parent_id: ThreadId,
+    checkin_time: DateTime<Utc>,
+    objective: &str,
+    continuity: &str,
+) -> String {
+    let checkin_time = checkin_time.format("%Y-%m-%d %H:%M:%S UTC");
     let prompt = format!(
-        "# Supervisor Check-in\n\nParent thread: {parent_id}\n\nActive goal:\n{objective}\n\nContinuity:\n{continuity}"
+        "# Supervisor Check-in\n\nCurrent UTC time: {checkin_time}\n\nParent thread: {parent_id}\n\nActive goal:\n{objective}\n\nContinuity:\n{continuity}"
     );
     truncate_text(&prompt, TruncationPolicy::Tokens(MAX_CHECKIN_PROMPT_TOKENS))
 }
