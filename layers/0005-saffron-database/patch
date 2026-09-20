@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index d2a9c2babd193cec2a5a303356396f45696c65da..fb3014d71d92e9230be3e33aa96dea65024aacc2 100644
+index b8b31805b857607c1a200571892856f2320f84e7..2c402db28bbae055beb7de427000e2c8e2a520fb 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -3083,6 +3083,7 @@ dependencies = [
