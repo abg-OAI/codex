@@ -648,6 +648,22 @@ impl Session {
         self.services.agent_control.session_id()
     }
 
+    pub(crate) async fn should_retain_while_idle(&self) -> bool {
+        crate::saffron::goal_supervisor::should_retain_while_idle(self).await
+            || self
+                .services
+                .agent_control
+                .is_retained_for_descendant_completion(self.thread_id)
+    }
+
+    /// Rechecks unload eligibility from the ordered session submission queue.
+    pub(super) async fn is_idle_for_shutdown(&self) -> bool {
+        !matches!(*self.agent_status.borrow(), AgentStatus::Running)
+            && self.active_turn.lock().await.is_none()
+            && !self.input_queue.has_pending_mailbox_items().await
+            && !self.should_retain_while_idle().await
+    }
+
     pub(crate) async fn originator(&self) -> String {
         let state = self.state.lock().await;
         state.session_configuration.originator.clone()
