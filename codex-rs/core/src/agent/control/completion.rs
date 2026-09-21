@@ -1,6 +1,6 @@
 //! Delivers terminal child results and completion activity to the agent tree.
 //!
-//! Sessions capture terminal state; the controller owns routing and queue-only delivery.
+//! Sessions capture terminal state; the controller owns routing and triggering delivery.
 //! Delivery remains best effort, with tracing recorded only after the parent accepts it.
 
 use super::LocalAgentControl;
@@ -100,12 +100,12 @@ impl LocalAgentControl {
             parent_agent_path,
             Vec::new(),
             message,
-            /*trigger_turn*/ false,
+            /*trigger_turn*/ true,
         );
         let context =
             AgentCommunicationContext::new(AgentCommunicationKind::Result, outcome.thread_id);
         if let Err(err) = self
-            .send_inter_agent_communication(
+            .send_terminal_inter_agent_communication(
                 parent_thread_id,
                 communication,
                 context,

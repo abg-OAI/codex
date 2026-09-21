@@ -21,6 +21,12 @@ use crate::context::MultiAgentRoleInstructions;
 use crate::context::SubagentNotification;
 use crate::init_state_db;
 use crate::session::SessionSettingsUpdate;
+use crate::session::TurnInput;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
+use crate::state::TaskKind;
+use crate::tasks::SessionTask;
+use crate::tasks::SessionTaskResult;
 use crate::thread_manager::StartThreadOptions;
 use crate::tools::handlers::multi_agents_common::thread_spawn_source;
 use assert_matches::assert_matches;
@@ -86,6 +92,7 @@ use core_test_support::responses::strip_response_item_ids;
 use pretty_assertions::assert_eq;
 use std::sync::RwLock;
 use tempfile::TempDir;
+use tokio::sync::Notify;
 use tokio::time::Duration;
 use tokio::time::sleep;
 use tokio::time::timeout;
@@ -200,6 +207,38 @@ struct AgentControlHarness {
     state_db: Option<StateDbHandle>,
     manager: ThreadManager,
     control: LocalAgentControl,
+}
+
+struct CompletingTask {
+    finish: Arc<Notify>,
+}
+
+#[derive(Clone, Copy)]
+enum ActiveRecipientEnd {
+    Complete,
+    Interrupt,
+    Shutdown,
+}
+
+impl SessionTask for CompletingTask {
+    fn kind(&self) -> TaskKind {
+        TaskKind::Regular
+    }
+
+    fn span_name(&self) -> &'static str {
+        "session_task.completing"
+    }
+
+    async fn run(
+        self: Arc<Self>,
+        _session: Arc<Session>,
+        _turn_context: Arc<TurnContext>,
+        _input: Vec<TurnInput>,
+        _cancellation_token: CancellationToken,
+    ) -> SessionTaskResult {
+        self.finish.notified().await;
+        Ok(Some("done".to_string()))
+    }
 }
 
 impl AgentControlHarness {
@@ -715,6 +754,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
         Op::InterAgentCommunication {
             communication: communication.clone(),
             start_options: Default::default(),
+            accepted: None,
         },
     );
     let captured = harness
@@ -745,6 +785,303 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
         history.raw_items(),
         &communication
     ));
+}
+
+#[tokio::test]
+// Holding this lock stalls recipient acceptance so the test can inspect the
+// retention bridge between the queued message and the recipient task.
+#[allow(clippy::await_holding_invalid_type)]
+async fn triggering_inter_agent_communication_bridges_recipient_turn_retention() {
+    let harness = AgentControlHarness::new().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let root = harness
+        .manager
+        .start_thread(StartThreadOptions::new(config.clone()))
+        .await
+        .expect("root thread should start");
+    let root_thread_id = root.thread_id;
+    let root_thread = root.thread;
+    let control = root_thread.session.services.agent_control.clone();
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: None,
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+    let captured_op_count = harness.manager.captured_ops().len();
+    let worker_active_turn = worker_thread.session.active_turn.lock().await;
+    assert!(worker_active_turn.is_none());
+
+    let state = control.upgrade().expect("thread manager should be live");
+    let send_control = control.clone();
+    let send_task = tokio::spawn(async move {
+        send_control
+            .send_inter_agent_communication_after_capacity_check(
+                worker_thread_id,
+                &state,
+                InterAgentCommunication::new(
+                    AgentPath::root(),
+                    worker_path,
+                    Vec::new(),
+                    "start follow-up".to_string(),
+                    /*trigger_turn*/ true,
+                ),
+                AgentCommunicationContext::new(AgentCommunicationKind::Followup, root_thread_id),
+                TurnStartOptions::default(),
+            )
+            .await
+    });
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if harness
+                .manager
+                .captured_ops()
+                .into_iter()
+                .skip(captured_op_count)
+                .any(|(thread_id, op)| {
+                    thread_id == worker_thread_id
+                        && matches!(op, Op::InterAgentCommunication { .. })
+                })
+            {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("triggering message should reach the recipient queue");
+
+    assert!(
+        !send_task.is_finished(),
+        "triggering delivery must wait for recipient acceptance"
+    );
+    assert!(
+        control.is_retained_for_descendant_completion(root_thread_id),
+        "delivery guard must retain the root registry entry"
+    );
+    assert!(
+        root_thread.should_retain_while_idle().await,
+        "queued triggering mail must retain the recipient's ancestors"
+    );
+
+    drop(worker_active_turn);
+    timeout(Duration::from_secs(5), send_task)
+        .await
+        .expect("triggering delivery should finish after recipient acceptance")
+        .expect("send task should not panic")
+        .expect("triggering delivery should succeed");
+
+    worker_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+    root_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+}
+
+#[tokio::test]
+async fn queued_trigger_retains_nested_ancestors_across_recipient_completion() {
+    check_queued_trigger_retains_nested_ancestors(ActiveRecipientEnd::Complete).await;
+}
+
+#[tokio::test]
+async fn queued_trigger_retains_nested_ancestors_across_recipient_interruption() {
+    check_queued_trigger_retains_nested_ancestors(ActiveRecipientEnd::Interrupt).await;
+}
+
+#[tokio::test]
+async fn shutdown_discards_queued_trigger_without_starting_successor() {
+    check_queued_trigger_retains_nested_ancestors(ActiveRecipientEnd::Shutdown).await;
+}
+
+async fn check_queued_trigger_retains_nested_ancestors(end: ActiveRecipientEnd) {
+    let harness = AgentControlHarness::new().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let root = harness
+        .manager
+        .start_thread(StartThreadOptions::new(config.clone()))
+        .await
+        .expect("root thread should start");
+    let root_thread_id = root.thread_id;
+    let root_thread = root.thread;
+    root_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+    let control = root_thread.session.services.agent_control.clone();
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: None,
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+
+    let finish = Arc::new(Notify::new());
+    let worker_turn = worker_thread.session.new_default_turn().await;
+    worker_thread
+        .session
+        .spawn_task(
+            Arc::clone(&worker_turn),
+            Vec::new(),
+            CompletingTask {
+                finish: Arc::clone(&finish),
+            },
+        )
+        .await;
+    let tester_path = worker_path.join("tester").expect("tester path");
+    control
+        .send_terminal_inter_agent_communication(
+            worker_thread_id,
+            InterAgentCommunication::new(
+                tester_path,
+                worker_path,
+                Vec::new(),
+                "tester finished".to_string(),
+                /*trigger_turn*/ true,
+            ),
+            AgentCommunicationContext::new(AgentCommunicationKind::Result, ThreadId::new()),
+            TurnStartOptions::default(),
+        )
+        .await
+        .expect("triggering mail should be accepted while the worker is active");
+
+    // Simulate the exact ownership boundary under review: the current task
+    // releases its lease before queued mail starts the successor turn.
+    let active_turn_guard = {
+        let mut active_turn = worker_thread.session.active_turn.lock().await;
+        active_turn
+            .as_mut()
+            .and_then(|turn| turn.task.as_mut())
+            .and_then(|task| task.ancestor_turn_retention_guard.take())
+            .expect("active nested recipient should own ancestor retention")
+    };
+    drop(active_turn_guard);
+
+    assert!(
+        control.is_retained_for_descendant_completion(root_thread_id),
+        "queued triggering mail must retain the nested recipient's ancestors"
+    );
+    assert!(
+        !root_thread
+            .request_shutdown_if_idle()
+            .await
+            .expect("conditional shutdown request should be handled"),
+        "queued triggering mail must reject ancestor unload"
+    );
+
+    match end {
+        ActiveRecipientEnd::Complete => finish.notify_one(),
+        ActiveRecipientEnd::Interrupt => {
+            worker_thread
+                .session
+                .abort_all_tasks(TurnAbortReason::Interrupted)
+                .await;
+        }
+        ActiveRecipientEnd::Shutdown => {
+            for _ in 0..worker_thread.queued_event_count() {
+                worker_thread
+                    .next_event()
+                    .await
+                    .expect("preexisting worker event should be readable");
+            }
+            worker_thread
+                .submit(Op::Shutdown {})
+                .await
+                .expect("shutdown should be accepted");
+            timeout(Duration::from_secs(5), async {
+                loop {
+                    let event = worker_thread
+                        .next_event()
+                        .await
+                        .expect("worker event stream should reach shutdown");
+                    assert!(
+                        !matches!(event.msg, EventMsg::TurnStarted(_)),
+                        "shutdown must not start a successor turn"
+                    );
+                    if matches!(event.msg, EventMsg::ShutdownComplete) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("worker should complete shutdown");
+            assert!(worker_thread.session.active_turn.lock().await.is_none());
+            assert!(
+                !worker_thread
+                    .session
+                    .input_queue
+                    .has_pending_mailbox_items()
+                    .await
+            );
+            assert!(
+                !control.is_retained_for_descendant_completion(root_thread_id),
+                "shutdown must release queued mailbox retention"
+            );
+            return;
+        }
+    }
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let successor_is_running = worker_thread
+                .session
+                .active_turn
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|turn| turn.task.is_some());
+            if successor_is_running {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("queued triggering mail should start a successor turn");
+
+    worker_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
 }
 
 #[tokio::test]
@@ -1020,6 +1357,7 @@ async fn check_v2_agent_reload(route: V2ReloadRoute) {
         Op::InterAgentCommunication {
             communication,
             start_options: Default::default(),
+            accepted: None,
         },
     );
     let captured = harness
@@ -3806,6 +4144,349 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
 }
 
 #[tokio::test]
+async fn multi_agent_v2_completion_starts_idle_parent_turn() {
+    let harness = AgentControlHarness::new().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let root = harness
+        .manager
+        .start_thread(StartThreadOptions::new(config.clone()))
+        .await
+        .expect("root thread should start");
+    let root_thread_id = root.thread_id;
+    let root_thread = root.thread;
+    let worker_path = AgentPath::root().join("worker_a").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+
+    let worker_turn = worker_thread.session.new_default_turn().await;
+    worker_thread
+        .session
+        .send_event(
+            worker_turn.as_ref(),
+            EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: worker_turn.sub_id.clone(),
+                started_at: None,
+                last_agent_message: Some("done".to_string()),
+                error: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )
+        .await;
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let event = root_thread
+                .next_event()
+                .await
+                .expect("root event stream should stay open");
+            if matches!(event.msg, EventMsg::TurnStarted(_)) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("terminal child mail should start an idle parent turn");
+
+    assert!(
+        harness
+            .manager
+            .captured_ops()
+            .into_iter()
+            .any(|(thread_id, op)| {
+                thread_id == root_thread_id
+                    && matches!(
+                        op,
+                        Op::InterAgentCommunication { communication, .. }
+                            if communication.author == worker_path
+                                && communication.recipient == AgentPath::root()
+                                && communication.trigger_turn
+                    )
+            })
+    );
+}
+
+#[tokio::test]
+// Holding this lock stalls terminal mailbox acceptance so the test can inspect
+// the child task's retention lease during the handoff.
+#[allow(clippy::await_holding_invalid_type)]
+async fn normal_completion_retains_parent_until_terminal_mail_is_accepted() {
+    let (home, mut config) = test_config_with_cli_overrides(vec![(
+        "agents.max_concurrent_threads_per_session".to_string(),
+        TomlValue::Integer(1),
+    )])
+    .await;
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let harness = AgentControlHarness::new_with_config(home, config.clone()).await;
+    let root = harness
+        .manager
+        .start_thread(StartThreadOptions::new(config.clone()))
+        .await
+        .expect("root thread should start");
+    let root_thread_id = root.thread_id;
+    let root_thread = root.thread;
+    let control = root_thread.session.services.agent_control.clone();
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: None,
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+    root_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+    let captured_op_count = harness.manager.captured_ops().len();
+
+    let root_active_turn = root_thread.session.active_turn.lock().await;
+    assert!(root_active_turn.is_none());
+    let worker_turn = worker_thread.session.new_default_turn().await;
+    let finish = Arc::new(Notify::new());
+    worker_thread
+        .session
+        .spawn_task(
+            Arc::clone(&worker_turn),
+            Vec::new(),
+            CompletingTask {
+                finish: Arc::clone(&finish),
+            },
+        )
+        .await;
+    assert!(
+        control.is_retained_for_descendant_completion(root_thread_id),
+        "running child should retain its parent"
+    );
+    finish.notify_one();
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if harness
+                .manager
+                .captured_ops()
+                .into_iter()
+                .skip(captured_op_count)
+                .any(|(thread_id, op)| {
+                    thread_id == root_thread_id
+                        && matches!(
+                            op,
+                            Op::InterAgentCommunication { communication, .. }
+                                if communication.author == worker_path
+                                    && communication.recipient == AgentPath::root()
+                                    && communication.trigger_turn
+                        )
+                })
+            {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("worker completion should reach the parent mailbox");
+
+    assert!(
+        control.is_retained_for_descendant_completion(root_thread_id),
+        "parent retention must outlive terminal mailbox acceptance"
+    );
+    assert_matches!(
+        control.ensure_execution_capacity(MultiAgentVersion::V2, &SessionSource::SubAgent(
+            SubAgentSource::Other("waiting-child".to_string()),
+        )),
+        Err(err) if matches!(
+            err.details(),
+            CodexErrorDetails::AgentLimitReached { max_threads: 1 }
+        )
+    );
+
+    drop(root_active_turn);
+    timeout(Duration::from_secs(5), async {
+        while control.is_retained_for_descendant_completion(root_thread_id) {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("parent retention should end after mailbox acceptance");
+    control
+        .ensure_execution_capacity(
+            MultiAgentVersion::V2,
+            &SessionSource::SubAgent(SubAgentSource::Other("next-child".to_string())),
+        )
+        .expect("child execution capacity should release after terminal acceptance");
+
+    assert!(
+        !root_thread
+            .request_shutdown_if_idle()
+            .await
+            .expect("conditional shutdown request should be handled"),
+        "terminal mail must make the parent ineligible for idle shutdown"
+    );
+    assert!(
+        root_thread.session.active_turn.lock().await.is_some(),
+        "terminal mail should leave the parent turn running"
+    );
+
+    root_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+}
+
+#[tokio::test]
+async fn idle_parent_reports_descendant_turn_retention() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let control = root_thread.session.services.agent_control.clone();
+    let worker_thread_id = ThreadId::new();
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    control.register_session_root(root_thread_id, None);
+    control
+        .state
+        .reserve_spawn_slot(/*max_threads*/ None)
+        .expect("reserve worker")
+        .commit(AgentMetadata {
+            agent_id: Some(worker_thread_id),
+            agent_path: Some(worker_path.clone()),
+            ..Default::default()
+        });
+    let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(worker_path),
+        agent_nickname: None,
+        agent_role: None,
+    });
+    let guard = control
+        .ancestor_turn_retention_guard(MultiAgentVersion::V2, &source, worker_thread_id)
+        .expect("worker turn should retain root");
+
+    assert!(root_thread.should_retain_while_idle().await);
+
+    drop(guard);
+    assert!(!root_thread.should_retain_while_idle().await);
+}
+
+#[tokio::test]
+async fn terminal_child_mail_hands_capacity_to_idle_parent() {
+    let max_threads = 1usize;
+    let (home, mut config) = test_config_with_cli_overrides(vec![(
+        "agents.max_concurrent_threads_per_session".to_string(),
+        TomlValue::Integer(max_threads as i64),
+    )])
+    .await;
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let harness = AgentControlHarness::new_with_config(home, config.clone()).await;
+    let root = harness
+        .manager
+        .start_thread(StartThreadOptions::new(config.clone()))
+        .await
+        .expect("root thread should start");
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root.thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: None,
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+    let tester_path = worker_path.join("tester").expect("tester path");
+    let tester_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: worker_thread_id,
+        depth: 2,
+        agent_path: Some(tester_path.clone()),
+        agent_nickname: None,
+        agent_role: None,
+    });
+    let tester_thread_id = ThreadId::new();
+    let capacity_guard = harness
+        .control
+        .execution_guard(MultiAgentVersion::V2, &tester_source, tester_thread_id)
+        .expect("tester should occupy the only child turn slot");
+    let communication = InterAgentCommunication::new(
+        tester_path,
+        worker_path,
+        Vec::new(),
+        "tester finished".to_string(),
+        /*trigger_turn*/ true,
+    );
+
+    harness
+        .control
+        .send_terminal_inter_agent_communication(
+            worker_thread_id,
+            communication,
+            AgentCommunicationContext::new(AgentCommunicationKind::Result, tester_thread_id),
+            TurnStartOptions::default(),
+        )
+        .await
+        .expect("terminal handoff should start the parent before releasing child capacity");
+
+    drop(capacity_guard);
+    worker_thread
+        .session
+        .abort_all_tasks(TurnAbortReason::Interrupted)
+        .await;
+}
+
+#[tokio::test]
 async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
     let harness = AgentControlHarness::new().await;
     let (_root_thread_id, root_thread) = harness.start_thread().await;
@@ -3871,6 +4552,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
                 /*trigger_turn*/ false,
             ),
             start_options: Default::default(),
+            accepted: None,
         },
     );
 
