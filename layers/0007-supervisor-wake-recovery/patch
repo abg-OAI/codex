@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 7bc5c527de6b4f0a3d4ae96d69f3e1099b9262d2..6f07ac5d7302d4fded211557b12925e599fa2f09 100644
+index 118106d710a9018237e10040826376915f192a3a..f423dc6655b3b12150d13fdf68267deac2305a4c 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -74,6 +74,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
@@ -19,7 +19,7 @@ index 7bc5c527de6b4f0a3d4ae96d69f3e1099b9262d2..6f07ac5d7302d4fded211557b12925e5
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -515,6 +518,24 @@ impl MessageProcessor {
+@@ -519,6 +522,24 @@ impl MessageProcessor {
              turn_cost_worker.as_ref().map(TurnCostWorker::handle),
              config_warnings,
          );
@@ -44,7 +44,7 @@ index 7bc5c527de6b4f0a3d4ae96d69f3e1099b9262d2..6f07ac5d7302d4fded211557b12925e5
          let turn_processor = TurnRequestProcessor::new(
              auth_manager,
              Arc::clone(&thread_manager),
-@@ -597,6 +618,7 @@ impl MessageProcessor {
+@@ -601,6 +622,7 @@ impl MessageProcessor {
              project_processor,
              remote_control_processor,
              search_processor,
@@ -52,7 +52,7 @@ index 7bc5c527de6b4f0a3d4ae96d69f3e1099b9262d2..6f07ac5d7302d4fded211557b12925e5
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -611,6 +633,9 @@ impl MessageProcessor {
+@@ -615,6 +637,9 @@ impl MessageProcessor {
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
          self.skills_watcher.shutdown();
@@ -123,7 +123,7 @@ index 0000000000000000000000000000000000000000..934f511d414d2f698f028b926fb1c147
 +    assert!(unloading_state.should_unload_now());
 +}
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index b7affb2367ad0ea7f0ea785289dfe51d8c10ee63..811a9f1796f97e99902ab998f6583b1df6360f73 100644
+index 57c10fe833cb800440e48c3cfaad1246d1d91a97..ff152318a5768a128874024f97b07f8815b4343f 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
 @@ -280,6 +280,15 @@ fn has_model_resume_override(
@@ -142,7 +142,7 @@ index b7affb2367ad0ea7f0ea785289dfe51d8c10ee63..811a9f1796f97e99902ab998f6583b1d
  fn has_permission_override(
      request_overrides: Option<&HashMap<String, serde_json::Value>>,
      typesafe_overrides: &ConfigOverrides,
-@@ -6302,6 +6311,8 @@ fn build_thread_from_loaded_snapshot(
+@@ -6309,6 +6318,8 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -778,10 +778,10 @@ index eb7f97ca2c5ce8f4b70dfc2c990e11e37eebdf07..ea8d6439e1689de6046c86a84698fa79
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 4d247c1e4f8ffbd91ee0d0c60bda64b0c385e5a8..db482ec7f675ff339b6bccf2a76638de3b0ad8e8 100644
+index dc2566fba06ca355617dae436ddc0b210a24d46f..24189a0c833dc0322a0f9c5577b75058f49161dd 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -157,6 +157,9 @@ pub use codex_prompts as review_prompts;
+@@ -159,6 +159,9 @@ pub use codex_prompts as review_prompts;
  mod thread_manager;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
@@ -1769,7 +1769,7 @@ index 5614b5b3d5a07ce746e7922a8721375997b0de92..73b3224cee04bc0a870d5872b4cc4eb3
  mod storage;
 
 diff --git a/codex-rs/core/src/saffron/storage.rs b/codex-rs/core/src/saffron/storage.rs
-index 3fb6d1be6045c6f729b4772085b6f3cc0f8fe921..b85b9965c4d003d71077ab0378bb5a550780ce58 100644
+index c2a9158cb52cab241e32a8d8647cc415a27f6dbd..43b46e3608af2d134cc7768612e8f2a328c1e105 100644
 --- a/codex-rs/core/src/saffron/storage.rs
 +++ b/codex-rs/core/src/saffron/storage.rs
 @@ -5,15 +5,23 @@
@@ -1786,7 +1786,7 @@ index 3fb6d1be6045c6f729b4772085b6f3cc0f8fe921..b85b9965c4d003d71077ab0378bb5a55
 +use tokio::sync::watch;
 
  const SAFFRON_DB_FILENAME: &str = "saffron_1.sqlite";
- static SAFFRON_MIGRATOR: Migrator = sqlx::migrate!("./src/saffron/migrations");
+ static SAFFRON_MIGRATOR: Migrator = sqlx_macros::migrate!("./src/saffron/migrations");
 
 +// A process-local change signal lets the scheduler observe a snooze recorded
 +// by a helper without polling until the next reconciliation pass. Durability
