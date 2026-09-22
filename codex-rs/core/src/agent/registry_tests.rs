@@ -72,6 +72,30 @@ fn non_thread_spawn_subagents_default_to_depth_zero() {
 }
 
 #[test]
+fn ancestor_thread_ids_follow_registered_agent_paths() {
+    let registry = Arc::new(AgentRegistry::default());
+    let root_thread_id = ThreadId::new();
+    let worker_thread_id = ThreadId::new();
+    let tester_thread_id = ThreadId::new();
+    registry.register_root_thread(root_thread_id);
+    registry.register_spawned_thread(AgentMetadata {
+        agent_id: Some(worker_thread_id),
+        agent_path: Some(agent_path("/root/worker")),
+        ..Default::default()
+    });
+    registry.register_spawned_thread(AgentMetadata {
+        agent_id: Some(tester_thread_id),
+        agent_path: Some(agent_path("/root/worker/tester")),
+        ..Default::default()
+    });
+
+    assert_eq!(
+        registry.ancestor_thread_ids(&agent_path("/root/worker/tester")),
+        vec![root_thread_id, worker_thread_id]
+    );
+}
+
+#[test]
 fn reservation_drop_releases_slot() {
     let registry = Arc::new(AgentRegistry::default());
     let reservation = registry.reserve_spawn_slot(Some(1)).expect("reserve slot");

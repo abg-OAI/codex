@@ -4,6 +4,7 @@
 use super::LocalAgentControl;
 use crate::agent::types::AgentExecutionGuard;
 use crate::codex_thread::CodexThread;
+use crate::saffron::subagent_completion::AncestorTurnRetentionGuard;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::error::Result as CodexResult;
@@ -74,6 +75,29 @@ impl LocalAgentControl {
         (is_execution_limited(multi_agent_version, session_source)
             && !self.state.is_hidden_thread(thread_id))
         .then(|| Arc::clone(&self.agent_execution_limiter).guard())
+    }
+
+    /// Retains the ancestor chain required for a spawned V2 turn's terminal handoff.
+    pub(crate) fn ancestor_turn_retention_guard(
+        &self,
+        multi_agent_version: MultiAgentVersion,
+        session_source: &SessionSource,
+        thread_id: codex_protocol::ThreadId,
+    ) -> Option<AncestorTurnRetentionGuard> {
+        if multi_agent_version != MultiAgentVersion::V2 || self.state.is_hidden_thread(thread_id) {
+            return None;
+        }
+        let agent_path = session_source.get_agent_path()?;
+        self.ancestor_turn_retention
+            .retain(self.state.ancestor_thread_ids(&agent_path))
+    }
+
+    /// Reports whether a descendant lifecycle still needs `thread_id` for handoff.
+    pub(crate) fn is_retained_for_descendant_completion(
+        &self,
+        thread_id: codex_protocol::ThreadId,
+    ) -> bool {
+        self.ancestor_turn_retention.is_retained(thread_id)
     }
 }
 
