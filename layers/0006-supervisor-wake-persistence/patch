@@ -299,7 +299,7 @@ index 0000000000000000000000000000000000000000..1ac7ab1c194ea21c1f30be157df7c78e
 +    wake_at_ms INTEGER NOT NULL
 +);
 diff --git a/codex-rs/core/src/saffron/storage.rs b/codex-rs/core/src/saffron/storage.rs
-index 51b562402dc279a9991a55a109e7eb741a8d7ccb..3fb6d1be6045c6f729b4772085b6f3cc0f8fe921 100644
+index 61f71aee12d72bb80b48fc0b1f03aaf8accedec9..c2a9158cb52cab241e32a8d8647cc415a27f6dbd 100644
 --- a/codex-rs/core/src/saffron/storage.rs
 +++ b/codex-rs/core/src/saffron/storage.rs
 @@ -5,13 +5,30 @@
@@ -313,7 +313,7 @@ index 51b562402dc279a9991a55a109e7eb741a8d7ccb..3fb6d1be6045c6f729b4772085b6f3cc
  use sqlx::migrate::Migrator;
 
  const SAFFRON_DB_FILENAME: &str = "saffron_1.sqlite";
- static SAFFRON_MIGRATOR: Migrator = sqlx::migrate!("./src/saffron/migrations");
+ static SAFFRON_MIGRATOR: Migrator = sqlx_macros::migrate!("./src/saffron/migrations");
 
 +/// Exact durable identity of one deferred supervisor check-in.
 +///

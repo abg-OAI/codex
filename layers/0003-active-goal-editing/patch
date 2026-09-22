@@ -780,12 +780,12 @@ index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c06
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 21d069f49d48cacdf3c2d212c3ce9abbb9927685..a13e220787d6bfa69e78baa4d4b6948e91430790 100644
+index 595eaac7f67d5b8fd70310f11451e5b44e15bd30..d77944cc1467f7c19d9318d31bedd17bba5e9d88 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
-@@ -147,14 +147,7 @@ pub(crate) fn build_tool_router(
+@@ -149,14 +149,7 @@ pub(crate) fn build_tool_router(
      };
-     let mut registry = ToolRegistry::with_allowed_tools(session.allowed_tools.clone());
+     let mut registry = ToolRegistry::with_tool_policy(Arc::clone(&session.tool_policy));
      add_core_tool_sources(&context, &mut registry);
 -    if saffron::goal_supervisor::is_helper_source(&turn_context.session_source)
 -        && session

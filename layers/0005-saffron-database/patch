@@ -1,8 +1,8 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index b8b31805b857607c1a200571892856f2320f84e7..2c402db28bbae055beb7de427000e2c8e2a520fb 100644
+index aabaad812cd63347163fb4d0c1dda0e335420536..2b9b04c3455181821848b62afeb7c57cf8474898 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -3083,6 +3083,7 @@ dependencies = [
+@@ -2959,6 +2959,7 @@ dependencies = [
   "sha1 0.10.6",
   "shlex",
   "similar",
@@ -11,14 +11,15 @@ index b8b31805b857607c1a200571892856f2320f84e7..2c402db28bbae055beb7de427000e2c8
   "test-case",
   "test-log",
 diff --git a/codex-rs/core/Cargo.toml b/codex-rs/core/Cargo.toml
-index 24c6640cc1d43da00a8a0a3d0525d210f90c17ac..403b83a2e645625813086afe102712eff2633f8c 100644
+index 693fbd7b78d2b62889528b8eef560d2e708554ee..45804e4d0b15345da90adb566aa54b544020b4f2 100644
 --- a/codex-rs/core/Cargo.toml
 +++ b/codex-rs/core/Cargo.toml
-@@ -107,6 +107,7 @@ serde_json = { workspace = true }
+@@ -108,6 +108,8 @@ serde_json = { workspace = true }
  sha1 = { workspace = true }
  shlex = { workspace = true }
  similar = { workspace = true }
 +sqlx = { workspace = true }
++sqlx-macros = { workspace = true }
  tempfile = { workspace = true }
  thiserror = { workspace = true }
  tokio = { workspace = true, features = [
@@ -43,7 +44,7 @@ index f7ddec47e8a3189f0b530bff337f6c066d0a9de1..5614b5b3d5a07ce746e7922a87213759
  use crate::session::turn_context::TurnContext;
 diff --git a/codex-rs/core/src/saffron/storage.rs b/codex-rs/core/src/saffron/storage.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..51b562402dc279a9991a55a109e7eb741a8d7ccb
+index 0000000000000000000000000000000000000000..61f71aee12d72bb80b48fc0b1f03aaf8accedec9
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/storage.rs
 @@ -0,0 +1,37 @@
@@ -59,7 +60,7 @@ index 0000000000000000000000000000000000000000..51b562402dc279a9991a55a109e7eb74
 +use sqlx::migrate::Migrator;
 +
 +const SAFFRON_DB_FILENAME: &str = "saffron_1.sqlite";
-+static SAFFRON_MIGRATOR: Migrator = sqlx::migrate!("./src/saffron/migrations");
++static SAFFRON_MIGRATOR: Migrator = sqlx_macros::migrate!("./src/saffron/migrations");
 +
 +/// Connection owner for Saffron's independent auxiliary database.
 +#[derive(Clone)]

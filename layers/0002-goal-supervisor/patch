@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 25c39996142e123fe9af687a03348c94ed7bf55d..24456212fffd181ac2fd306ff42d498d81adfd1f 100644
+index c2d6d6d0a2358e353adb977fd7d03b495bc439c6..defd306f86f0e55c469e3a01eccaa5cd2ef49867 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
-@@ -85,6 +85,7 @@ pub(crate) fn thread_extensions(
+@@ -86,6 +86,7 @@ pub(crate) fn thread_extensions(
                  max_goal_token_budget: config.max_goal_token_budget,
              },
          );
@@ -11,10 +11,10 @@ index 25c39996142e123fe9af687a03348c94ed7bf55d..24456212fffd181ac2fd306ff42d498d
      codex_git_attribution::install(
          &mut builder,
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index 91c6ddab0061d0063c7769af9fe06ab54e319be8..7dae8dafcebce49dd1a9fd4ddbef148b18c5ce6c 100644
+index 55e735aa0b80e1f5b664a9d5d1ecbcdd8d57d8e3..dff248675af27fff9bf21bda432b2d84dda2c955 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
-@@ -109,6 +109,9 @@ mod review;
+@@ -111,6 +111,9 @@ mod review;
  mod rollout_compress;
  mod rollout_migration;
  mod safety_check_downgrade;
@@ -381,7 +381,7 @@ index 0000000000000000000000000000000000000000..0fd0923f472e9e0f024b801939eb2395
 +    Ok(())
 +}
 diff --git a/codex-rs/core/src/agent/control.rs b/codex-rs/core/src/agent/control.rs
-index cf995a0f8d4561891a61f6689190b2303a8dca35..086c5098fae4f74f543ab2e4a5497936a3b2cb0a 100644
+index e44fc8b6ff29e121dd07ea07e7defa5ad5f656ce..222cebf37c2b8f46b00ebbc4996568dfe66d5280 100644
 --- a/codex-rs/core/src/agent/control.rs
 +++ b/codex-rs/core/src/agent/control.rs
 @@ -6,6 +6,7 @@ use crate::agent::registry::AgentRegistry;
@@ -392,8 +392,8 @@ index cf995a0f8d4561891a61f6689190b2303a8dca35..086c5098fae4f74f543ab2e4a5497936
  use crate::agent::types::AgentMetadata;
  use crate::agent::types::LiveAgent;
  use crate::agent_communication::AgentCommunicationContext;
-@@ -439,6 +440,19 @@ impl LocalAgentControl {
-         Some(thread.config_snapshot().await)
+@@ -435,6 +436,19 @@ impl LocalAgentControl {
+         }
      }
 
 +    /// Returns a live thread for internal coordinators that already hold its ID.
@@ -409,10 +409,10 @@ index cf995a0f8d4561891a61f6689190b2303a8dca35..086c5098fae4f74f543ab2e4a5497936
 +        self.state.is_hidden_thread(thread_id)
 +    }
 +
-     pub(crate) async fn resolve_agent_reference(
+     /// Subscribe to status updates for `agent_id`, yielding the latest value and changes.
+     pub(crate) async fn subscribe_status(
          &self,
-         _current_thread_id: ThreadId,
-@@ -730,6 +744,7 @@ impl LocalAgentControl {
+@@ -705,6 +719,7 @@ impl LocalAgentControl {
              agent_path,
              agent_nickname,
              agent_role,
@@ -420,7 +420,7 @@ index cf995a0f8d4561891a61f6689190b2303a8dca35..086c5098fae4f74f543ab2e4a5497936
          })
      }
 
-@@ -742,18 +757,32 @@ impl LocalAgentControl {
+@@ -717,18 +732,32 @@ impl LocalAgentControl {
          depth: i32,
          agent_path: Option<AgentPath>,
          agent_role: Option<String>,
@@ -573,7 +573,7 @@ index 219844da100356da239610ce18af125b6c3b031d..41c731425346d7584ee1df38d19447ce
 +    );
 +}
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index dc800ab92987074c8e587ea6e6deda8abbb17f31..db0ae10128746bf49f7f789fa651adcd87a5d04d 100644
+index cfd5020634bb15449f56ff2d1dbabe9a4a88ab16..aa9b8594b947d27fd90cd5032799a9e6b2ad4e87 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -262,6 +262,7 @@ impl LocalAgentControl {
@@ -719,7 +719,7 @@ index dc800ab92987074c8e587ea6e6deda8abbb17f31..db0ae10128746bf49f7f789fa651adcd
              let child_reference = agent_metadata
                  .agent_path
                  .as_ref()
-@@ -982,7 +1016,9 @@ impl LocalAgentControl {
+@@ -984,7 +1018,9 @@ impl LocalAgentControl {
                  metadata.user_input_order = None;
              }
              let response_item = &mut envelope.item;
@@ -730,7 +730,7 @@ index dc800ab92987074c8e587ea6e6deda8abbb17f31..db0ae10128746bf49f7f789fa651adcd
                  return false;
              }
              if !retain_forked_developer_message(
-@@ -1040,7 +1076,8 @@ impl LocalAgentControl {
+@@ -1042,7 +1078,8 @@ impl LocalAgentControl {
              true
          };
          forked_rollout_items.retain_mut(|item| {
@@ -740,7 +740,7 @@ index dc800ab92987074c8e587ea6e6deda8abbb17f31..db0ae10128746bf49f7f789fa651adcd
                  || destination_history_mode == Some(ThreadHistoryMode::Paginated)
                      && matches!(
                          &*item,
-@@ -1290,6 +1327,7 @@ impl LocalAgentControl {
+@@ -1292,6 +1329,7 @@ impl LocalAgentControl {
                  depth,
                  agent_path.or(resumed_agent_path),
                  resumed_agent_role,
@@ -749,10 +749,10 @@ index dc800ab92987074c8e587ea6e6deda8abbb17f31..db0ae10128746bf49f7f789fa651adcd
              )?,
              other => (other, AgentMetadata::default()),
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 3e4da44eb60eb1eae72192a4443cfc8e41277c4a..a83848a1e5a6afe0216ccbd241542884f910c9f1 100644
+index 387efab65e0fb12266ea531f29031a90b12168a1..dc94963442befa43bee6d437be84546a68b385f4 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -92,6 +92,12 @@ use tokio::time::timeout;
+@@ -101,6 +101,12 @@ use tokio::time::timeout;
  use tokio_util::sync::CancellationToken;
  use toml::Value as TomlValue;
 
@@ -991,10 +991,10 @@ index 88ced2da012a1c71bf0aa7316a8554c3823fff37..60278875807a1d6a23838136a2f545ea
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index f54a5b0245b88aa6998ceb8e823b4f3a3fb5d519..4d247c1e4f8ffbd91ee0d0c60bda64b0c385e5a8 100644
+index 1aea46243a7b7e69ee2433f393b01d74907987d3..dc2566fba06ca355617dae436ddc0b210a24d46f 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -136,6 +136,14 @@ mod skills;
+@@ -138,6 +138,14 @@ mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
@@ -2506,10 +2506,10 @@ index 893a01ce5ad0bb1789d7b27ce5baad5f8a7a01e8..efe282cc73938c574f582581c9695875
  pub(crate) mod await_exec;
 +pub(crate) mod goal_supervisor;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 25d3327c347e62a3d9b7b0cb9d10e10e15c0a484..144e9953ad8b48a4dd84333fad11091d88e1e667 100644
+index bde763e8dc450b601e43af4c1eaedb364370769c..590df88dcdd71727d2a55e92a183e13e0274b477 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2426,6 +2426,9 @@ impl Session {
+@@ -2428,6 +2428,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }
@@ -2559,12 +2559,12 @@ index 751279328bbba763dfc7ed46b2f1133c5f17e33f..30222ee8a3581af729c978b23f8407e5
          let done_clone = Arc::clone(&done);
          let session = Arc::clone(self);
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 3e1dff5093504f9c425a74d40df5fe3b25cf2ca9..21d069f49d48cacdf3c2d212c3ce9abbb9927685 100644
+index 106a9ae09608b9d9631204caeb940bce83c1720f..595eaac7f67d5b8fd70310f11451e5b44e15bd30 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
-@@ -147,6 +147,14 @@ pub(crate) fn build_tool_router(
+@@ -149,6 +149,14 @@ pub(crate) fn build_tool_router(
      };
-     let mut registry = ToolRegistry::with_allowed_tools(session.allowed_tools.clone());
+     let mut registry = ToolRegistry::with_tool_policy(Arc::clone(&session.tool_policy));
      add_core_tool_sources(&context, &mut registry);
 +    if saffron::goal_supervisor::is_helper_source(&turn_context.session_source)
 +        && session
