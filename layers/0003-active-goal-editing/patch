@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
-index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe58673f215ca 100644
+index 16c4ceec61d3e1eede9cffbd1296a6e3711c84fc..dd1527cb8a4d3859624e0e2eb548afee9406733f 100644
 --- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 @@ -13,6 +13,106 @@ use pretty_assertions::assert_eq;
@@ -139,7 +139,7 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
              responses::sse(vec![
                  responses::ev_response_created("supervisor-action"),
                  responses::ev_function_call_with_namespace(
-@@ -77,7 +200,7 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+@@ -81,7 +204,7 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
          .await?;
 
      tokio::time::timeout(Duration::from_secs(10), async {
@@ -148,7 +148,7 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
              tokio::task::yield_now().await;
          }
      })
-@@ -85,7 +208,7 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+@@ -89,7 +212,7 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
      .context("supervisor did not finish its check-in")?;
 
      let requests = model_responses.requests();
@@ -157,7 +157,7 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
      assert!(
          requests[2]
              .tool_by_name("saffron", "supervisor_snooze")
-@@ -101,9 +224,21 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+@@ -105,9 +228,21 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
      );
      assert!(
          requests[3]
@@ -486,7 +486,7 @@ index 0000000000000000000000000000000000000000..847ed1b6ee8863bfb3ba9030ed858ed8
 +    }
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-index 74b956382ada052fb771525ee433995d476890e4..ffbe7a2da37648d4f5bd4883d9a3b885bb6dc9ab 100644
+index 514e64be1a12c5a67d072e316655dd6e72165110..1821fd6e48329d38e54ba620ae3bc39bde917a69 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 @@ -10,7 +10,6 @@ use codex_protocol::protocol::EventMsg;
@@ -505,7 +505,7 @@ index 74b956382ada052fb771525ee433995d476890e4..ffbe7a2da37648d4f5bd4883d9a3b885
  use crate::session::session::Session;
 
  pub(super) async fn followup(
-@@ -182,23 +182,3 @@ pub(super) async fn complete(
+@@ -186,23 +186,3 @@ pub(super) async fn complete(
      runtime::commit_action(parent, action).await;
      Ok(goal)
  }
@@ -545,16 +545,15 @@ index a1427399ddc5a6847e669029b5203372f008436b..ac7bdca0b9545a315041032e289bd87e
  pub(crate) use runtime::stop;
  pub(crate) use tools::register;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/prompt.md b/codex-rs/core/src/saffron/goal_supervisor/prompt.md
-index 8cc5a7a75e3f3bfc706be54a46f5740a4010fd44..b37ee40bcbb20d03f464655b6975199d5bf05a76 100644
+index b7b79c79e2a0394cd84d464ac7b943d56f4215fa..f03cacdf74c8b07eafb408b79eb8b962751d8d89 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/prompt.md
 +++ b/codex-rs/core/src/saffron/goal_supervisor/prompt.md
-@@ -12,6 +12,13 @@ these tools:
- - `saffron.supervisor_compact_parent_context`: compact an idle parent whose context is the obstacle.
- - `saffron.supervisor_close_self`: mark the active goal complete, optionally telling the parent why.
+@@ -21,5 +21,12 @@ action:
+    Snooze to a scheduled boundary, or use bounded, evidence-based backoff for an
+    external process.
 
 -Do not perform the parent's work yourself. Do not create sub-agents. Do not
--call more than one supervisor action. After the action tool returns, end your
--turn immediately without additional tool calls.
+-call more than one supervisor action. After the action returns, end your turn.
 +Before the action, you may call `saffron.edit_active_goal` once when the active
 +objective no longer accurately states the user-authorized outcome. The
 +replacement must preserve every still-applicable explicit requirement. Do not
@@ -563,10 +562,9 @@ index 8cc5a7a75e3f3bfc706be54a46f5740a4010fd44..b37ee40bcbb20d03f464655b6975199d
 +
 +The edit is optional and is not the action. Do not perform the parent's work
 +yourself. Do not create sub-agents. After any optional edit, call exactly one
-+supervisor action. After the action tool returns, end your turn immediately
-+without additional tool calls.
++supervisor action. After the action returns, end your turn.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 455b2ac96fd9cfb6dfe85713e42d634a14c89c0d..4e6e38fbd2e1ffa703ac83d13ebae58329ef8887 100644
+index 47a561afee10db1e3a91183af1f189d8f430ed41..bd3ba341fe68833952450f2ca3e5087d325930a7 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -14,7 +14,6 @@ use codex_protocol::protocol::Event;
