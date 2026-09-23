@@ -281,11 +281,33 @@ impl LocalAgentControl {
             SpawnInitialInput::UserInput(initial_input),
             session_source,
             SpawnAgentOptions::default(),
+            AgentListingVisibility::Listed,
         ))
         .await?;
         Ok(spawned_agent.thread_id)
     }
 
+    /// Spawns an unlisted, uncounted helper owned by internal coordination.
+    ///
+    /// The caller must supply a `ThreadSpawn` source so parentage and a unique
+    /// agent path remain available for lifecycle cleanup.
+    pub(crate) async fn spawn_hidden_agent_with_metadata(
+        &self,
+        config: Config,
+        initial_input: Vec<UserInput>,
+        session_source: SessionSource,
+        options: SpawnAgentOptions,
+    ) -> CodexResult<LiveAgent> {
+        let (agent, _) = Box::pin(self.spawn_agent_internal(
+            config,
+            SpawnInitialInput::UserInput(initial_input),
+            Some(session_source),
+            options,
+            AgentListingVisibility::Hidden,
+        ))
+        .await?;
+        Ok(agent)
+    }
     fn validate_loaded_v2_child(
         &self,
         thread: &CodexThread,
@@ -632,8 +654,10 @@ impl LocalAgentControl {
         initial_input: SpawnInitialInput,
         session_source: Option<SessionSource>,
         options: SpawnAgentOptions,
+        visibility: AgentListingVisibility,
     ) -> CodexResult<(LiveAgent, ThreadConfigSnapshot)> {
         let state = self.upgrade()?;
+        let hidden_helper = visibility == AgentListingVisibility::Hidden;
         let multi_agent_version = state
             .effective_multi_agent_version_for_spawn(
                 &InitialHistory::New,
@@ -643,11 +667,12 @@ impl LocalAgentControl {
                 &config,
             )
             .await;
-        if let Some(session_source) = session_source.as_ref() {
+        if !hidden_helper && let Some(session_source) = session_source.as_ref() {
             self.ensure_execution_capacity(multi_agent_version, session_source)?;
         }
         let agent_max_threads = config.effective_agent_max_threads(multi_agent_version);
-        let spawn_uses_v2_residency = multi_agent_version == MultiAgentVersion::V2
+        let spawn_uses_v2_residency = !hidden_helper
+            && multi_agent_version == MultiAgentVersion::V2
             && session_source
                 .as_ref()
                 .is_some_and(is_v2_resident_session_source);
@@ -664,10 +689,13 @@ impl LocalAgentControl {
         } else {
             agent_max_threads
         };
-        let mut reservation = self
-            .runtime
-            .registry
-            .reserve_spawn_slot(reservation_max_threads)?;
+        let mut reservation = if hidden_helper {
+            self.runtime.registry.reserve_internal_spawn_slot()
+        } else {
+            self.runtime
+                .registry
+                .reserve_spawn_slot(reservation_max_threads)?
+        };
         let inheritance = SpawnAgentThreadInheritance {
             environments: self
                 .inherited_environments_for_source(&state, session_source.as_ref())
@@ -691,6 +719,7 @@ impl LocalAgentControl {
                     depth,
                     agent_path,
                     agent_role,
+                    visibility,
                     /*preferred_agent_nickname*/ None,
                 )?;
                 (Some(session_source), agent_metadata)
@@ -744,11 +773,12 @@ impl LocalAgentControl {
         agent_metadata.agent_id = Some(new_thread.thread_id);
         let mut pending_spawn = PendingSpawn::new(Arc::clone(&state), new_thread.thread_id);
 
-        if let Some(SessionSource::SubAgent(
-            subagent_source @ SubAgentSource::ThreadSpawn {
-                parent_thread_id, ..
-            },
-        )) = notification_source.as_ref()
+        if !hidden_helper
+            && let Some(SessionSource::SubAgent(
+                subagent_source @ SubAgentSource::ThreadSpawn {
+                    parent_thread_id, ..
+                },
+            )) = notification_source.as_ref()
         {
             let client_metadata = match state.get_thread(*parent_thread_id).await {
                 Ok(parent_thread) => parent_thread.session.app_server_client_metadata().await,
@@ -777,29 +807,31 @@ impl LocalAgentControl {
             );
         }
 
-        let control = self.clone();
-        let child = Arc::clone(&new_thread.thread);
-        let child_thread_id = new_thread.thread_id;
-        let source = notification_source.clone();
-        pending_spawn.set_edge_write(tokio::spawn(async move {
-            control
-                .persist_thread_spawn_edge_for_source(
-                    child.as_ref(),
-                    child_thread_id,
-                    source.as_ref(),
-                )
-                .await;
-        }));
-        if options.fork_mode.is_some() {
-            tokio::join!(
-                new_thread
-                    .thread
-                    .session
-                    .ensure_rollout_materialized(PersistContext::Standard),
-                pending_spawn.wait_for_edge(),
-            );
-        } else {
-            pending_spawn.wait_for_edge().await;
+        if !hidden_helper {
+            let control = self.clone();
+            let child = Arc::clone(&new_thread.thread);
+            let child_thread_id = new_thread.thread_id;
+            let source = notification_source.clone();
+            pending_spawn.set_edge_write(tokio::spawn(async move {
+                control
+                    .persist_thread_spawn_edge_for_source(
+                        child.as_ref(),
+                        child_thread_id,
+                        source.as_ref(),
+                    )
+                    .await;
+            }));
+            if options.fork_mode.is_some() {
+                tokio::join!(
+                    new_thread
+                        .thread
+                        .session
+                        .ensure_rollout_materialized(PersistContext::Standard),
+                    pending_spawn.wait_for_edge(),
+                );
+            } else {
+                pending_spawn.wait_for_edge().await;
+            }
         }
 
         let start_options = TurnStartOptions {
@@ -834,8 +866,10 @@ impl LocalAgentControl {
         // Notify a new thread has been created. This notification will be processed by clients
         // to subscribe or drain this newly created thread.
         // TODO(jif) add helper for drain
-        state.notify_thread_created(new_thread.thread_id);
-        if multi_agent_version != MultiAgentVersion::V2 {
+        if !hidden_helper {
+            state.notify_thread_created(new_thread.thread_id);
+        }
+        if !hidden_helper && multi_agent_version != MultiAgentVersion::V2 {
             let child_reference = agent_metadata
                 .agent_path
                 .as_ref()
@@ -1005,7 +1039,9 @@ impl LocalAgentControl {
                 metadata.user_input_order = None;
             }
             let response_item = &mut envelope.item;
-            if matches!(response_item, ResponseItem::AgentMessage { .. }) {
+            if matches!(response_item, ResponseItem::AgentMessage { .. })
+                && !crate::saffron::goal_supervisor::is_helper_source(&session_source)
+            {
                 return false;
             }
             if !retain_forked_developer_message(
@@ -1063,7 +1099,8 @@ impl LocalAgentControl {
             true
         };
         forked_rollout_items.retain_mut(|item| {
-            if !keep_forked_rollout_item(item, preserve_context_baselines)
+            if (!keep_forked_rollout_item(item, preserve_context_baselines)
+                && !crate::saffron::goal_supervisor::preserves_fork_item(&session_source, item))
                 || destination_history_mode == Some(ThreadHistoryMode::Paginated)
                     && matches!(
                         &*item,
@@ -1323,6 +1360,7 @@ impl LocalAgentControl {
                 depth,
                 agent_path.or(resumed_agent_path),
                 resumed_agent_role,
+                AgentListingVisibility::Listed,
                 resumed_agent_nickname,
             )?,
             other => (other, AgentMetadata::default()),
