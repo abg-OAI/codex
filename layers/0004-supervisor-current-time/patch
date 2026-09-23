@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 29cc6606b20c6ff13887995f928d9f45ee3df36b..96eb8a7658c4c767fa8e04618e39e478f84ffc47 100644
+index 4e6e38fbd2e1ffa703ac83d13ebae58329ef8887..d95cf6466a2380ed9efa3f3b43828cd0c1c9dba4 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -6,7 +6,10 @@ use std::sync::atomic::AtomicU64;
@@ -13,7 +13,7 @@ index 29cc6606b20c6ff13887995f928d9f45ee3df36b..96eb8a7658c4c767fa8e04618e39e478
  use codex_protocol::AgentPath;
  use codex_protocol::ThreadId;
  use codex_protocol::protocol::AgentStatus;
-@@ -345,6 +348,10 @@ async fn spawn_helper(
+@@ -346,6 +349,10 @@ async fn spawn_helper(
  ) -> Result<ThreadId, String> {
      let mut config = parent.effective_session_config().await;
      config.ephemeral = true;
@@ -24,7 +24,7 @@ index 29cc6606b20c6ff13887995f928d9f45ee3df36b..96eb8a7658c4c767fa8e04618e39e478
      config.developer_instructions = Some(match config.developer_instructions.take() {
          Some(existing) => format!("{existing}\n\n{}", include_str!("prompt.md")),
          None => include_str!("prompt.md").to_string(),
-@@ -359,7 +366,9 @@ async fn spawn_helper(
+@@ -360,7 +367,9 @@ async fn spawn_helper(
          agent_role: Some(HELPER_ROLE_NAME.to_string()),
      });
      let continuity = continuity(parent, goal).await;
@@ -35,7 +35,7 @@ index 29cc6606b20c6ff13887995f928d9f45ee3df36b..96eb8a7658c4c767fa8e04618e39e478
      let helper = Box::pin(
          parent
              .services
-@@ -390,9 +399,21 @@ async fn spawn_helper(
+@@ -391,9 +400,21 @@ async fn spawn_helper(
  }
 
  /// Renders one bounded model-visible assignment for the ephemeral helper.

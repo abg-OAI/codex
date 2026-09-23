@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 118106d710a9018237e10040826376915f192a3a..f423dc6655b3b12150d13fdf68267deac2305a4c 100644
+index 9e9a90437b3fddde282a0d05216907d77fa5a745..13f2578764597a3183efd33acf0e3078a2d2a878 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -74,6 +74,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
@@ -19,7 +19,7 @@ index 118106d710a9018237e10040826376915f192a3a..f423dc6655b3b12150d13fdf68267dea
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -519,6 +522,24 @@ impl MessageProcessor {
+@@ -524,6 +527,24 @@ impl MessageProcessor {
              turn_cost_worker.as_ref().map(TurnCostWorker::handle),
              config_warnings,
          );
@@ -44,7 +44,7 @@ index 118106d710a9018237e10040826376915f192a3a..f423dc6655b3b12150d13fdf68267dea
          let turn_processor = TurnRequestProcessor::new(
              auth_manager,
              Arc::clone(&thread_manager),
-@@ -601,6 +622,7 @@ impl MessageProcessor {
+@@ -606,6 +627,7 @@ impl MessageProcessor {
              project_processor,
              remote_control_processor,
              search_processor,
@@ -52,7 +52,7 @@ index 118106d710a9018237e10040826376915f192a3a..f423dc6655b3b12150d13fdf68267dea
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -615,6 +637,9 @@ impl MessageProcessor {
+@@ -620,6 +642,9 @@ impl MessageProcessor {
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
          self.skills_watcher.shutdown();
@@ -752,13 +752,13 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..ef9871fd70bb47119a3364e16e557d4c
 +        .collect()
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index eb7f97ca2c5ce8f4b70dfc2c990e11e37eebdf07..ea8d6439e1689de6046c86a84698fa79a991a159 100644
+index 0716bfa14ac6158452578bda9c465097a7aef72d..5f9d36119f8bd98e2580f2ffad2db78eb21e31f1 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -316,6 +316,21 @@ impl CodexThread {
+@@ -325,6 +325,21 @@ impl CodexThread {
+     pub async fn stop_saffron_goal_supervisor(&self) {
          crate::saffron::goal_supervisor::stop(&self.session).await;
      }
-
 +    /// Returns whether process-local work requires this idle thread to remain loaded.
 +    ///
 +    /// An embedding that unloads idle threads must honor this signal so a
@@ -778,10 +778,10 @@ index eb7f97ca2c5ce8f4b70dfc2c990e11e37eebdf07..ea8d6439e1689de6046c86a84698fa79
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index dc2566fba06ca355617dae436ddc0b210a24d46f..24189a0c833dc0322a0f9c5577b75058f49161dd 100644
+index fe8edfa58ffd3703561cc3c1fe024bb0e3807c07..d10d9d2ec64e5eb61c2f857389a1e73f253410e0 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -159,6 +159,9 @@ pub use codex_prompts as review_prompts;
+@@ -154,6 +154,9 @@ pub use codex_prompts as review_prompts;
  mod thread_manager;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
@@ -1519,10 +1519,10 @@ index d7d83cd74b3a0e42e0e2f79129e592a2395bb2f2..2d9bdedde296473dd55dd58a7e3b05e2
  pub(crate) use runtime::stop;
  pub(crate) use tools::register;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index ad2bc68b156584ddb7dec0ecaadab642ab631d11..c6981bb444c91204a1908c98d738db9d4e7336e5 100644
+index 9d780a7c02e4574521dfeffcf53061adfbda2439..62f362eea9b0721eb94dd392f24434c90d15ee3b 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-@@ -44,6 +44,15 @@ pub(super) struct Runtime {
+@@ -45,6 +45,15 @@ pub(super) struct Runtime {
      wake_generation: AtomicU64,
  }
 
@@ -1538,7 +1538,7 @@ index ad2bc68b156584ddb7dec0ecaadab642ab631d11..c6981bb444c91204a1908c98d738db9d
  #[derive(Default)]
  struct State {
      goal_id: Option<String>,
-@@ -53,6 +62,26 @@ struct State {
+@@ -54,6 +63,26 @@ struct State {
      previous_action: Option<Action>,
  }
 
@@ -1565,7 +1565,7 @@ index ad2bc68b156584ddb7dec0ecaadab642ab631d11..c6981bb444c91204a1908c98d738db9d
  struct ActiveHelper {
      thread_id: ThreadId,
      goal_revision: codex_state::ThreadGoalRevision,
-@@ -72,6 +101,13 @@ enum GoalEditState {
+@@ -73,6 +102,13 @@ enum GoalEditState {
  pub(super) struct Snooze {
      wake: GoalWake,
      pub(super) deadline: Instant,
@@ -1579,7 +1579,7 @@ index ad2bc68b156584ddb7dec0ecaadab642ab631d11..c6981bb444c91204a1908c98d738db9d
  }
 
  impl Snooze {
-@@ -86,8 +122,19 @@ impl Snooze {
+@@ -87,8 +123,19 @@ impl Snooze {
                  wake_at_ms: Utc::now().timestamp_millis().saturating_add(delay_millis),
              },
              deadline: Instant::now() + delay,
@@ -1599,7 +1599,7 @@ index ad2bc68b156584ddb7dec0ecaadab642ab631d11..c6981bb444c91204a1908c98d738db9d
  }
 
  #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
-@@ -182,6 +229,12 @@ pub(crate) async fn start_checkin(
+@@ -183,6 +230,12 @@ pub(crate) async fn start_checkin(
          }
      }
 
@@ -1612,7 +1612,7 @@ index ad2bc68b156584ddb7dec0ecaadab642ab631d11..c6981bb444c91204a1908c98d738db9d
      match spawn_helper(parent, goal).await {
          Ok(helper_id) => {
              runtime.state.lock().await.active = Some(ActiveHelper {
-@@ -415,6 +468,19 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
+@@ -416,6 +469,19 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
          .get_or_init(Runtime::default)
  }
 
@@ -1632,7 +1632,7 @@ index ad2bc68b156584ddb7dec0ecaadab642ab631d11..c6981bb444c91204a1908c98d738db9d
  async fn spawn_helper(
      parent: &Arc<Session>,
      goal: &codex_state::ThreadGoal,
-@@ -659,6 +725,46 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -670,6 +736,46 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
      });
  }
 

@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index eb1fc55cdb3acbafe93055e91e58188feb58ccbb..1aea46243a7b7e69ee2433f393b01d74907987d3 100644
+index e7a2a4a3c1bc0f0434567aeefbdb7ed20699be4a..126a28f061d947e0604bb23a9a9394022032f721 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -137,6 +137,7 @@ mod session_startup_prewarm;
+@@ -132,6 +132,7 @@ mod session_startup_prewarm;
  mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
@@ -605,7 +605,7 @@ index 27e21f716b954bfbd25bd132adb67bc5f7f648aa..47e870880ddb8cbf04fe591b5b3363e1
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 105783518d33132887ee9ab3eb88b1487a52b53f..fa8f359e843997468c9780ceefc9cdca3a331887 100644
+index a21dec6485076395be14abdbbfb0a7e666908f50..eecc362eaddbed753d13a1604e6e3a7b0ba72835 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
 @@ -107,6 +107,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
@@ -1255,10 +1255,10 @@ index 0000000000000000000000000000000000000000..0c3c4b17c6553a6c3efd713d021a4f33
 +    assert_eq!(output.process_id, Some(PROCESS_ID));
 +}
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index 5309fa63c92085d4a306f5ced274c925d608611b..aa465d4eb988ad47579832a7374aac080dd177be 100644
+index 8b4d4ff2fc80ee12d5d5a65b5fa7b2939eda1c47..d4c59c3780313a0fb79bd3a22a7330a67f939d2f 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -182,6 +182,7 @@ mod rollout_compression;
+@@ -183,6 +183,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;
