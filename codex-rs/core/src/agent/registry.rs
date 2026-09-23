@@ -1,3 +1,4 @@
+use crate::agent::types::AgentListingVisibility;
 use crate::agent::types::AgentMetadata;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
@@ -38,13 +39,15 @@ struct ActiveAgents {
 
 struct RegisteredAgent {
     path: String,
+    counted: bool,
     evicted_environments: Option<Vec<TurnEnvironmentSelection>>,
 }
 
 impl RegisteredAgent {
-    fn new(path: String) -> Self {
+    fn new(path: String, counted: bool) -> Self {
         Self {
             path,
+            counted,
             evicted_environments: None,
         }
     }
@@ -102,9 +105,21 @@ impl AgentRegistry {
         Ok(SpawnReservation {
             state: Arc::clone(self),
             active: true,
+            counted: true,
             reserved_agent_nickname: None,
             reserved_agent_path: None,
         })
+    }
+
+    /// Reserves registry identity without consuming user-visible agent capacity.
+    pub(crate) fn reserve_internal_spawn_slot(self: &Arc<Self>) -> SpawnReservation {
+        SpawnReservation {
+            state: Arc::clone(self),
+            active: true,
+            counted: false,
+            reserved_agent_nickname: None,
+            reserved_agent_path: None,
+        }
     }
 
     pub(crate) fn release_spawned_thread(&self, thread_id: ThreadId) {
@@ -116,9 +131,9 @@ impl AgentRegistry {
             active_agents
                 .thread_paths
                 .remove(&thread_id)
-                .and_then(|agent| active_agents.agent_tree.remove(agent.path.as_str()))
-                .is_some_and(|metadata| {
-                    !metadata.agent_path.as_ref().is_some_and(AgentPath::is_root)
+                .is_some_and(|agent| {
+                    active_agents.agent_tree.remove(agent.path.as_str());
+                    agent.counted
                 })
         };
         if removed_counted_agent {
@@ -144,7 +159,7 @@ impl AgentRegistry {
         if let Some(root_thread_id) = root_thread_id {
             active_agents
                 .thread_paths
-                .insert(root_thread_id, RegisteredAgent::new(root_path));
+                .insert(root_thread_id, RegisteredAgent::new(root_path, false));
         }
     }
 
@@ -167,6 +182,11 @@ impl AgentRegistry {
             .get(&thread_id)
             .and_then(|agent| active_agents.agent_tree.get(&agent.path))
             .cloned()
+    }
+
+    pub(crate) fn is_hidden_thread(&self, thread_id: ThreadId) -> bool {
+        self.agent_metadata_for_thread(thread_id)
+            .is_some_and(|metadata| metadata.visibility == AgentListingVisibility::Hidden)
     }
 
     pub(crate) fn save_evicted_environments(
@@ -216,12 +236,18 @@ impl AgentRegistry {
             .filter(|metadata| {
                 metadata.agent_id.is_some()
                     && !metadata.agent_path.as_ref().is_some_and(AgentPath::is_root)
+                    && metadata.visibility == AgentListingVisibility::Listed
             })
             .cloned()
             .collect()
     }
 
+    #[cfg(test)]
     fn register_spawned_thread(&self, agent_metadata: AgentMetadata) {
+        self.register_spawned_thread_with_counting(agent_metadata, true);
+    }
+
+    fn register_spawned_thread_with_counting(&self, agent_metadata: AgentMetadata, counted: bool) {
         let Some(thread_id) = agent_metadata.agent_id else {
             return;
         };
@@ -239,7 +265,7 @@ impl AgentRegistry {
         }
         if let Some(previous_agent) = active_agents
             .thread_paths
-            .insert(thread_id, RegisteredAgent::new(key.clone()))
+            .insert(thread_id, RegisteredAgent::new(key.clone(), counted))
             && previous_agent.path != key
         {
             active_agents
@@ -349,6 +375,7 @@ impl AgentRegistry {
 pub(crate) struct SpawnReservation {
     state: Arc<AgentRegistry>,
     active: bool,
+    counted: bool,
     reserved_agent_nickname: Option<String>,
     reserved_agent_path: Option<AgentPath>,
 }
@@ -378,7 +405,8 @@ impl SpawnReservation {
     pub(crate) fn commit(mut self, agent_metadata: AgentMetadata) {
         self.reserved_agent_nickname = None;
         self.reserved_agent_path = None;
-        self.state.register_spawned_thread(agent_metadata);
+        self.state
+            .register_spawned_thread_with_counting(agent_metadata, self.counted);
         self.active = false;
     }
 }
@@ -389,7 +417,9 @@ impl Drop for SpawnReservation {
             if let Some(agent_path) = self.reserved_agent_path.take() {
                 self.state.release_reserved_agent_path(&agent_path);
             }
-            self.state.total_count.fetch_sub(1, Ordering::AcqRel);
+            if self.counted {
+                self.state.total_count.fetch_sub(1, Ordering::AcqRel);
+            }
         }
     }
 }
