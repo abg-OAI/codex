@@ -11,13 +11,15 @@ role name. The supervisor owns its communication with the parent, so
 Codex does not also enqueue ordinary child-completion messages.
 
 The helper can resume its parent, snooze with capped retry backoff,
-compact parent context, or complete itself. It retires stale helpers
-and preserves no supervisor state across process restarts.
+compact parent context, or complete the goal. Snoozes are reserved for
+future deadlines and independently changing external processes; user
+questions and internal decisions wake the parent instead. Every snooze
+records the external condition or scheduled boundary that justifies it.
 
 On app-server turns that mention a goal, guide root agents to activate
-durable goals before yielding deferred work. Describe snoozes as
-token-free waits until the earliest useful check-in without adding
-guidance to unrelated turns.
+durable goals and continue autonomously. Optional clarification uses a
+supported, reversible assumption; indispensable authority or
+information enters the blocked-goal process.
 
 Cover hidden-helper accounting, authority checks, supervisor runtime
 behavior, root guidance, and the app-server lifecycle.

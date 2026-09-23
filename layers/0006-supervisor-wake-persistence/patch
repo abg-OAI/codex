@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-index ffbe7a2da37648d4f5bd4883d9a3b885bb6dc9ab..62d35ee5fa3352760eaf20532abb50f8f5bfa262 100644
+index 1821fd6e48329d38e54ba620ae3bc39bde917a69..8a73913f19c2af0f52edb530cc7034b6b63160d5 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 @@ -3,6 +3,13 @@
@@ -33,8 +33,8 @@ index ffbe7a2da37648d4f5bd4883d9a3b885bb6dc9ab..62d35ee5fa3352760eaf20532abb50f8
 
  pub(super) async fn followup(
      helper: &Arc<Session>,
-@@ -97,11 +94,20 @@ pub(super) async fn snooze(
-     let action = Action::Snooze { delay_seconds };
+@@ -101,11 +98,20 @@ pub(super) async fn snooze(
+     };
      let goal_id = runtime::select_action(parent, helper_id, action.clone()).await?;
      let supervisor_runtime = runtime::runtime(parent);
 -    let snooze = Snooze {
@@ -59,7 +59,7 @@ index ffbe7a2da37648d4f5bd4883d9a3b885bb6dc9ab..62d35ee5fa3352760eaf20532abb50f8
      runtime::schedule_wake(parent, &supervisor_runtime, snooze);
      runtime::commit_action(parent, action).await;
      Ok(())
-@@ -153,7 +159,7 @@ pub(super) async fn complete(
+@@ -157,7 +163,7 @@ pub(super) async fn complete(
                  objective: None,
                  status: Some(codex_state::ThreadGoalStatus::Complete),
                  token_budget: None,
@@ -68,7 +68,7 @@ index ffbe7a2da37648d4f5bd4883d9a3b885bb6dc9ab..62d35ee5fa3352760eaf20532abb50f8
              },
          )
          .await
-@@ -168,6 +174,12 @@ pub(super) async fn complete(
+@@ -172,6 +178,12 @@ pub(super) async fn complete(
              return Err(error);
          }
      };
@@ -99,7 +99,7 @@ index ac7bdca0b9545a315041032e289bd87e053e5985..d7d83cd74b3a0e42e0e2f79129e592a2
  mod actions;
  pub(crate) mod guidance;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index d95cf6466a2380ed9efa3f3b43828cd0c1c9dba4..9d780a7c02e4574521dfeffcf53061adfbda2439 100644
+index e860c85fdaa77a8804e7d9f16adda3d68482b6f5..8e39f0bd7b60e528b50e3202688564bce51296fb 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -30,6 +30,8 @@ use super::HELPER_ROLE_NAME;

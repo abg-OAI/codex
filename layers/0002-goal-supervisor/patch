@@ -26,10 +26,10 @@ index 51f3e06b9a54249d83d2a3d1ebf6bdd5120e9cb4..b6ddac3bdd680b1243965762432e1f8b
  mod selected_environment;
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_guidance.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_guidance.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..edadeb76640670a18c1e8f49dd9d50b804a13313
+index 0000000000000000000000000000000000000000..4d704391f65594f530b8deb33b1c5ecbebbe978f
 --- /dev/null
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_guidance.rs
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,79 @@
 +use anyhow::Result;
 +use app_test_support::MockResponsesConfig;
 +use app_test_support::TestAppServer;
@@ -69,6 +69,8 @@ index 0000000000000000000000000000000000000000..edadeb76640670a18c1e8f49dd9d50b8
 +    let requests = model_responses.requests();
 +    assert_eq!(requests.len(), 2);
 +    let guidance = goal_guidance(&requests[0]).expect("goal guidance");
++    assert!(guidance.contains("Goal mode is autonomous"));
++    assert!(guidance.contains("blocked-goal process"));
 +    assert!(guidance.contains("snooze"));
 +    assert!(!guidance.contains("await_exec"));
 +    assert!(goal_guidance(&requests[1]).is_none());
@@ -109,10 +111,10 @@ index 0000000000000000000000000000000000000000..edadeb76640670a18c1e8f49dd9d50b8
 +}
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..407c9eef493663793766dcd4fc44de9be9deaeed
+index 0000000000000000000000000000000000000000..16c4ceec61d3e1eede9cffbd1296a6e3711c84fc
 --- /dev/null
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,114 @@
 +use std::time::Duration;
 +
 +use anyhow::Context;
@@ -154,7 +156,11 @@ index 0000000000000000000000000000000000000000..407c9eef493663793766dcd4fc44de9b
 +                    "supervisor-snooze-call",
 +                    "saffron",
 +                    "supervisor_snooze",
-+                    &json!({ "delay_seconds": 3600 }).to_string(),
++                    &json!({
++                        "delay_seconds": 3600,
++                        "reason": "Deployment is still running; next status update is due in one hour."
++                    })
++                    .to_string(),
 +                ),
 +                responses::ev_completed("supervisor-action"),
 +            ]),
@@ -225,10 +231,10 @@ index 0000000000000000000000000000000000000000..407c9eef493663793766dcd4fc44de9b
 +}
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor_history.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor_history.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0fd0923f472e9e0f024b801939eb2395583f7c03
+index 0000000000000000000000000000000000000000..5f45fe996cad00e76d2e746d9a2ecb20739549b7
 --- /dev/null
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor_history.rs
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,155 @@
 +use std::time::Duration;
 +
 +use anyhow::Context;
@@ -278,7 +284,11 @@ index 0000000000000000000000000000000000000000..0fd0923f472e9e0f024b801939eb2395
 +                    "supervisor-snooze-call",
 +                    "saffron",
 +                    "supervisor_snooze",
-+                    &json!({ "delay_seconds": 3600 }).to_string(),
++                    &json!({
++                        "delay_seconds": 3600,
++                        "reason": "Deployment is still running; next status update is due in one hour."
++                    })
++                    .to_string(),
 +                ),
 +                responses::ev_completed("supervisor-action"),
 +            ]),
@@ -1075,10 +1085,10 @@ index 126a28f061d947e0604bb23a9a9394022032f721..fe8edfa58ffd3703561cc3c1fe024bb0
  mod unified_exec;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..74b956382ada052fb771525ee433995d476890e4
+index 0000000000000000000000000000000000000000..514e64be1a12c5a67d072e316655dd6e72165110
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-@@ -0,0 +1,204 @@
+@@ -0,0 +1,208 @@
 +//! Side effects selected by a goal supervisor helper.
 +
 +use std::sync::Arc;
@@ -1174,8 +1184,12 @@ index 0000000000000000000000000000000000000000..74b956382ada052fb771525ee433995d
 +    parent: &Arc<Session>,
 +    helper_id: ThreadId,
 +    delay_seconds: u64,
++    reason: String,
 +) -> Result<(), String> {
-+    let action = Action::Snooze { delay_seconds };
++    let action = Action::Snooze {
++        delay_seconds,
++        reason,
++    };
 +    let goal_id = runtime::select_action(parent, helper_id, action.clone()).await?;
 +    let supervisor_runtime = runtime::runtime(parent);
 +    let snooze = Snooze {
@@ -1391,10 +1405,10 @@ index 0000000000000000000000000000000000000000..2ea972c2cd02484d0d5d6c63a9c10bcd
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/guidance.rs b/codex-rs/core/src/saffron/goal_supervisor/guidance.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..61070d9fa33c981525c2e7cd27ed805a589a989f
+index 0000000000000000000000000000000000000000..ee66686242a8929b3da50e0996dc7938485cc857
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/guidance.rs
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,107 @@
 +//! Turn-local guidance for activating and deferring durable goals.
 +
 +use std::sync::Arc;
@@ -1417,8 +1431,10 @@ index 0000000000000000000000000000000000000000..61070d9fa33c981525c2e7cd27ed805a
 +const CONTEXT_KEY: &str = "saffron_goal_waiting";
 +const INSTRUCTIONS: &str = concat!(
 +    "If this turn requests durable continuation, call create_goal before claiming the goal is ",
-+    "active. When progress is blocked until a future time or slow external change, end the root ",
-+    "turn so Saffron supervision can snooze until the earliest useful check-in."
++    "active. Goal mode is autonomous. For optional clarification, make a supported, reversible ",
++    "assumption and continue. If authority or information is indispensable, follow the ",
++    "blocked-goal process. Yield for a snooze only when every unfinished part awaits a future ",
++    "deadline or an external process that can change without parent action."
 +);
 +
 +/// Installs the model-visible routing hint beside the app-server goal extension.
@@ -1730,30 +1746,38 @@ index 0000000000000000000000000000000000000000..e8ee31b611b5e6198fe8ad1381922f3a
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/prompt.md b/codex-rs/core/src/saffron/goal_supervisor/prompt.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..8cc5a7a75e3f3bfc706be54a46f5740a4010fd44
+index 0000000000000000000000000000000000000000..b7b79c79e2a0394cd84d464ac7b943d56f4215fa
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/prompt.md
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,25 @@
 +# Saffron Goal Supervisor
 +
 +You are a short-lived supervisory helper for an idle parent task. You inherit
-+the parent's history so that you can decide whether the active goal needs more
-+work now, should wait, should compact its context, or is actually complete.
++the parent's history. An active goal continues autonomously.
 +
-+Inspect the active goal and the inherited evidence. Then call exactly one of
-+these tools:
++Inspect the active goal and inherited evidence, then choose the first applicable
++action:
 +
-+- `saffron.supervisor_followup_parent`: wake the parent with a concrete next task.
-+- `saffron.supervisor_snooze`: wait for a bounded interval before checking again.
-+- `saffron.supervisor_compact_parent_context`: compact an idle parent whose context is the obstacle.
-+- `saffron.supervisor_close_self`: mark the active goal complete, optionally telling the parent why.
++1. `saffron.supervisor_close_self`: complete only when the evidence proves that
++   no required work remains.
++2. `saffron.supervisor_compact_parent_context`: compact only when context
++   pressure prevents useful progress.
++3. `saffron.supervisor_followup_parent`: follow up whenever the parent can make
++   useful progress now. Questions, uncertainty, missing preferences, and
++   internal decisions are unfinished work. Direct the parent to use a supported,
++   reversible assumption when possible. When user authority or information is
++   indispensable, wake the parent to advance the blocked-goal process.
++4. `saffron.supervisor_snooze`: snooze only when every unfinished part depends
++   on a future deadline or an external process that can change without parent
++   action, and no useful parent action remains. Mixed work requires a follow-up.
++   Snooze to a scheduled boundary, or use bounded, evidence-based backoff for an
++   external process.
 +
 +Do not perform the parent's work yourself. Do not create sub-agents. Do not
-+call more than one supervisor action. After the action tool returns, end your
-+turn immediately without additional tool calls.
++call more than one supervisor action. After the action returns, end your turn.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..455b2ac96fd9cfb6dfe85713e42d634a14c89c0d
+index 0000000000000000000000000000000000000000..47a561afee10db1e3a91183af1f189d8f430ed41
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -0,0 +1,485 @@
@@ -1825,7 +1849,7 @@ index 0000000000000000000000000000000000000000..455b2ac96fd9cfb6dfe85713e42d634a
 +#[serde(rename_all = "snake_case")]
 +pub(super) enum Action {
 +    Followup,
-+    Snooze { delay_seconds: u64 },
++    Snooze { delay_seconds: u64, reason: String },
 +    Compact,
 +    Complete,
 +}
@@ -2244,10 +2268,10 @@ index 0000000000000000000000000000000000000000..455b2ac96fd9cfb6dfe85713e42d634a
 +mod tests;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fa20a7700be328f11b72d400e87b562c9e00f39a
+index 0000000000000000000000000000000000000000..71803da53e4672bc1bf1c6449d027bffeac47a45
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,39 @@
 +use super::*;
 +
 +use pretty_assertions::assert_eq;
@@ -2269,12 +2293,30 @@ index 0000000000000000000000000000000000000000..fa20a7700be328f11b72d400e87b562c
 +    assert!(prompt.starts_with("# Supervisor Check-in"));
 +    assert!(prompt.len() < objective.len());
 +}
++
++#[test]
++fn snooze_action_keeps_its_reason_in_continuity() {
++    let action = Action::Snooze {
++        delay_seconds: 900,
++        reason: "Remote build is still running.".to_string(),
++    };
++
++    assert_eq!(
++        serde_json::to_value(action).expect("serialize snooze action"),
++        serde_json::json!({
++            "snooze": {
++                "delay_seconds": 900,
++                "reason": "Remote build is still running."
++            }
++        })
++    );
++}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/tools.rs b/codex-rs/core/src/saffron/goal_supervisor/tools.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fd7aef45cd044640d0ed3659c21f9433a7d51b80
+index 0000000000000000000000000000000000000000..77c88285da276db035351bd832bef5fde560608d
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/tools.rs
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,285 @@
 +//! Model-facing action tools for a Saffron goal supervisor helper.
 +
 +use std::collections::BTreeMap;
@@ -2356,15 +2398,30 @@ index 0000000000000000000000000000000000000000..fd7aef45cd044640d0ed3659c21f9433
 +            }
 +            Kind::Snooze => {
 +                let args: SnoozeArgs = parse_arguments(&arguments)?;
++                let reason = args.reason.trim().to_string();
++                if reason.is_empty() {
++                    return Err(FunctionCallError::RespondToModel(
++                        "reason must describe the external condition or scheduled boundary"
++                            .to_string(),
++                    ));
++                }
 +                if !(1..=MAX_SNOOZE_SECONDS).contains(&args.delay_seconds) {
 +                    return Err(FunctionCallError::RespondToModel(format!(
 +                        "delay_seconds must be between 1 and {MAX_SNOOZE_SECONDS}"
 +                    )));
 +                }
-+                actions::snooze(&parent, session.thread_id, args.delay_seconds)
-+                    .await
-+                    .map_err(FunctionCallError::RespondToModel)?;
-+                json!({ "delay_seconds": args.delay_seconds })
++                actions::snooze(
++                    &parent,
++                    session.thread_id,
++                    args.delay_seconds,
++                    reason.clone(),
++                )
++                .await
++                .map_err(FunctionCallError::RespondToModel)?;
++                json!({
++                    "delay_seconds": args.delay_seconds,
++                    "reason": reason,
++                })
 +            }
 +            Kind::Compact => {
 +                let _: CompactArgs = parse_arguments(&arguments)?;
@@ -2441,7 +2498,7 @@ index 0000000000000000000000000000000000000000..fd7aef45cd044640d0ed3659c21f9433
 +                "Wake the supervised parent with one concrete next task. Use this when the active goal can make useful progress now."
 +            }
 +            Self::Snooze => {
-+                "Snooze until the earliest useful check-in when no useful work can occur before a future time or slow external change. Use supervisor_followup_parent when the parent can act now."
++                "Snooze only when every unfinished part depends on a future deadline or external process that can change without parent action, and no useful parent action remains. Use supervisor_followup_parent for mixed work, unanswered questions, or missing user authority or information."
 +            }
 +            Self::Compact => {
 +                "Request context compaction for the idle supervised parent. Use this only when context pressure is blocking useful progress."
@@ -2466,13 +2523,22 @@ index 0000000000000000000000000000000000000000..fd7aef45cd044640d0ed3659c21f9433
 +                Some(false.into()),
 +            ),
 +            Self::Snooze => JsonSchema::object(
-+                BTreeMap::from([(
-+                    "delay_seconds".to_string(),
-+                    JsonSchema::integer(Some(format!(
-+                        "Whole seconds until the earliest useful check-in, from 1 through {MAX_SNOOZE_SECONDS}."
-+                    ))),
-+                )]),
-+                Some(vec!["delay_seconds".to_string()]),
++                BTreeMap::from([
++                    (
++                        "delay_seconds".to_string(),
++                        JsonSchema::integer(Some(format!(
++                            "Whole seconds to a known scheduled boundary or a bounded, evidence-based recheck of an external process, from 1 through {MAX_SNOOZE_SECONDS}."
++                        ))),
++                    ),
++                    (
++                        "reason".to_string(),
++                        JsonSchema::string(Some(
++                            "Concise observed external condition or scheduled boundary that prevents useful parent action."
++                                .to_string(),
++                        )),
++                    ),
++                ]),
++                Some(vec!["delay_seconds".to_string(), "reason".to_string()]),
 +                Some(false.into()),
 +            ),
 +            Self::Compact => JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
@@ -2500,6 +2566,7 @@ index 0000000000000000000000000000000000000000..fd7aef45cd044640d0ed3659c21f9433
 +#[serde(deny_unknown_fields)]
 +struct SnoozeArgs {
 +    delay_seconds: u64,
++    reason: String,
 +}
 +
 +#[derive(Deserialize)]
@@ -2537,10 +2604,10 @@ index 0000000000000000000000000000000000000000..fd7aef45cd044640d0ed3659c21f9433
 +mod tests;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/tools_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/tools_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3a9a4e2ac0efa4750b59a918a2334caf4a28122e
+index 0000000000000000000000000000000000000000..4c7ecd7560579934741f4457c627ee90a083b36f
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/tools_tests.rs
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,71 @@
 +use super::*;
 +
 +use pretty_assertions::assert_eq;
@@ -2569,6 +2636,47 @@ index 0000000000000000000000000000000000000000..3a9a4e2ac0efa4750b59a918a2334caf
 +            "supervisor_compact_parent_context",
 +            "supervisor_close_self",
 +        ]
++    );
++}
++
++#[test]
++fn snooze_spec_requires_an_external_wait_reason() {
++    let ToolSpec::Namespace(namespace) = Handler::new(Kind::Snooze).spec() else {
++        panic!("supervisor snooze must be a namespace tool");
++    };
++    let [ResponsesApiNamespaceTool::Function(tool)] = namespace.tools.as_slice() else {
++        panic!("supervisor snooze must expose one function");
++    };
++
++    assert_eq!(
++        tool.parameters,
++        JsonSchema::object(
++            BTreeMap::from([
++                (
++                    "delay_seconds".to_string(),
++                    JsonSchema::integer(Some(format!(
++                        "Whole seconds to a known scheduled boundary or a bounded, evidence-based recheck of an external process, from 1 through {MAX_SNOOZE_SECONDS}."
++                    ))),
++                ),
++                (
++                    "reason".to_string(),
++                    JsonSchema::string(Some(
++                        "Concise observed external condition or scheduled boundary that prevents useful parent action."
++                            .to_string(),
++                    )),
++                ),
++            ]),
++            Some(vec!["delay_seconds".to_string(), "reason".to_string()]),
++            Some(false.into()),
++        )
++    );
++}
++
++#[test]
++fn snooze_args_reject_a_missing_reason() {
++    assert!(
++        parse_arguments::<SnoozeArgs>(r#"{"delay_seconds":300}"#).is_err(),
++        "snooze calls must explain the external wait"
 +    );
 +}
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs

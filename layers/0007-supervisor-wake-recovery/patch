@@ -379,7 +379,7 @@ index 0000000000000000000000000000000000000000..ec084660b107a4d5c323218260508daa
 +    }
 +}
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
-index 75e249b84df079ccb9ad5741c4bbe58673f215ca..ef9871fd70bb47119a3364e16e557d4cc5470b41 100644
+index dd1527cb8a4d3859624e0e2eb548afee9406733f..a71e13266cb5b01a64786548aeb6220637d45f07 100644
 --- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 @@ -4,14 +4,26 @@ use anyhow::Context;
@@ -409,7 +409,7 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..ef9871fd70bb47119a3364e16e557d4c
 
  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
  async fn root_can_edit_its_active_goal_without_changing_other_goal_state() -> Result<()> {
-@@ -243,3 +255,341 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+@@ -247,3 +259,345 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
 
      Ok(())
  }
@@ -473,7 +473,11 @@ index 75e249b84df079ccb9ad5741c4bbe58673f215ca..ef9871fd70bb47119a3364e16e557d4c
 +                    "supervisor-snooze-call",
 +                    "saffron",
 +                    "supervisor_snooze",
-+                    &json!({ "delay_seconds": 3 }).to_string(),
++                    &json!({
++                        "delay_seconds": 3,
++                        "reason": "The release is still pending."
++                    })
++                    .to_string(),
 +                ),
 +                responses::ev_completed("supervisor-snooze"),
 +            ]),
@@ -1491,10 +1495,10 @@ index 0000000000000000000000000000000000000000..2f4bb1e8948cdbad2543caddc7f44dad
 +    Ok(())
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-index 62d35ee5fa3352760eaf20532abb50f8f5bfa262..f0e4a56dcad6e394f97b1a92564eabd9bebdf5c9 100644
+index 8a73913f19c2af0f52edb530cc7034b6b63160d5..0e9dca3c6ca5aa1e311591ee026293d1800c41b9 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-@@ -103,7 +103,8 @@ pub(super) async fn snooze(
+@@ -107,7 +107,8 @@ pub(super) async fn snooze(
                  runtime::clear_failed_action(parent, helper_id, &action).await;
                  return Err(error);
              }
@@ -1519,7 +1523,7 @@ index d7d83cd74b3a0e42e0e2f79129e592a2395bb2f2..2d9bdedde296473dd55dd58a7e3b05e2
  pub(crate) use runtime::stop;
  pub(crate) use tools::register;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 9d780a7c02e4574521dfeffcf53061adfbda2439..62f362eea9b0721eb94dd392f24434c90d15ee3b 100644
+index 8e39f0bd7b60e528b50e3202688564bce51296fb..29d43eea4eedee74c60f15425296d2438da56c40 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -45,6 +45,15 @@ pub(super) struct Runtime {
@@ -1680,7 +1684,7 @@ index 9d780a7c02e4574521dfeffcf53061adfbda2439..62f362eea9b0721eb94dd392f24434c9
  #[path = "runtime_tests.rs"]
  mod tests;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
-index 5c09fcfe6bde59806301a75ae9d0b4f948e376ec..f7509cb64a40e79e22e985c7a1c0a580146305a8 100644
+index f04cf84807ec83bc632fd4093d463fb36dba9922..a837292c27b734a7fed4e901b3385b4383c31005 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
 @@ -12,6 +12,72 @@ fn failure_retry_is_exponential_and_capped() {
