@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index ea8d6439e1689de6046c86a84698fa79a991a159..b47d25563d9adc3324f7e10b18819d8bac465f3c 100644
+index 5f9d36119f8bd98e2580f2ffad2db78eb21e31f1..a2a4fd69e1398c75b220c6a67ce0ef85e6913eea 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -308,7 +308,9 @@ impl CodexThread {
+@@ -318,7 +318,9 @@ impl CodexThread {
          &self,
          goal: &codex_state::ThreadGoal,
      ) -> Result<bool, String> {
@@ -29,18 +29,18 @@ index 34f11fd5145f121e40f650c8ef650651eaaace99..d362c5529ee66e755a819ece8d887e40
  pub(super) use runtime::commit_goal_edit;
  pub(crate) use runtime::has_reconstructible_snooze;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1bbc19932 100644
+index c04763f48a9e65ebe2443dde57d0173db2d88065..4ef071ac8382acdc051f6eaac8174f526807a8f6 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-@@ -23,6 +23,7 @@ use codex_protocol::user_input::UserInput;
- use codex_utils_output_truncation::truncate_text;
+@@ -24,6 +24,7 @@ use codex_utils_output_truncation::truncate_text;
+ use futures::StreamExt;
  use tokio::sync::Mutex;
  use tokio::time::Instant;
 +use tracing::debug;
  use tracing::warn;
 
  use super::HELPER_ROLE_NAME;
-@@ -40,15 +41,18 @@ const MAX_CHECKIN_PROMPT_TOKENS: usize = 1_000;
+@@ -41,15 +42,18 @@ const MAX_CHECKIN_PROMPT_TOKENS: usize = 1_000;
 
  /// Ephemeral state attached to the supervised parent thread.
  pub(super) struct Runtime {
@@ -61,7 +61,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
          let _transition = Arc::clone(&self.transition).lock_owned().await;
          self.state.lock().await.idle_disposition()
      }
-@@ -57,6 +61,7 @@ impl Runtime {
+@@ -58,6 +62,7 @@ impl Runtime {
  #[derive(Default)]
  struct State {
      goal_id: Option<String>,
@@ -69,7 +69,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      active: Option<ActiveHelper>,
      snooze: Option<Snooze>,
      consecutive_failures: u32,
-@@ -65,7 +70,7 @@ struct State {
+@@ -66,7 +71,7 @@ struct State {
 
  impl State {
      fn idle_disposition(&self) -> IdleDisposition {
@@ -78,7 +78,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
              return IdleDisposition::ProcessLocalWork;
          }
          match self.snooze.as_ref().map(|snooze| snooze.idle_retention) {
-@@ -85,11 +90,41 @@ enum IdleDisposition {
+@@ -86,11 +91,41 @@ enum IdleDisposition {
 
  struct ActiveHelper {
      thread_id: ThreadId,
@@ -120,7 +120,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
  #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
  enum GoalEditState {
      #[default]
-@@ -152,54 +187,80 @@ impl Default for Runtime {
+@@ -153,54 +188,80 @@ impl Default for Runtime {
          Self {
              transition: Arc::new(Mutex::new(())),
              state: Mutex::new(State::default()),
@@ -222,7 +222,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
          }
          let _ = parent
              .services
-@@ -222,7 +283,7 @@ pub(crate) async fn start_checkin(
+@@ -223,7 +284,7 @@ pub(crate) async fn start_checkin(
              && snooze.deadline > now
          {
              schedule_wake(parent, &runtime, snooze.clone());
@@ -231,7 +231,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
          }
          state.active = None;
          if state.snooze.take().is_some() {
-@@ -232,36 +293,113 @@ pub(crate) async fn start_checkin(
+@@ -233,36 +294,113 @@ pub(crate) async fn start_checkin(
 
      if let Some(snooze) = restore_persisted_snooze(parent, goal).await? {
          runtime.state.lock().await.snooze = Some(snooze.clone());
@@ -350,7 +350,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
          state.snooze = None;
          state.consecutive_failures = 0;
          state.previous_action = None;
-@@ -311,6 +449,10 @@ pub(super) async fn select_action(
+@@ -312,6 +450,10 @@ pub(super) async fn select_action(
      action: Action,
  ) -> Result<String, String> {
      let runtime = runtime(parent);
@@ -361,7 +361,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      let mut state = runtime.state.lock().await;
      let Some(active) = state
          .active
-@@ -319,6 +461,9 @@ pub(super) async fn select_action(
+@@ -320,6 +462,9 @@ pub(super) async fn select_action(
      else {
          return Err("this supervisor helper is no longer active".to_string());
      };
@@ -371,7 +371,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      if active.action.is_some() {
          return Err("a supervisor action was already selected for this check-in".to_string());
      }
-@@ -336,6 +481,10 @@ pub(in crate::saffron) async fn begin_goal_edit(
+@@ -337,6 +482,10 @@ pub(in crate::saffron) async fn begin_goal_edit(
      helper_id: ThreadId,
  ) -> Result<codex_state::ThreadGoalRevision, String> {
      let runtime = runtime(parent);
@@ -382,7 +382,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      let mut state = runtime.state.lock().await;
      let Some(active) = state
          .active
-@@ -344,6 +493,9 @@ pub(in crate::saffron) async fn begin_goal_edit(
+@@ -345,6 +494,9 @@ pub(in crate::saffron) async fn begin_goal_edit(
      else {
          return Err("this supervisor helper is no longer active".to_string());
      };
@@ -392,7 +392,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      if active.action.is_some() {
          return Err("the supervisor disposition was already selected".to_string());
      }
-@@ -606,7 +758,7 @@ async fn finish_helper(
+@@ -617,7 +769,7 @@ async fn finish_helper(
  ) {
      let runtime = runtime(parent);
      let _transition = Arc::clone(&runtime.transition).lock_owned().await;
@@ -401,7 +401,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
          let mut state = runtime.state.lock().await;
          let Some(active) = state
              .active
-@@ -616,8 +768,9 @@ async fn finish_helper(
+@@ -627,8 +779,9 @@ async fn finish_helper(
              return;
          };
          let action = active.action.clone();
@@ -412,7 +412,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      };
      let terminal_failure = if action.is_none() {
          match parent
-@@ -640,6 +793,9 @@ async fn finish_helper(
+@@ -651,6 +804,9 @@ async fn finish_helper(
      {
          warn!(%helper_id, "failed to retire Saffron goal supervisor: {error}");
      }
@@ -422,7 +422,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      if action.is_none() {
          if let Some(terminal_failure) = terminal_failure {
              match failure::block_goal(parent, goal_id, &terminal_failure).await {
-@@ -655,20 +811,31 @@ async fn finish_helper(
+@@ -666,20 +822,31 @@ async fn finish_helper(
                      return;
                  }
                  Err(error) => {
@@ -457,7 +457,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      }
  }
 
-@@ -677,7 +844,7 @@ async fn defer_failure(
+@@ -688,7 +855,7 @@ async fn defer_failure(
      runtime: &Arc<Runtime>,
      goal_id: &str,
      error: String,
@@ -466,7 +466,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      let delay = {
          let mut state = runtime.state.lock().await;
          state.consecutive_failures = state.consecutive_failures.saturating_add(1);
-@@ -704,11 +871,17 @@ async fn defer_failure(
+@@ -715,11 +882,17 @@ async fn defer_failure(
                  runtime.state.lock().await.snooze = Some(snooze.clone());
              }
              schedule_wake(parent, runtime, snooze);
@@ -488,7 +488,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      }
  }
 
-@@ -731,32 +904,16 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -742,32 +915,16 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
          if runtime.wake_generation.load(Ordering::Acquire) != generation {
              return;
          }
@@ -530,7 +530,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
              parent
                  .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Completed)
                  .await;
-@@ -788,15 +945,8 @@ async fn restore_persisted_snooze(
+@@ -799,15 +956,8 @@ async fn restore_persisted_snooze(
      {
          return Ok(None);
      }
@@ -548,7 +548,7 @@ index 378cac0bd08e7ccb6a74fd96e2a347f39053e74c..cce644c9b690181fc3d0dac21003fca1
      Ok(Some(Snooze {
          wake,
          deadline: Instant::now() + Duration::from_millis(remaining_millis),
-@@ -804,6 +954,42 @@ async fn restore_persisted_snooze(
+@@ -815,6 +965,42 @@ async fn restore_persisted_snooze(
      }))
  }
 
@@ -974,7 +974,7 @@ index f7509cb64a40e79e22e985c7a1c0a580146305a8..980e8950cb48ad9c4a802e96579651e6
  fn failure_retry_is_exponential_and_capped() {
      assert_eq!(failure_retry_delay(1), Duration::from_secs(60));
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index dcea9a99d24e9b1ecf7fcfaa20f3966b0ce63bca..19b0797455654dce727b62770b65b786b88d05da 100644
+index 8ab59644272ec87d673f9133a99f3cc67228412d..88ecf82205fd0ea6c1ba73a528d48fc4da6e54fe 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
 @@ -86,6 +86,13 @@ pub async fn inter_agent_communication(
@@ -992,7 +992,7 @@ index dcea9a99d24e9b1ecf7fcfaa20f3966b0ce63bca..19b0797455654dce727b62770b65b786
          sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
              .await;
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 30222ee8a3581af729c978b23f8407e5f5a82578..f8f8ae7a72f6b670e0c8fab0b4d6e577bf2133de 100644
+index 68d40dfea1e6f1a5e1dced17aa49ca4c689cfe4e..57845f028a8ccc8b0a40d5c263a512eaf5f32153 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -273,6 +273,11 @@ impl Session {

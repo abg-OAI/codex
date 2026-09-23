@@ -181,10 +181,10 @@ index 407c9eef493663793766dcd4fc44de9be9deaeed..75e249b84df079ccb9ad5741c4bbe586
 
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 60278875807a1d6a23838136a2f545eaad7c1ac9..eb7f97ca2c5ce8f4b70dfc2c990e11e37eebdf07 100644
+index 630ef68cd186ca2d9e51ed90fc022b43b2acf3d5..0716bfa14ac6158452578bda9c465097a7aef72d 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -306,10 +306,9 @@ impl CodexThread {
+@@ -316,10 +316,9 @@ impl CodexThread {
      /// goal extension can retain its ordinary continuation behavior.
      pub async fn start_saffron_goal_supervisor_checkin(
          &self,
@@ -566,7 +566,7 @@ index 8cc5a7a75e3f3bfc706be54a46f5740a4010fd44..b37ee40bcbb20d03f464655b6975199d
 +supervisor action. After the action tool returns, end your turn immediately
 +without additional tool calls.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 25d254d6cae609207c1f61a26ff258b24184cb98..29cc6606b20c6ff13887995f928d9f45ee3df36b 100644
+index 455b2ac96fd9cfb6dfe85713e42d634a14c89c0d..4e6e38fbd2e1ffa703ac83d13ebae58329ef8887 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -14,7 +14,6 @@ use codex_protocol::protocol::Event;
@@ -577,7 +577,7 @@ index 25d254d6cae609207c1f61a26ff258b24184cb98..29cc6606b20c6ff13887995f928d9f45
  use codex_protocol::protocol::TruncationPolicy;
  use codex_protocol::protocol::WarningEvent;
  use codex_protocol::user_input::UserInput;
-@@ -51,10 +50,19 @@ struct State {
+@@ -52,10 +51,19 @@ struct State {
 
  struct ActiveHelper {
      thread_id: ThreadId,
@@ -598,7 +598,7 @@ index 25d254d6cae609207c1f61a26ff258b24184cb98..29cc6606b20c6ff13887995f928d9f45
  #[derive(Clone)]
  pub(super) struct Snooze {
      pub(super) goal_id: String,
-@@ -87,9 +95,9 @@ impl Default for Runtime {
+@@ -88,9 +96,9 @@ impl Default for Runtime {
  /// idle transition, including any deferred retry.
  pub(crate) async fn start_checkin(
      parent: &Arc<Session>,
@@ -610,7 +610,7 @@ index 25d254d6cae609207c1f61a26ff258b24184cb98..29cc6606b20c6ff13887995f928d9f45
      let parent_source = parent.session_source().await;
      if matches!(parent_source, SessionSource::SubAgent(_)) {
          return Ok(false);
-@@ -114,7 +122,7 @@ pub(crate) async fn start_checkin(
+@@ -115,7 +123,7 @@ pub(crate) async fn start_checkin(
          .await
          .active
          .as_ref()
@@ -619,7 +619,7 @@ index 25d254d6cae609207c1f61a26ff258b24184cb98..29cc6606b20c6ff13887995f928d9f45
      if let Some((helper_id, active_goal_id)) = active {
          if active_goal_id == goal_id
              && matches!(
-@@ -153,7 +161,8 @@ pub(crate) async fn start_checkin(
+@@ -154,7 +162,8 @@ pub(crate) async fn start_checkin(
          Ok(helper_id) => {
              runtime.state.lock().await.active = Some(ActiveHelper {
                  thread_id: helper_id,
@@ -629,7 +629,7 @@ index 25d254d6cae609207c1f61a26ff258b24184cb98..29cc6606b20c6ff13887995f928d9f45
                  action: None,
              });
              watch_helper(Arc::downgrade(parent), helper_id, goal_id.to_string());
-@@ -190,7 +199,9 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
+@@ -191,7 +200,9 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
      }
  }
 
@@ -640,7 +640,7 @@ index 25d254d6cae609207c1f61a26ff258b24184cb98..29cc6606b20c6ff13887995f928d9f45
      let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
          parent_thread_id,
          agent_role: Some(role),
-@@ -232,11 +243,71 @@ pub(super) async fn select_action(
+@@ -233,11 +244,71 @@ pub(super) async fn select_action(
      if active.action.is_some() {
          return Err("a supervisor action was already selected for this check-in".to_string());
      }
@@ -713,7 +713,7 @@ index 25d254d6cae609207c1f61a26ff258b24184cb98..29cc6606b20c6ff13887995f928d9f45
  pub(super) async fn commit_action(parent: &Session, action: Action) {
      let runtime = runtime(parent);
      let mut state = runtime.state.lock().await;
-@@ -268,7 +339,10 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
+@@ -269,7 +340,10 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
          .get_or_init(Runtime::default)
  }
 
@@ -725,7 +725,7 @@ index 25d254d6cae609207c1f61a26ff258b24184cb98..29cc6606b20c6ff13887995f928d9f45
      let mut config = parent.effective_session_config().await;
      config.ephemeral = true;
      config.developer_instructions = Some(match config.developer_instructions.take() {
-@@ -323,12 +397,12 @@ fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str)
+@@ -324,12 +398,12 @@ fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str)
      truncate_text(&prompt, TruncationPolicy::Tokens(MAX_CHECKIN_PROMPT_TOKENS))
  }
 
@@ -821,10 +821,10 @@ index 9ba5aac20a4310b9cb747d78cc9623f5d4e8f2c8..4eeb45b0520ae072a5a0b9caf96c1f21
              .thread_extension_data()
              .get::<TurnStartOptions>()
 diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
-index 9e5b3416862d5aec2e0ddf65feeaf3cbc627fbfb..c23008260e981e578efe076ebd804e50fc00ab99 100644
+index 6d88091b2fe7f9127e18b830ead6998c8799c739..024191c66ea1218b5880342eb25e2950b08bb3ed 100644
 --- a/codex-rs/state/src/lib.rs
 +++ b/codex-rs/state/src/lib.rs
-@@ -82,6 +82,7 @@ pub use runtime::RuntimeDbBackup;
+@@ -85,6 +85,7 @@ pub use runtime::RuntimeDbBackup;
  pub use runtime::SqliteIntegrityCheck;
  pub use runtime::SqliteQueueStore;
  pub use runtime::ThreadFilterOptions;
