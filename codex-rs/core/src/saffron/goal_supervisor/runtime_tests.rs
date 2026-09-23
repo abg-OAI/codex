@@ -473,6 +473,196 @@ fn each_checkin_prompt_includes_its_current_time() {
     );
 }
 
+#[tokio::test]
+async fn continuity_recovers_the_same_goals_previous_action() {
+    let (_home, parent, store) = parent_with_saffron_store().await;
+    let goal = test_goal(parent.thread_id);
+    let persisted = GoalSupervisorContinuity {
+        thread_id: parent.thread_id,
+        goal_id: goal.goal_id.clone(),
+        action: GoalSupervisorAction::Followup,
+        action_at_ms: 1_787_288_448_000,
+    };
+    store
+        .set_goal_supervisor_continuity(&persisted)
+        .await
+        .expect("persist continuity");
+    runtime(&parent).state.lock().await.goal_id = Some(goal.goal_id.clone());
+
+    let rendered: serde_json::Value =
+        serde_json::from_str(&continuity(&parent, &goal).await).expect("continuity JSON");
+
+    assert_eq!(
+        rendered,
+        serde_json::json!({
+            "goal_created_at": goal.created_at.timestamp(),
+            "goal_updated_at": goal.updated_at.timestamp(),
+            "tokens_used": 0,
+            "time_used_seconds": 0,
+            "previous_action": "followup",
+            "previous_action_at_ms": 1_787_288_448_000_i64,
+            "consecutive_failures": 0,
+        })
+    );
+    assert_eq!(
+        runtime(&parent).state.lock().await.previous_action,
+        Some(PreviousAction {
+            goal_id: goal.goal_id,
+            action: Action::Followup,
+            action_at_ms: persisted.action_at_ms,
+        })
+    );
+}
+
+#[tokio::test]
+async fn continuity_recovers_snooze_delay_and_reason() {
+    let (_home, parent, store) = parent_with_saffron_store().await;
+    let goal = test_goal(parent.thread_id);
+    store
+        .set_goal_supervisor_continuity(&GoalSupervisorContinuity {
+            thread_id: parent.thread_id,
+            goal_id: goal.goal_id.clone(),
+            action: GoalSupervisorAction::Snooze {
+                delay_seconds: 900,
+                reason: "remote release build is still running".to_string(),
+            },
+            action_at_ms: 1_787_288_448_000,
+        })
+        .await
+        .expect("persist continuity");
+
+    let rendered: serde_json::Value =
+        serde_json::from_str(&continuity(&parent, &goal).await).expect("continuity JSON");
+
+    assert_eq!(
+        rendered["previous_action"],
+        serde_json::json!({
+            "snooze": {
+                "delay_seconds": 900,
+                "reason": "remote release build is still running",
+            }
+        })
+    );
+    assert_eq!(
+        rendered["previous_action_at_ms"],
+        serde_json::json!(1_787_288_448_000_i64)
+    );
+}
+
+#[tokio::test]
+async fn continuity_discards_an_action_from_a_replaced_goal() {
+    let (_home, parent, store) = parent_with_saffron_store().await;
+    let previous_goal = test_goal(parent.thread_id);
+    store
+        .set_goal_supervisor_continuity(&GoalSupervisorContinuity {
+            thread_id: parent.thread_id,
+            goal_id: previous_goal.goal_id.clone(),
+            action: GoalSupervisorAction::Followup,
+            action_at_ms: 10,
+        })
+        .await
+        .expect("persist continuity");
+    let replacement_goal = codex_state::ThreadGoal {
+        goal_id: "replacement-goal".to_string(),
+        ..previous_goal.clone()
+    };
+
+    let rendered: serde_json::Value =
+        serde_json::from_str(&continuity(&parent, &replacement_goal).await)
+            .expect("continuity JSON");
+
+    assert_eq!(rendered["previous_action"], serde_json::Value::Null);
+    assert_eq!(rendered["previous_action_at_ms"], serde_json::Value::Null);
+    assert_eq!(
+        store
+            .reconcile_goal_supervisor_continuity(parent.thread_id, &previous_goal.goal_id,)
+            .await
+            .expect("read discarded continuity"),
+        None
+    );
+}
+
+#[tokio::test]
+async fn completing_a_goal_removes_its_previous_action() {
+    let (_home, parent, store) = parent_with_saffron_store().await;
+    let goal = test_goal(parent.thread_id);
+    runtime(&parent).state.lock().await.goal_id = Some(goal.goal_id.clone());
+    store
+        .set_goal_supervisor_continuity(&GoalSupervisorContinuity {
+            thread_id: parent.thread_id,
+            goal_id: goal.goal_id.clone(),
+            action: GoalSupervisorAction::Compact,
+            action_at_ms: 10,
+        })
+        .await
+        .expect("persist continuity");
+
+    commit_action(&parent, &goal.goal_id, Action::Complete).await;
+
+    assert_eq!(runtime(&parent).state.lock().await.previous_action, None);
+    assert_eq!(
+        store
+            .reconcile_goal_supervisor_continuity(parent.thread_id, &goal.goal_id)
+            .await
+            .expect("read completed continuity"),
+        None
+    );
+}
+
+#[tokio::test]
+async fn continuity_filters_an_in_memory_action_from_a_replaced_goal() {
+    let (_home, parent, _store) = parent_with_saffron_store().await;
+    let previous_goal = test_goal(parent.thread_id);
+    let replacement_goal = codex_state::ThreadGoal {
+        goal_id: "replacement-goal".to_string(),
+        ..previous_goal.clone()
+    };
+    let supervisor_runtime = runtime(&parent);
+    let mut state = supervisor_runtime.state.lock().await;
+    state.goal_id = Some(replacement_goal.goal_id.clone());
+    state.previous_action = Some(PreviousAction {
+        goal_id: previous_goal.goal_id,
+        action: Action::Followup,
+        action_at_ms: 10,
+    });
+    drop(state);
+
+    let rendered: serde_json::Value =
+        serde_json::from_str(&continuity(&parent, &replacement_goal).await)
+            .expect("continuity JSON");
+
+    assert_eq!(rendered["previous_action"], serde_json::Value::Null);
+    assert_eq!(rendered["previous_action_at_ms"], serde_json::Value::Null);
+    assert_eq!(supervisor_runtime.state.lock().await.previous_action, None);
+}
+
+#[tokio::test]
+async fn stale_action_after_goal_replacement_is_discarded() {
+    let (_home, parent, store) = parent_with_saffron_store().await;
+    let previous_goal = test_goal(parent.thread_id);
+    let replacement_goal = codex_state::ThreadGoal {
+        goal_id: "replacement-goal".to_string(),
+        ..previous_goal.clone()
+    };
+    runtime(&parent).state.lock().await.goal_id = Some(replacement_goal.goal_id.clone());
+
+    commit_action(&parent, &previous_goal.goal_id, Action::Followup).await;
+
+    let rendered: serde_json::Value =
+        serde_json::from_str(&continuity(&parent, &replacement_goal).await)
+            .expect("continuity JSON");
+    assert_eq!(rendered["previous_action"], serde_json::Value::Null);
+    assert_eq!(rendered["previous_action_at_ms"], serde_json::Value::Null);
+    assert_eq!(runtime(&parent).state.lock().await.previous_action, None);
+    assert_eq!(
+        store
+            .reconcile_goal_supervisor_continuity(parent.thread_id, &previous_goal.goal_id)
+            .await
+            .expect("read stale continuity"),
+        None
+    );
+}
+
 #[test]
 fn checkin_prompt_bounds_large_goal_objectives_without_losing_current_time() {
     let objective = "long objective ".repeat(2_000);
@@ -484,6 +674,22 @@ fn checkin_prompt_bounds_large_goal_objectives_without_losing_current_time() {
         prompt.starts_with("# Supervisor Check-in\n\nCurrent UTC time: 2026-08-21 05:25:25 UTC")
     );
     assert!(prompt.len() < objective.len());
+}
+
+async fn parent_with_saffron_store() -> (tempfile::TempDir, Arc<Session>, SaffronStore) {
+    let home = tempfile::tempdir().expect("SQLite home");
+    let state_db = codex_state::StateRuntime::init(
+        codex_state::SqliteConfig::new_for_testing(home.path().abs()),
+        "test-provider".to_string(),
+    )
+    .await
+    .expect("state runtime");
+    let (mut session, _) = make_session_and_context().await;
+    session.services.state_db = Some(state_db.clone());
+    let store = SaffronStore::open(state_db.sqlite())
+        .await
+        .expect("Saffron store");
+    (home, Arc::new(session), store)
 }
 
 #[test]
