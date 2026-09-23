@@ -1,0 +1,921 @@
+diff --git a/codex-rs/core/BUILD.bazel b/codex-rs/core/BUILD.bazel
+index cb35952df0f8ffea93caab6fa0dc00bc6ec46fa3..b63e3c5f6aae7521561b6ab933edfc9d5dcf909a 100644
+--- a/codex-rs/core/BUILD.bazel
++++ b/codex-rs/core/BUILD.bazel
+@@ -2,7 +2,10 @@ load("//:defs.bzl", "codex_rust_crate")
+
+ codex_rust_crate(
+     name = "core",
+-    compile_data = glob(["assets/**"]),
++    compile_data = glob([
++        "assets/**",
++        "src/saffron/migrations/**",
++    ]),
+     crate_name = "codex_core",
+     crate_srcs = glob(["src/**/*.rs"]) + [
+         "//codex-rs/ext/guardian-v2:src/sync_reviewer/reviewer_config.rs",
+diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
+index 2057a471c52033220dc8357d1b8ff2bf7da13be5..60bc80747658473117f349074d719b17934865e9 100644
+--- a/codex-rs/core/src/codex_thread.rs
++++ b/codex-rs/core/src/codex_thread.rs
+@@ -334,7 +334,7 @@ impl CodexThread {
+             .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
+     }
+
+-    /// Clears process-local supervisor state after a goal becomes inactive.
++    /// Clears supervisor state after a goal becomes inactive.
+     pub async fn stop_saffron_goal_supervisor(&self) {
+         crate::saffron::goal_supervisor::stop(&self.session).await;
+     }
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
+index 0e9dca3c6ca5aa1e311591ee026293d1800c41b9..f08324c8cba3a89184c7b35d171452728a097141 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
++++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
+@@ -29,12 +29,12 @@ pub(super) async fn followup(
+         return Err("message must not be empty".to_string());
+     }
+     let action = Action::Followup;
+-    runtime::select_action(parent, helper.thread_id, action.clone()).await?;
++    let goal_id = runtime::select_action(parent, helper.thread_id, action.clone()).await?;
+     if let Err(error) = deliver_parent_message(helper, parent, message).await {
+         runtime::clear_failed_action(parent, helper.thread_id, &action).await;
+         return Err(error);
+     }
+-    runtime::commit_action(parent, action).await;
++    runtime::commit_action(parent, &goal_id, action).await;
+     Ok(())
+ }
+
+@@ -114,13 +114,13 @@ pub(super) async fn snooze(
+         return Err(error);
+     }
+     runtime::schedule_wake(parent, &supervisor_runtime, snooze);
+-    runtime::commit_action(parent, action).await;
++    runtime::commit_action(parent, &goal_id, action).await;
+     Ok(())
+ }
+
+ pub(super) async fn compact(parent: &Arc<Session>, helper_id: ThreadId) -> Result<String, String> {
+     let action = Action::Compact;
+-    runtime::select_action(parent, helper_id, action.clone()).await?;
++    let goal_id = runtime::select_action(parent, helper_id, action.clone()).await?;
+     if parent.active_turn.lock().await.is_some() {
+         runtime::clear_failed_action(parent, helper_id, &action).await;
+         return Err("the parent became busy before compaction could start".to_string());
+@@ -141,7 +141,7 @@ pub(super) async fn compact(parent: &Arc<Session>, helper_id: ThreadId) -> Resul
+     if result.is_err() {
+         runtime::clear_failed_action(parent, helper_id, &action).await;
+     } else {
+-        runtime::commit_action(parent, action).await;
++        runtime::commit_action(parent, &goal_id, action).await;
+     }
+     result
+ }
+@@ -196,6 +196,6 @@ pub(super) async fn complete(
+             }),
+         })
+         .await;
+-    runtime::commit_action(parent, action).await;
++    runtime::commit_action(parent, &goal_id, action).await;
+     Ok(goal)
+ }
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/failure.rs b/codex-rs/core/src/saffron/goal_supervisor/failure.rs
+index fa89a49506aa81c7d9240298d67310f3a1fd96eb..49e0cb17e21731cf9bbf9fa22b9f1a76cd3c89b7 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/failure.rs
++++ b/codex-rs/core/src/saffron/goal_supervisor/failure.rs
+@@ -72,6 +72,13 @@ pub(super) async fn block_goal(
+         .await
+         .map_err(|error| error.to_string())?
+         .ok_or_else(|| "the active goal changed before it could be blocked".to_string())?;
++    if let Err(error) = super::runtime::clear_persisted_action_for_goal(parent, goal_id).await {
++        tracing::warn!(
++            thread_id = %parent.thread_id,
++            %goal_id,
++            "failed to clear blocked Saffron supervisor continuity: {error}"
++        );
++    }
+     parent
+         .send_event_raw(Event {
+             id: format!("saffron-supervisor-blocked-{}", parent.thread_id),
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/mod.rs b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
+index d362c5529ee66e755a819ece8d887e40ff7c7117..b347bf2ad246e69a9dab125763e66a71e3517b19 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/mod.rs
++++ b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
+@@ -5,9 +5,9 @@
+ //! root threads: it forks a short-lived helper with the parent's full history,
+ //! lets the helper choose one bounded action, and then retires the helper.
+ //!
+-//! Helper identity, retry counters, and continuity hints remain process-local.
+-//! Snooze and retry deadlines are also recorded in Saffron's auxiliary store,
+-//! allowing a new runtime to preserve their absolute wake time.
++//! Helper identity and retry counters remain process-local. Saffron's auxiliary
++//! store preserves the last committed action for the active goal, along with
++//! snooze and retry deadlines, so a new runtime can restore its continuity.
+
+ mod actions;
+ mod failure;
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
+index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9820ab57f 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
++++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
+@@ -32,6 +32,8 @@ use super::failure;
+ use crate::agent::next_thread_spawn_depth;
+ use crate::agent::types::SpawnAgentForkMode;
+ use crate::agent::types::SpawnAgentOptions;
++use crate::saffron::storage::GoalSupervisorAction;
++use crate::saffron::storage::GoalSupervisorContinuity;
+ use crate::saffron::storage::GoalWake;
+ use crate::saffron::storage::SaffronStore;
+ use crate::session::session::Session;
+@@ -66,7 +68,7 @@ struct State {
+     active: Option<ActiveHelper>,
+     snooze: Option<Snooze>,
+     consecutive_failures: u32,
+-    previous_action: Option<Action>,
++    previous_action: Option<PreviousAction>,
+ }
+
+ impl State {
+@@ -183,6 +185,13 @@ pub(super) enum Action {
+     Complete,
+ }
+
++#[derive(Clone, Debug, Eq, PartialEq)]
++struct PreviousAction {
++    goal_id: String,
++    action: Action,
++    action_at_ms: i64,
++}
++
+ impl Default for Runtime {
+     fn default() -> Self {
+         Self {
+@@ -391,7 +400,7 @@ pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: Contin
+     }
+ }
+
+-/// Cancels process-local supervision when no active goal remains.
++/// Cancels supervision and removes its continuity when no active goal remains.
+ pub(crate) async fn stop(parent: &Arc<Session>) {
+     let runtime = runtime(parent);
+     let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+@@ -415,6 +424,12 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
+     {
+         warn!(%helper_id, "failed to stop Saffron goal supervisor: {error}");
+     }
++    if let Err(error) = clear_persisted_action(parent).await {
++        warn!(
++            thread_id = %parent.thread_id,
++            "failed to clear Saffron supervisor continuity: {error}"
++        );
++    }
+ }
+
+ pub(in crate::saffron) async fn parent_for_helper(
+@@ -540,13 +555,105 @@ pub(in crate::saffron) async fn clear_failed_goal_edit(parent: &Session, helper_
+     }
+ }
+
+-pub(super) async fn commit_action(parent: &Session, action: Action) {
++pub(super) async fn commit_action(parent: &Session, goal_id: &str, action: Action) {
+     let runtime = runtime(parent);
++    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
++    if runtime.state.lock().await.goal_id.as_deref() != Some(goal_id) {
++        debug!(
++            thread_id = %parent.thread_id,
++            %goal_id,
++            "discarded action continuity for a replaced goal"
++        );
++        return;
++    }
++    let action_at_ms = Utc::now().timestamp_millis();
++    let previous_action = if matches!(&action, Action::Complete) {
++        if let Err(error) = clear_persisted_action_for_goal(parent, goal_id).await {
++            warn!(
++                thread_id = %parent.thread_id,
++                %goal_id,
++                "failed to clear completed Saffron supervisor continuity: {error}"
++            );
++        }
++        None
++    } else {
++        let previous_action = PreviousAction {
++            goal_id: goal_id.to_string(),
++            action: action.clone(),
++            action_at_ms,
++        };
++        if let Err(error) = persist_action(parent, &previous_action).await {
++            warn!(
++                thread_id = %parent.thread_id,
++                %goal_id,
++                "failed to persist Saffron supervisor continuity: {error}"
++            );
++        }
++        Some(previous_action)
++    };
+     let mut state = runtime.state.lock().await;
+-    state.previous_action = Some(action);
++    state.previous_action = previous_action;
+     state.consecutive_failures = 0;
+ }
+
++async fn persist_action(parent: &Session, previous_action: &PreviousAction) -> Result<(), String> {
++    let Some(state_db) = parent.services.state_db.as_ref() else {
++        return Err("goal state is unavailable".to_string());
++    };
++    let action = match &previous_action.action {
++        Action::Followup => GoalSupervisorAction::Followup,
++        Action::Snooze {
++            delay_seconds,
++            reason,
++        } => GoalSupervisorAction::Snooze {
++            delay_seconds: *delay_seconds,
++            reason: reason.clone(),
++        },
++        Action::Compact => GoalSupervisorAction::Compact,
++        Action::Complete => return Ok(()),
++    };
++    SaffronStore::open(state_db.sqlite())
++        .await
++        .map_err(|error| error.to_string())?
++        .set_goal_supervisor_continuity(&GoalSupervisorContinuity {
++            thread_id: parent.thread_id,
++            goal_id: previous_action.goal_id.clone(),
++            action,
++            action_at_ms: previous_action.action_at_ms,
++        })
++        .await
++        .map_err(|error| error.to_string())
++}
++
++pub(super) async fn clear_persisted_action_for_goal(
++    parent: &Session,
++    goal_id: &str,
++) -> Result<(), String> {
++    let Some(state_db) = parent.services.state_db.as_ref() else {
++        return Ok(());
++    };
++    SaffronStore::open(state_db.sqlite())
++        .await
++        .map_err(|error| error.to_string())?
++        .clear_goal_supervisor_continuity_for_goal(parent.thread_id, goal_id)
++        .await
++        .map(|_| ())
++        .map_err(|error| error.to_string())
++}
++
++async fn clear_persisted_action(parent: &Session) -> Result<(), String> {
++    let Some(state_db) = parent.services.state_db.as_ref() else {
++        return Ok(());
++    };
++    SaffronStore::open(state_db.sqlite())
++        .await
++        .map_err(|error| error.to_string())?
++        .clear_goal_supervisor_continuity(parent.thread_id)
++        .await
++        .map(|_| ())
++        .map_err(|error| error.to_string())
++}
++
+ pub(super) async fn clear_failed_action(parent: &Session, helper_id: ThreadId, action: &Action) {
+     let runtime = runtime(parent);
+     let mut state = runtime.state.lock().await;
+@@ -713,18 +820,80 @@ fn render_checkin_prompt(
+
+ async fn continuity(parent: &Session, goal: &codex_state::ThreadGoal) -> String {
+     let runtime = runtime(parent);
+-    let state = runtime.state.lock().await;
++    let (mut previous_action, consecutive_failures) = {
++        let mut state = runtime.state.lock().await;
++        if state
++            .previous_action
++            .as_ref()
++            .is_some_and(|previous| previous.goal_id != goal.goal_id)
++        {
++            state.previous_action = None;
++        }
++        (state.previous_action.clone(), state.consecutive_failures)
++    };
++    if previous_action.is_none() {
++        previous_action = restore_persisted_action(parent, goal).await;
++        if previous_action.is_some() {
++            let mut state = runtime.state.lock().await;
++            if state.goal_id.as_deref() == Some(goal.goal_id.as_str())
++                && state.previous_action.is_none()
++            {
++                state.previous_action.clone_from(&previous_action);
++            }
++        }
++    }
+     serde_json::json!({
+         "goal_created_at": goal.created_at.timestamp(),
+         "goal_updated_at": goal.updated_at.timestamp(),
+         "tokens_used": goal.tokens_used,
+         "time_used_seconds": goal.time_used_seconds,
+-        "previous_action": state.previous_action,
+-        "consecutive_failures": state.consecutive_failures,
++        "previous_action": previous_action.as_ref().map(|previous| &previous.action),
++        "previous_action_at_ms": previous_action.as_ref().map(|previous| previous.action_at_ms),
++        "consecutive_failures": consecutive_failures,
+     })
+     .to_string()
+ }
+
++async fn restore_persisted_action(
++    parent: &Session,
++    goal: &codex_state::ThreadGoal,
++) -> Option<PreviousAction> {
++    let state_db = parent.services.state_db.as_ref()?;
++    let result = async {
++        let store = SaffronStore::open(state_db.sqlite()).await?;
++        store
++            .reconcile_goal_supervisor_continuity(parent.thread_id, &goal.goal_id)
++            .await
++    }
++    .await;
++    match result {
++        Ok(Some(continuity)) => Some(PreviousAction {
++            goal_id: continuity.goal_id,
++            action: match continuity.action {
++                GoalSupervisorAction::Followup => Action::Followup,
++                GoalSupervisorAction::Snooze {
++                    delay_seconds,
++                    reason,
++                } => Action::Snooze {
++                    delay_seconds,
++                    reason,
++                },
++                GoalSupervisorAction::Compact => Action::Compact,
++            },
++            action_at_ms: continuity.action_at_ms,
++        }),
++        Ok(None) => None,
++        Err(error) => {
++            warn!(
++                thread_id = %parent.thread_id,
++                goal_id = %goal.goal_id,
++                "failed to restore Saffron supervisor continuity: {error}"
++            );
++            None
++        }
++    }
++}
++
+ fn watch_helper(parent: Weak<Session>, helper_id: ThreadId, goal_id: String) {
+     tokio::spawn(async move {
+         let Some(parent) = parent.upgrade() else {
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
+index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51d88d6f7d 100644
+--- a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
++++ b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
+@@ -473,6 +473,196 @@ fn each_checkin_prompt_includes_its_current_time() {
+     );
+ }
+
++#[tokio::test]
++async fn continuity_recovers_the_same_goals_previous_action() {
++    let (_home, parent, store) = parent_with_saffron_store().await;
++    let goal = test_goal(parent.thread_id);
++    let persisted = GoalSupervisorContinuity {
++        thread_id: parent.thread_id,
++        goal_id: goal.goal_id.clone(),
++        action: GoalSupervisorAction::Followup,
++        action_at_ms: 1_787_288_448_000,
++    };
++    store
++        .set_goal_supervisor_continuity(&persisted)
++        .await
++        .expect("persist continuity");
++    runtime(&parent).state.lock().await.goal_id = Some(goal.goal_id.clone());
++
++    let rendered: serde_json::Value =
++        serde_json::from_str(&continuity(&parent, &goal).await).expect("continuity JSON");
++
++    assert_eq!(
++        rendered,
++        serde_json::json!({
++            "goal_created_at": goal.created_at.timestamp(),
++            "goal_updated_at": goal.updated_at.timestamp(),
++            "tokens_used": 0,
++            "time_used_seconds": 0,
++            "previous_action": "followup",
++            "previous_action_at_ms": 1_787_288_448_000_i64,
++            "consecutive_failures": 0,
++        })
++    );
++    assert_eq!(
++        runtime(&parent).state.lock().await.previous_action,
++        Some(PreviousAction {
++            goal_id: goal.goal_id,
++            action: Action::Followup,
++            action_at_ms: persisted.action_at_ms,
++        })
++    );
++}
++
++#[tokio::test]
++async fn continuity_recovers_snooze_delay_and_reason() {
++    let (_home, parent, store) = parent_with_saffron_store().await;
++    let goal = test_goal(parent.thread_id);
++    store
++        .set_goal_supervisor_continuity(&GoalSupervisorContinuity {
++            thread_id: parent.thread_id,
++            goal_id: goal.goal_id.clone(),
++            action: GoalSupervisorAction::Snooze {
++                delay_seconds: 900,
++                reason: "remote release build is still running".to_string(),
++            },
++            action_at_ms: 1_787_288_448_000,
++        })
++        .await
++        .expect("persist continuity");
++
++    let rendered: serde_json::Value =
++        serde_json::from_str(&continuity(&parent, &goal).await).expect("continuity JSON");
++
++    assert_eq!(
++        rendered["previous_action"],
++        serde_json::json!({
++            "snooze": {
++                "delay_seconds": 900,
++                "reason": "remote release build is still running",
++            }
++        })
++    );
++    assert_eq!(
++        rendered["previous_action_at_ms"],
++        serde_json::json!(1_787_288_448_000_i64)
++    );
++}
++
++#[tokio::test]
++async fn continuity_discards_an_action_from_a_replaced_goal() {
++    let (_home, parent, store) = parent_with_saffron_store().await;
++    let previous_goal = test_goal(parent.thread_id);
++    store
++        .set_goal_supervisor_continuity(&GoalSupervisorContinuity {
++            thread_id: parent.thread_id,
++            goal_id: previous_goal.goal_id.clone(),
++            action: GoalSupervisorAction::Followup,
++            action_at_ms: 10,
++        })
++        .await
++        .expect("persist continuity");
++    let replacement_goal = codex_state::ThreadGoal {
++        goal_id: "replacement-goal".to_string(),
++        ..previous_goal.clone()
++    };
++
++    let rendered: serde_json::Value =
++        serde_json::from_str(&continuity(&parent, &replacement_goal).await)
++            .expect("continuity JSON");
++
++    assert_eq!(rendered["previous_action"], serde_json::Value::Null);
++    assert_eq!(rendered["previous_action_at_ms"], serde_json::Value::Null);
++    assert_eq!(
++        store
++            .reconcile_goal_supervisor_continuity(parent.thread_id, &previous_goal.goal_id,)
++            .await
++            .expect("read discarded continuity"),
++        None
++    );
++}
++
++#[tokio::test]
++async fn completing_a_goal_removes_its_previous_action() {
++    let (_home, parent, store) = parent_with_saffron_store().await;
++    let goal = test_goal(parent.thread_id);
++    runtime(&parent).state.lock().await.goal_id = Some(goal.goal_id.clone());
++    store
++        .set_goal_supervisor_continuity(&GoalSupervisorContinuity {
++            thread_id: parent.thread_id,
++            goal_id: goal.goal_id.clone(),
++            action: GoalSupervisorAction::Compact,
++            action_at_ms: 10,
++        })
++        .await
++        .expect("persist continuity");
++
++    commit_action(&parent, &goal.goal_id, Action::Complete).await;
++
++    assert_eq!(runtime(&parent).state.lock().await.previous_action, None);
++    assert_eq!(
++        store
++            .reconcile_goal_supervisor_continuity(parent.thread_id, &goal.goal_id)
++            .await
++            .expect("read completed continuity"),
++        None
++    );
++}
++
++#[tokio::test]
++async fn continuity_filters_an_in_memory_action_from_a_replaced_goal() {
++    let (_home, parent, _store) = parent_with_saffron_store().await;
++    let previous_goal = test_goal(parent.thread_id);
++    let replacement_goal = codex_state::ThreadGoal {
++        goal_id: "replacement-goal".to_string(),
++        ..previous_goal.clone()
++    };
++    let supervisor_runtime = runtime(&parent);
++    let mut state = supervisor_runtime.state.lock().await;
++    state.goal_id = Some(replacement_goal.goal_id.clone());
++    state.previous_action = Some(PreviousAction {
++        goal_id: previous_goal.goal_id,
++        action: Action::Followup,
++        action_at_ms: 10,
++    });
++    drop(state);
++
++    let rendered: serde_json::Value =
++        serde_json::from_str(&continuity(&parent, &replacement_goal).await)
++            .expect("continuity JSON");
++
++    assert_eq!(rendered["previous_action"], serde_json::Value::Null);
++    assert_eq!(rendered["previous_action_at_ms"], serde_json::Value::Null);
++    assert_eq!(supervisor_runtime.state.lock().await.previous_action, None);
++}
++
++#[tokio::test]
++async fn stale_action_after_goal_replacement_is_discarded() {
++    let (_home, parent, store) = parent_with_saffron_store().await;
++    let previous_goal = test_goal(parent.thread_id);
++    let replacement_goal = codex_state::ThreadGoal {
++        goal_id: "replacement-goal".to_string(),
++        ..previous_goal.clone()
++    };
++    runtime(&parent).state.lock().await.goal_id = Some(replacement_goal.goal_id.clone());
++
++    commit_action(&parent, &previous_goal.goal_id, Action::Followup).await;
++
++    let rendered: serde_json::Value =
++        serde_json::from_str(&continuity(&parent, &replacement_goal).await)
++            .expect("continuity JSON");
++    assert_eq!(rendered["previous_action"], serde_json::Value::Null);
++    assert_eq!(rendered["previous_action_at_ms"], serde_json::Value::Null);
++    assert_eq!(runtime(&parent).state.lock().await.previous_action, None);
++    assert_eq!(
++        store
++            .reconcile_goal_supervisor_continuity(parent.thread_id, &previous_goal.goal_id)
++            .await
++            .expect("read stale continuity"),
++        None
++    );
++}
++
+ #[test]
+ fn checkin_prompt_bounds_large_goal_objectives_without_losing_current_time() {
+     let objective = "long objective ".repeat(2_000);
+@@ -486,6 +676,22 @@ fn checkin_prompt_bounds_large_goal_objectives_without_losing_current_time() {
+     assert!(prompt.len() < objective.len());
+ }
+
++async fn parent_with_saffron_store() -> (tempfile::TempDir, Arc<Session>, SaffronStore) {
++    let home = tempfile::tempdir().expect("SQLite home");
++    let state_db = codex_state::StateRuntime::init(
++        codex_state::SqliteConfig::new_for_testing(home.path().abs()),
++        "test-provider".to_string(),
++    )
++    .await
++    .expect("state runtime");
++    let (mut session, _) = make_session_and_context().await;
++    session.services.state_db = Some(state_db.clone());
++    let store = SaffronStore::open(state_db.sqlite())
++        .await
++        .expect("Saffron store");
++    (home, Arc::new(session), store)
++}
++
+ #[test]
+ fn snooze_action_keeps_its_reason_in_continuity() {
+     let action = Action::Snooze {
+diff --git a/codex-rs/core/src/saffron/migrations/0002_goal_supervisor_continuity.sql b/codex-rs/core/src/saffron/migrations/0002_goal_supervisor_continuity.sql
+new file mode 100644
+index 0000000000000000000000000000000000000000..30bebca2e1ef43d2fa46631cd52e82adc206444c
+--- /dev/null
++++ b/codex-rs/core/src/saffron/migrations/0002_goal_supervisor_continuity.sql
+@@ -0,0 +1,23 @@
++CREATE TABLE goal_supervisor_continuity (
++    thread_id TEXT PRIMARY KEY NOT NULL,
++    goal_id TEXT NOT NULL,
++    action_kind TEXT NOT NULL CHECK (
++        action_kind IN ('followup', 'snooze', 'compact')
++    ),
++    action_at_ms INTEGER NOT NULL,
++    snooze_delay_seconds INTEGER,
++    snooze_reason TEXT,
++    CHECK (
++        (
++            action_kind = 'snooze'
++            AND snooze_delay_seconds IS NOT NULL
++            AND snooze_delay_seconds > 0
++            AND snooze_reason IS NOT NULL
++            AND length(trim(snooze_reason)) > 0
++        ) OR (
++            action_kind != 'snooze'
++            AND snooze_delay_seconds IS NULL
++            AND snooze_reason IS NULL
++        )
++    )
++);
+diff --git a/codex-rs/core/src/saffron/storage.rs b/codex-rs/core/src/saffron/storage.rs
+index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0be22a3d78 100644
+--- a/codex-rs/core/src/saffron/storage.rs
++++ b/codex-rs/core/src/saffron/storage.rs
+@@ -37,6 +37,36 @@ pub(super) struct GoalWake {
+     pub(super) wake_at_ms: i64,
+ }
+
++/// Last committed supervisor action for an active goal.
++///
++/// This representation is independent of the runtime action enum so database
++/// compatibility remains owned by the storage boundary.
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub(super) struct GoalSupervisorContinuity {
++    pub(super) thread_id: ThreadId,
++    pub(super) goal_id: String,
++    pub(super) action: GoalSupervisorAction,
++    pub(super) action_at_ms: i64,
++}
++
++/// Action variants that can be useful to a later check-in for the same goal.
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub(super) enum GoalSupervisorAction {
++    Followup,
++    Snooze { delay_seconds: u64, reason: String },
++    Compact,
++}
++
++impl GoalSupervisorAction {
++    fn kind(&self) -> &'static str {
++        match self {
++            Self::Followup => "followup",
++            Self::Snooze { .. } => "snooze",
++            Self::Compact => "compact",
++        }
++    }
++}
++
+ /// Connection owner for Saffron's independent auxiliary database.
+ #[derive(Clone)]
+ pub(super) struct SaffronStore {
+@@ -143,6 +173,145 @@ WHERE thread_id = ?
+         }
+         Ok(cleared)
+     }
++
++    /// Removes continuity for a replaced goal, then returns the current row.
++    pub(super) async fn reconcile_goal_supervisor_continuity(
++        &self,
++        thread_id: ThreadId,
++        goal_id: &str,
++    ) -> anyhow::Result<Option<GoalSupervisorContinuity>> {
++        let mut transaction = self.pool.begin().await?;
++        sqlx::query(
++            r#"
++DELETE FROM goal_supervisor_continuity
++WHERE thread_id = ? AND goal_id != ?
++            "#,
++        )
++        .bind(thread_id.to_string())
++        .bind(goal_id)
++        .execute(&mut *transaction)
++        .await?;
++        let row = sqlx::query(
++            r#"
++SELECT
++    thread_id,
++    goal_id,
++    action_kind,
++    action_at_ms,
++    snooze_delay_seconds,
++    snooze_reason
++FROM goal_supervisor_continuity
++WHERE thread_id = ? AND goal_id = ?
++            "#,
++        )
++        .bind(thread_id.to_string())
++        .bind(goal_id)
++        .fetch_optional(&mut *transaction)
++        .await?;
++        transaction.commit().await?;
++
++        row.map(goal_supervisor_continuity_from_row).transpose()
++    }
++
++    /// Replaces continuity for the thread with the latest committed action.
++    pub(super) async fn set_goal_supervisor_continuity(
++        &self,
++        continuity: &GoalSupervisorContinuity,
++    ) -> anyhow::Result<()> {
++        let (snooze_delay_seconds, snooze_reason) = match &continuity.action {
++            GoalSupervisorAction::Snooze {
++                delay_seconds,
++                reason,
++            } => (Some(i64::try_from(*delay_seconds)?), Some(reason.as_str())),
++            GoalSupervisorAction::Followup | GoalSupervisorAction::Compact => (None, None),
++        };
++        sqlx::query(
++            r#"
++INSERT INTO goal_supervisor_continuity (
++    thread_id,
++    goal_id,
++    action_kind,
++    action_at_ms,
++    snooze_delay_seconds,
++    snooze_reason
++) VALUES (?, ?, ?, ?, ?, ?)
++ON CONFLICT(thread_id) DO UPDATE SET
++    goal_id = excluded.goal_id,
++    action_kind = excluded.action_kind,
++    action_at_ms = excluded.action_at_ms,
++    snooze_delay_seconds = excluded.snooze_delay_seconds,
++    snooze_reason = excluded.snooze_reason
++            "#,
++        )
++        .bind(continuity.thread_id.to_string())
++        .bind(&continuity.goal_id)
++        .bind(continuity.action.kind())
++        .bind(continuity.action_at_ms)
++        .bind(snooze_delay_seconds)
++        .bind(snooze_reason)
++        .execute(&self.pool)
++        .await?;
++        Ok(())
++    }
++
++    /// Deletes continuity only when it still belongs to `goal_id`.
++    pub(super) async fn clear_goal_supervisor_continuity_for_goal(
++        &self,
++        thread_id: ThreadId,
++        goal_id: &str,
++    ) -> anyhow::Result<bool> {
++        let result = sqlx::query(
++            r#"
++DELETE FROM goal_supervisor_continuity
++WHERE thread_id = ? AND goal_id = ?
++            "#,
++        )
++        .bind(thread_id.to_string())
++        .bind(goal_id)
++        .execute(&self.pool)
++        .await?;
++        Ok(result.rows_affected() != 0)
++    }
++
++    /// Deletes all continuity after the thread no longer has a goal.
++    pub(super) async fn clear_goal_supervisor_continuity(
++        &self,
++        thread_id: ThreadId,
++    ) -> anyhow::Result<bool> {
++        let result = sqlx::query(
++            r#"
++DELETE FROM goal_supervisor_continuity
++WHERE thread_id = ?
++            "#,
++        )
++        .bind(thread_id.to_string())
++        .execute(&self.pool)
++        .await?;
++        Ok(result.rows_affected() != 0)
++    }
++}
++
++fn goal_supervisor_continuity_from_row(
++    row: sqlx::sqlite::SqliteRow,
++) -> anyhow::Result<GoalSupervisorContinuity> {
++    let action_kind = row.try_get::<String, _>("action_kind")?;
++    let delay_seconds = row.try_get::<Option<i64>, _>("snooze_delay_seconds")?;
++    let reason = row.try_get::<Option<String>, _>("snooze_reason")?;
++    let action = match (action_kind.as_str(), delay_seconds, reason) {
++        ("followup", None, None) => GoalSupervisorAction::Followup,
++        ("snooze", Some(delay_seconds), Some(reason)) => GoalSupervisorAction::Snooze {
++            delay_seconds: u64::try_from(delay_seconds)?,
++            reason,
++        },
++        ("compact", None, None) => GoalSupervisorAction::Compact,
++        _ => anyhow::bail!("invalid goal supervisor continuity row"),
++    };
++    Ok(GoalSupervisorContinuity {
++        thread_id: ThreadId::from_string(row.try_get::<String, _>("thread_id")?.as_str())?,
++        goal_id: row.try_get("goal_id")?,
++        action,
++        action_at_ms: row.try_get("action_at_ms")?,
++    })
+ }
+
+ fn notify_wake_changed() {
+diff --git a/codex-rs/core/src/saffron/storage_tests.rs b/codex-rs/core/src/saffron/storage_tests.rs
+index 04b0ce79c06aaf586405241898e493f5f7b753b2..b7f302200625cf89863f85ff8b23f6cae4a5dd4a 100644
+--- a/codex-rs/core/src/saffron/storage_tests.rs
++++ b/codex-rs/core/src/saffron/storage_tests.rs
+@@ -17,7 +17,7 @@ async fn saffron_migrations_have_an_independent_ledger() -> anyhow::Result<()> {
+
+     assert_eq!(
+         migration_versions(home.path().join(SAFFRON_DB_FILENAME), &sqlite).await?,
+-        vec![1]
++        vec![1, 2]
+     );
+     assert_eq!(
+         migration_versions(state.sqlite().state_db_path(), &sqlite).await?,
+@@ -26,6 +26,101 @@ async fn saffron_migrations_have_an_independent_ledger() -> anyhow::Result<()> {
+     Ok(())
+ }
+
++#[tokio::test]
++async fn supervisor_continuity_round_trips_snooze_context() -> anyhow::Result<()> {
++    let home = tempfile::tempdir()?;
++    let sqlite = SqliteConfig::new_for_testing(home.path().abs());
++    let store = SaffronStore::open(&sqlite).await?;
++    let continuity = GoalSupervisorContinuity {
++        thread_id: ThreadId::new(),
++        goal_id: "goal-a".to_string(),
++        action: GoalSupervisorAction::Snooze {
++            delay_seconds: 1_477,
++            reason: "release build is still running".to_string(),
++        },
++        action_at_ms: 1_787_288_448_000,
++    };
++
++    store.set_goal_supervisor_continuity(&continuity).await?;
++
++    assert_eq!(
++        store
++            .reconcile_goal_supervisor_continuity(continuity.thread_id, &continuity.goal_id)
++            .await?,
++        Some(continuity)
++    );
++    Ok(())
++}
++
++#[tokio::test]
++async fn supervisor_continuity_is_scoped_to_the_current_goal() -> anyhow::Result<()> {
++    let home = tempfile::tempdir()?;
++    let sqlite = SqliteConfig::new_for_testing(home.path().abs());
++    let store = SaffronStore::open(&sqlite).await?;
++    let thread_id = ThreadId::new();
++    let previous = GoalSupervisorContinuity {
++        thread_id,
++        goal_id: "goal-a".to_string(),
++        action: GoalSupervisorAction::Followup,
++        action_at_ms: 10,
++    };
++    let replacement = GoalSupervisorContinuity {
++        thread_id,
++        goal_id: "goal-b".to_string(),
++        action: GoalSupervisorAction::Compact,
++        action_at_ms: 20,
++    };
++
++    store.set_goal_supervisor_continuity(&previous).await?;
++    assert_eq!(
++        store
++            .reconcile_goal_supervisor_continuity(thread_id, &replacement.goal_id)
++            .await?,
++        None
++    );
++
++    store.set_goal_supervisor_continuity(&replacement).await?;
++    assert!(
++        !store
++            .clear_goal_supervisor_continuity_for_goal(thread_id, &previous.goal_id)
++            .await?
++    );
++    assert_eq!(
++        store
++            .reconcile_goal_supervisor_continuity(thread_id, &replacement.goal_id)
++            .await?,
++        Some(replacement)
++    );
++    Ok(())
++}
++
++#[tokio::test]
++async fn supervisor_continuity_clears_when_no_goal_remains() -> anyhow::Result<()> {
++    let home = tempfile::tempdir()?;
++    let sqlite = SqliteConfig::new_for_testing(home.path().abs());
++    let store = SaffronStore::open(&sqlite).await?;
++    let continuity = GoalSupervisorContinuity {
++        thread_id: ThreadId::new(),
++        goal_id: "completed-goal".to_string(),
++        action: GoalSupervisorAction::Followup,
++        action_at_ms: 10,
++    };
++
++    store.set_goal_supervisor_continuity(&continuity).await?;
++    assert!(
++        store
++            .clear_goal_supervisor_continuity(continuity.thread_id)
++            .await?
++    );
++    assert_eq!(
++        store
++            .reconcile_goal_supervisor_continuity(continuity.thread_id, &continuity.goal_id)
++            .await?,
++        None
++    );
++    Ok(())
++}
++
+ #[tokio::test]
+ async fn replacement_and_conditional_cleanup_preserve_the_newest_wake() -> anyhow::Result<()> {
+     let home = tempfile::tempdir()?;
