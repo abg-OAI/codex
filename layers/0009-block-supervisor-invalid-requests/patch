@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
-index ef9871fd70bb47119a3364e16e557d4cc5470b41..6e26eb4f6503f4704110e854cfb647698d011a98 100644
+index a71e13266cb5b01a64786548aeb6220637d45f07..3627f608e70e9f237757bd1ebecaff540647df33 100644
 --- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 @@ -6,6 +6,8 @@ use app_test_support::MockResponsesConfig;
@@ -19,7 +19,7 @@ index ef9871fd70bb47119a3364e16e557d4cc5470b41..6e26eb4f6503f4704110e854cfb64769
 
  const RESTART_TIMEOUT: Duration = Duration::from_secs(10);
 
-@@ -255,6 +258,79 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+@@ -259,6 +262,79 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
 
      Ok(())
  }
@@ -201,11 +201,11 @@ index 0000000000000000000000000000000000000000..fa89a49506aa81c7d9240298d67310f3
 +    Ok(())
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/mod.rs b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-index 2d9bdedde296473dd55dd58a7e3b05e28c512f46..34f11fd5145f121e40f650c8ef650651eaaace99 100644
+index bf3b3280191c49999721e933437ffc7fa0a3226f..f47e9cc46f3a977d2570551acee0b84a76110a5b 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/mod.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-@@ -10,12 +10,14 @@
- //! allowing a new runtime to preserve their absolute wake time.
+@@ -14,12 +14,14 @@ use crate::session::session::Session;
+ use codex_protocol::protocol::SessionSource;
 
  mod actions;
 +mod failure;
@@ -220,7 +220,7 @@ index 2d9bdedde296473dd55dd58a7e3b05e28c512f46..34f11fd5145f121e40f650c8ef650651
  pub(crate) use identity::is_helper_source;
  pub(super) use runtime::begin_goal_edit;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 62f362eea9b0721eb94dd392f24434c90d15ee3b..c04763f48a9e65ebe2443dde57d0173db2d88065 100644
+index 34171cee0b634db21fe29330b8c0cdc7082157d8..35d4df7843b0d1df0dd3d7b00896c598bac506ae 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -27,6 +27,7 @@ use tokio::time::Instant;
@@ -231,14 +231,12 @@ index 62f362eea9b0721eb94dd392f24434c90d15ee3b..c04763f48a9e65ebe2443dde57d0173d
  use crate::agent::next_thread_spawn_depth;
  use crate::agent::types::SpawnAgentForkMode;
  use crate::agent::types::SpawnAgentOptions;
-@@ -629,6 +630,19 @@ async fn finish_helper(
+@@ -628,6 +629,17 @@ async fn finish_helper(
          state.active = None;
          action
      };
 +    let terminal_failure = if action.is_none() {
-+        match parent
-+            .services
-+            .agent_control
++        match super::local_agent_control(parent)
 +            .get_live_thread(helper_id)
 +            .await
 +        {
@@ -248,10 +246,10 @@ index 62f362eea9b0721eb94dd392f24434c90d15ee3b..c04763f48a9e65ebe2443dde57d0173d
 +    } else {
 +        None
 +    };
-     if let Err(error) = parent
-         .services
-         .agent_control
-@@ -638,6 +652,31 @@ async fn finish_helper(
+     if let Err(error) = super::local_agent_control(parent)
+         .shutdown_live_agent(helper_id)
+         .await
+@@ -635,6 +647,31 @@ async fn finish_helper(
          warn!(%helper_id, "failed to retire Saffron goal supervisor: {error}");
      }
      if action.is_none() {
@@ -284,10 +282,10 @@ index 62f362eea9b0721eb94dd392f24434c90d15ee3b..c04763f48a9e65ebe2443dde57d0173d
              format!("helper ended as {terminal_status:?} without selecting an action");
          defer_failure(parent, &runtime, goal_id, description).await;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 9ab140fc2b3ec06848310b65542173bb3d0e0f02..53367be3a21e88cd9c01895971826b0ec3724bba 100644
+index 832a5d915c7ca6c57ac47cc33effa8f861735de0..2f91666ce859c884da3d086d27eda37d76430b24 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2286,6 +2286,7 @@ impl Session {
+@@ -2276,6 +2276,7 @@ impl Session {
 
      /// Record a terminal CodexErr before the app-server completion notification is reduced.
      pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {

@@ -125,6 +125,39 @@ func TestContinueRecoversAfterResolvedLayerWasCommitted(t *testing.T) {
 	}
 }
 
+func TestCheckRejectsGeneratedCargoWorkspaceVersionChanges(t *testing.T) {
+	root := newCanonicalRepository(t)
+	_, _, projections := newServices(t, root)
+	worktree := filepath.Join(t.TempDir(), "bad-version")
+	generated, err := projections.Create(t.Context(), projection.CreateRequest{
+		Name:         "bad-version-source",
+		WorktreePath: worktree,
+	})
+	if err != nil {
+		t.Fatalf("Create(bad version source) error = %v", err)
+	}
+
+	writeFile(t, filepath.Join(worktree, "codex-rs", "Cargo.lock"), `version = 4
+
+[[package]]
+name = "codex-core"
+version = "1.2.3"
+`)
+	gitRun(t, worktree, "add", "codex-rs/Cargo.lock")
+	gitRun(t, worktree, "commit", "-m", "bad generated Cargo version")
+	layer := captureLayer(t, root, generated.Head, "refs/layerctl/projections/bad-version-source/head")
+	writeLayerDefinition(t, root, "0002-bad-version", layer)
+	if err := projections.Delete(t.Context(), "bad-version-source"); err != nil {
+		t.Fatalf("Delete(bad version source) error = %v", err)
+	}
+
+	upstreamService, _, _ := newServices(t, root)
+	err = upstreamService.Check(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "codex-core=1.2.3") {
+		t.Fatalf("Check() error = %v, want generated Cargo version rejection", err)
+	}
+}
+
 func newCanonicalRepository(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "repository")
@@ -135,6 +168,12 @@ func newCanonicalRepository(t *testing.T) string {
 	gitRun(t, root, "config", "user.name", "Layerctl Test")
 	gitRun(t, root, "config", "user.email", "layerctl@example.com")
 	writeFile(t, filepath.Join(root, "base.txt"), "base\n")
+	writeFile(t, filepath.Join(root, "codex-rs", "Cargo.lock"), `version = 4
+
+[[package]]
+name = "codex-core"
+version = "0.0.0"
+`)
 	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "upstream 1.0")
 	v1Commit := gitOutput(t, root, "rev-parse", "HEAD")

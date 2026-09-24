@@ -22,6 +22,10 @@ then use `layerctl layer add` or `layerctl layer refresh` to capture it.
 `upstream.json` and the ordered layer definitions form one coherent state.
 After advancing `upstream.json`, refresh every layer in order against the new
 upstream tree and each refreshed predecessor.
+Cargo commands can rewrite local-package entries in `codex-rs/Cargo.lock` to
+the workspace release version. Do not capture that generated version churn in
+a layer. Local package versions already present upstream must remain unchanged,
+and a new local package must use the `0.0.0` development version.
 Before handoff, verify that a fresh checkout containing only the configured
 upstream tag and commit can apply the complete layer stack.
 Layer application must not depend on historical projection objects,

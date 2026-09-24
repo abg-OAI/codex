@@ -756,10 +756,10 @@ index dd1527cb8a4d3859624e0e2eb548afee9406733f..a71e13266cb5b01a64786548aeb62206
 +        .collect()
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 0716bfa14ac6158452578bda9c465097a7aef72d..5f9d36119f8bd98e2580f2ffad2db78eb21e31f1 100644
+index d74cc61e48dd15e3cef587e274fa41988580d5dc..3189510f96b7dbcf82130a74f3037ed2f023687a 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -325,6 +325,21 @@ impl CodexThread {
+@@ -331,6 +331,21 @@ impl CodexThread {
      pub async fn stop_saffron_goal_supervisor(&self) {
          crate::saffron::goal_supervisor::stop(&self.session).await;
      }
@@ -782,10 +782,10 @@ index 0716bfa14ac6158452578bda9c465097a7aef72d..5f9d36119f8bd98e2580f2ffad2db78e
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index fe8edfa58ffd3703561cc3c1fe024bb0e3807c07..d10d9d2ec64e5eb61c2f857389a1e73f253410e0 100644
+index 2a1f3cd34789baf6956359fb8090930b6a0df167..e7273e079c7f80cab67e6db1b4e2826bcd3f96d0 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -154,6 +154,9 @@ pub use codex_prompts as review_prompts;
+@@ -153,6 +153,9 @@ pub use codex_prompts as review_prompts;
  mod thread_manager;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
@@ -1495,10 +1495,10 @@ index 0000000000000000000000000000000000000000..2f4bb1e8948cdbad2543caddc7f44dad
 +    Ok(())
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-index 8a73913f19c2af0f52edb530cc7034b6b63160d5..0e9dca3c6ca5aa1e311591ee026293d1800c41b9 100644
+index 0864bade9568346fe00a97cdb2305594470583da..b9ce2c6ced1981817e2da61d6ebe3e262e4231a8 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-@@ -107,7 +107,8 @@ pub(super) async fn snooze(
+@@ -105,7 +105,8 @@ pub(super) async fn snooze(
                  runtime::clear_failed_action(parent, helper_id, &action).await;
                  return Err(error);
              }
@@ -1509,10 +1509,10 @@ index 8a73913f19c2af0f52edb530cc7034b6b63160d5..0e9dca3c6ca5aa1e311591ee026293d1
          runtime::clear_failed_action(parent, helper_id, &action).await;
          return Err(error);
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/mod.rs b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-index d7d83cd74b3a0e42e0e2f79129e592a2395bb2f2..2d9bdedde296473dd55dd58a7e3b05e28c512f46 100644
+index 1c9400599d3d9b5af1f0461ccfc16d436fdcd666..bf3b3280191c49999721e933437ffc7fa0a3226f 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/mod.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-@@ -21,7 +21,9 @@ pub(crate) use identity::is_helper_source;
+@@ -25,7 +25,9 @@ pub(crate) use identity::is_helper_source;
  pub(super) use runtime::begin_goal_edit;
  pub(super) use runtime::clear_failed_goal_edit;
  pub(super) use runtime::commit_goal_edit;
@@ -1523,7 +1523,7 @@ index d7d83cd74b3a0e42e0e2f79129e592a2395bb2f2..2d9bdedde296473dd55dd58a7e3b05e2
  pub(crate) use runtime::stop;
  pub(crate) use tools::register;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 8e39f0bd7b60e528b50e3202688564bce51296fb..29d43eea4eedee74c60f15425296d2438da56c40 100644
+index 8f5064dc0ee344d79b245526975b7c8bb8e42633..34171cee0b634db21fe29330b8c0cdc7082157d8 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -45,6 +45,15 @@ pub(super) struct Runtime {
@@ -1616,7 +1616,7 @@ index 8e39f0bd7b60e528b50e3202688564bce51296fb..29d43eea4eedee74c60f15425296d243
      match spawn_helper(parent, goal).await {
          Ok(helper_id) => {
              runtime.state.lock().await.active = Some(ActiveHelper {
-@@ -416,6 +469,19 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
+@@ -412,6 +465,19 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
          .get_or_init(Runtime::default)
  }
 
@@ -1636,7 +1636,7 @@ index 8e39f0bd7b60e528b50e3202688564bce51296fb..29d43eea4eedee74c60f15425296d243
  async fn spawn_helper(
      parent: &Arc<Session>,
      goal: &codex_state::ThreadGoal,
-@@ -670,6 +736,46 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
+@@ -667,6 +733,46 @@ pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooz
      });
  }
 
@@ -1761,7 +1761,7 @@ index f04cf84807ec83bc632fd4093d463fb36dba9922..a837292c27b734a7fed4e901b3385b43
  fn each_checkin_prompt_includes_its_current_time() {
      let parent_id =
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
-index 5614b5b3d5a07ce746e7922a8721375997b0de92..73b3224cee04bc0a870d5872b4cc4eb33f3af3ba 100644
+index 53a8d1dfd0d60d6f171904d42d472c84fead15bd..63957c93264bc3f05a964c6af88e8e692b504bef 100644
 --- a/codex-rs/core/src/saffron/mod.rs
 +++ b/codex-rs/core/src/saffron/mod.rs
 @@ -7,6 +7,7 @@
