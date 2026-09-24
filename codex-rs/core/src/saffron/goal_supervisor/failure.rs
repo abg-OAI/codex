@@ -72,6 +72,13 @@ pub(super) async fn block_goal(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "the active goal changed before it could be blocked".to_string())?;
+    if let Err(error) = super::runtime::clear_persisted_action_for_goal(parent, goal_id).await {
+        tracing::warn!(
+            thread_id = %parent.thread_id,
+            %goal_id,
+            "failed to clear blocked Saffron supervisor continuity: {error}"
+        );
+    }
     parent
         .send_event_raw(Event {
             id: format!("saffron-supervisor-blocked-{}", parent.thread_id),
