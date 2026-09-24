@@ -1,8 +1,8 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 9af76ee9cb5125e411859442fd91acfe7eef2c39..c4c87c434e55d2542d1d20b5edefcd749d48e57a 100644
+index 24722f640b509b0ecdcde48bf876a2daabf19a2c..ca5d2c74cf4f844c276d1cfbd9b450ef6093638f 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -2974,6 +2974,7 @@ dependencies = [
+@@ -2976,6 +2976,7 @@ dependencies = [
   "sha1 0.10.6",
   "shlex",
   "similar",
@@ -31,7 +31,7 @@ index 0000000000000000000000000000000000000000..8b137891791fe96927ad78e64b0aad7b
 @@ -0,0 +1 @@
 +
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
-index f7ddec47e8a3189f0b530bff337f6c066d0a9de1..5614b5b3d5a07ce746e7922a8721375997b0de92 100644
+index 3106cd654889423169397d98f01639fc6425549f..53a8d1dfd0d60d6f171904d42d472c84fead15bd 100644
 --- a/codex-rs/core/src/saffron/mod.rs
 +++ b/codex-rs/core/src/saffron/mod.rs
 @@ -8,6 +8,7 @@

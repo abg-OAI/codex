@@ -15,10 +15,10 @@ index cb35952df0f8ffea93caab6fa0dc00bc6ec46fa3..b63e3c5f6aae7521561b6ab933edfc9d
      crate_srcs = glob(["src/**/*.rs"]) + [
          "//codex-rs/ext/guardian-v2:src/sync_reviewer/reviewer_config.rs",
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 2057a471c52033220dc8357d1b8ff2bf7da13be5..60bc80747658473117f349074d719b17934865e9 100644
+index 57cf97bf994cfa6ee50fea7b1834c0b240612a3a..e6e771ba15d1c311f7647f61c401f88f1da01e09 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -334,7 +334,7 @@ impl CodexThread {
+@@ -340,7 +340,7 @@ impl CodexThread {
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
      }
 
@@ -28,7 +28,7 @@ index 2057a471c52033220dc8357d1b8ff2bf7da13be5..60bc80747658473117f349074d719b17
          crate::saffron::goal_supervisor::stop(&self.session).await;
      }
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-index 0e9dca3c6ca5aa1e311591ee026293d1800c41b9..5aeb7f07335c564eaf9107ff4b41e17e40d23483 100644
+index b9ce2c6ced1981817e2da61d6ebe3e262e4231a8..233cdda4d07db95c24a05725cdf32bbbe543e3cb 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 @@ -28,13 +28,15 @@ pub(super) async fn followup(
@@ -50,7 +50,7 @@ index 0e9dca3c6ca5aa1e311591ee026293d1800c41b9..5aeb7f07335c564eaf9107ff4b41e17e
      Ok(())
  }
 
-@@ -114,13 +116,13 @@ pub(super) async fn snooze(
+@@ -112,13 +114,13 @@ pub(super) async fn snooze(
          return Err(error);
      }
      runtime::schedule_wake(parent, &supervisor_runtime, snooze);
@@ -66,7 +66,7 @@ index 0e9dca3c6ca5aa1e311591ee026293d1800c41b9..5aeb7f07335c564eaf9107ff4b41e17e
      if parent.active_turn.lock().await.is_some() {
          runtime::clear_failed_action(parent, helper_id, &action).await;
          return Err("the parent became busy before compaction could start".to_string());
-@@ -141,7 +143,7 @@ pub(super) async fn compact(parent: &Arc<Session>, helper_id: ThreadId) -> Resul
+@@ -137,7 +139,7 @@ pub(super) async fn compact(parent: &Arc<Session>, helper_id: ThreadId) -> Resul
      if result.is_err() {
          runtime::clear_failed_action(parent, helper_id, &action).await;
      } else {
@@ -75,7 +75,7 @@ index 0e9dca3c6ca5aa1e311591ee026293d1800c41b9..5aeb7f07335c564eaf9107ff4b41e17e
      }
      result
  }
-@@ -196,6 +198,6 @@ pub(super) async fn complete(
+@@ -192,6 +194,6 @@ pub(super) async fn complete(
              }),
          })
          .await;
@@ -102,7 +102,7 @@ index fa89a49506aa81c7d9240298d67310f3a1fd96eb..49e0cb17e21731cf9bbf9fa22b9f1a76
          .send_event_raw(Event {
              id: format!("saffron-supervisor-blocked-{}", parent.thread_id),
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/mod.rs b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-index d362c5529ee66e755a819ece8d887e40ff7c7117..b347bf2ad246e69a9dab125763e66a71e3517b19 100644
+index dcf696713f7e644f9e81b888c6121f67ae74b447..e7a3d39e8224703877215f11ab07f47c1b455d8c 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/mod.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
 @@ -5,9 +5,9 @@
@@ -116,10 +116,10 @@ index d362c5529ee66e755a819ece8d887e40ff7c7117..b347bf2ad246e69a9dab125763e66a71
 +//! store preserves the last committed action for the active goal, along with
 +//! snooze and retry deadlines, so a new runtime can restore its continuity.
 
- mod actions;
- mod failure;
+ use crate::agent::LocalAgentControl;
+ use crate::session::session::Session;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index db9df29d5ae924746af15e053243a5f37b6cbd5f..7a5abb8316f1831a494b7e877b892231095c5bd8 100644
+index f8a1fd29b3b62bd183f284da24af96f1c532573a..d2aa37e6799607120b745b8095c9bf31bff46eea 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -32,6 +32,8 @@ use super::failure;
@@ -171,7 +171,7 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..7a5abb8316f1831a494b7e877b892231
  impl Default for Runtime {
      fn default() -> Self {
          Self {
-@@ -391,7 +403,7 @@ pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: Contin
+@@ -387,7 +399,7 @@ pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: Contin
      }
  }
 
@@ -180,7 +180,7 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..7a5abb8316f1831a494b7e877b892231
  pub(crate) async fn stop(parent: &Arc<Session>) {
      let runtime = runtime(parent);
      let _transition = Arc::clone(&runtime.transition).lock_owned().await;
-@@ -415,6 +427,12 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
+@@ -409,6 +421,12 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
      {
          warn!(%helper_id, "failed to stop Saffron goal supervisor: {error}");
      }
@@ -193,7 +193,7 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..7a5abb8316f1831a494b7e877b892231
  }
 
  pub(in crate::saffron) async fn parent_for_helper(
-@@ -540,13 +558,124 @@ pub(in crate::saffron) async fn clear_failed_goal_edit(parent: &Session, helper_
+@@ -532,13 +550,124 @@ pub(in crate::saffron) async fn clear_failed_goal_edit(parent: &Session, helper_
      }
  }
 
@@ -320,7 +320,7 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..7a5abb8316f1831a494b7e877b892231
  pub(super) async fn clear_failed_action(parent: &Session, helper_id: ThreadId, action: &Action) {
      let runtime = runtime(parent);
      let mut state = runtime.state.lock().await;
-@@ -622,6 +751,10 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
+@@ -614,6 +743,10 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
          .get_or_init(Runtime::default)
  }
 
@@ -331,7 +331,7 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..7a5abb8316f1831a494b7e877b892231
  /// Reports whether unfinished process-local supervision requires retention.
  ///
  /// An active helper and an automatic failure retry retain the parent. An
-@@ -713,18 +846,88 @@ fn render_checkin_prompt(
+@@ -702,18 +835,88 @@ fn render_checkin_prompt(
 
  async fn continuity(parent: &Session, goal: &codex_state::ThreadGoal) -> String {
      let runtime = runtime(parent);

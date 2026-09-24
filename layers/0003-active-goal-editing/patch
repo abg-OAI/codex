@@ -181,10 +181,10 @@ index 16c4ceec61d3e1eede9cffbd1296a6e3711c84fc..dd1527cb8a4d3859624e0e2eb548afee
 
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 630ef68cd186ca2d9e51ed90fc022b43b2acf3d5..0716bfa14ac6158452578bda9c465097a7aef72d 100644
+index 2b4368d6b6ff39da0ca5e5272d38c280470da506..d74cc61e48dd15e3cef587e274fa41988580d5dc 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -316,10 +316,9 @@ impl CodexThread {
+@@ -322,10 +322,9 @@ impl CodexThread {
      /// goal extension can retain its ordinary continuation behavior.
      pub async fn start_saffron_goal_supervisor_checkin(
          &self,
@@ -486,7 +486,7 @@ index 0000000000000000000000000000000000000000..847ed1b6ee8863bfb3ba9030ed858ed8
 +    }
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-index 514e64be1a12c5a67d072e316655dd6e72165110..1821fd6e48329d38e54ba620ae3bc39bde917a69 100644
+index c6785f82d484fb311dadf355cf65ad85b38d6c8e..640256a88cee4b12e6524fac6100690ae682fbfd 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 @@ -10,7 +10,6 @@ use codex_protocol::protocol::EventMsg;
@@ -505,7 +505,7 @@ index 514e64be1a12c5a67d072e316655dd6e72165110..1821fd6e48329d38e54ba620ae3bc39b
  use crate::session::session::Session;
 
  pub(super) async fn followup(
-@@ -186,23 +186,3 @@ pub(super) async fn complete(
+@@ -182,23 +182,3 @@ pub(super) async fn complete(
      runtime::commit_action(parent, action).await;
      Ok(goal)
  }
@@ -530,10 +530,10 @@ index 514e64be1a12c5a67d072e316655dd6e72165110..1821fd6e48329d38e54ba620ae3bc39b
 -    }
 -}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/mod.rs b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-index a1427399ddc5a6847e669029b5203372f008436b..ac7bdca0b9545a315041032e289bd87e053e5985 100644
+index 7a94491dda4628a416e2a65917c61e92351335e0..b08c621ffa77e2bec07521cb5deb3158f69dfcf3 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/mod.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-@@ -18,6 +18,10 @@ mod tools;
+@@ -22,6 +22,10 @@ mod tools;
 
  pub(crate) use identity::HELPER_ROLE_NAME;
  pub(crate) use identity::is_helper_source;
@@ -564,7 +564,7 @@ index e2e556ee6128e6bc726bd3b8c21ed2728f489e4f..68eae1e06eedb40295321ec442cbc680
 +yourself. Do not create sub-agents. After any optional edit, call exactly one
 +supervisor action. After the action returns, end your turn.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 47a561afee10db1e3a91183af1f189d8f430ed41..bd3ba341fe68833952450f2ca3e5087d325930a7 100644
+index 54fcd03d76f524b98f1aad138904b15a40114c93..818123505dfb9c8dc2278bb717fc898c200a54b7 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -14,7 +14,6 @@ use codex_protocol::protocol::Event;
@@ -627,7 +627,7 @@ index 47a561afee10db1e3a91183af1f189d8f430ed41..bd3ba341fe68833952450f2ca3e5087d
                  action: None,
              });
              watch_helper(Arc::downgrade(parent), helper_id, goal_id.to_string());
-@@ -191,7 +200,9 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
+@@ -189,7 +198,9 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
      }
  }
 
@@ -638,7 +638,7 @@ index 47a561afee10db1e3a91183af1f189d8f430ed41..bd3ba341fe68833952450f2ca3e5087d
      let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
          parent_thread_id,
          agent_role: Some(role),
-@@ -233,11 +244,71 @@ pub(super) async fn select_action(
+@@ -229,11 +240,71 @@ pub(super) async fn select_action(
      if active.action.is_some() {
          return Err("a supervisor action was already selected for this check-in".to_string());
      }
@@ -711,7 +711,7 @@ index 47a561afee10db1e3a91183af1f189d8f430ed41..bd3ba341fe68833952450f2ca3e5087d
  pub(super) async fn commit_action(parent: &Session, action: Action) {
      let runtime = runtime(parent);
      let mut state = runtime.state.lock().await;
-@@ -269,7 +340,10 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
+@@ -265,7 +336,10 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
          .get_or_init(Runtime::default)
  }
 
@@ -723,7 +723,7 @@ index 47a561afee10db1e3a91183af1f189d8f430ed41..bd3ba341fe68833952450f2ca3e5087d
      let mut config = parent.effective_session_config().await;
      config.ephemeral = true;
      config.developer_instructions = Some(match config.developer_instructions.take() {
-@@ -324,12 +398,12 @@ fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str)
+@@ -317,12 +391,12 @@ fn render_checkin_prompt(parent_id: ThreadId, objective: &str, continuity: &str)
      truncate_text(&prompt, TruncationPolicy::Tokens(MAX_CHECKIN_PROMPT_TOKENS))
  }
 
@@ -740,10 +740,10 @@ index 47a561afee10db1e3a91183af1f189d8f430ed41..bd3ba341fe68833952450f2ca3e5087d
          "time_used_seconds": goal.time_used_seconds,
          "previous_action": state.previous_action,
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
-index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c066d0a9de1 100644
+index efe282cc73938c574f582581c96958754e24a75d..3106cd654889423169397d98f01639fc6425549f 100644
 --- a/codex-rs/core/src/saffron/mod.rs
 +++ b/codex-rs/core/src/saffron/mod.rs
-@@ -6,4 +6,33 @@
+@@ -6,4 +6,29 @@
  //! only the integration points that upstream registration needs.
 
  pub(crate) mod await_exec;
@@ -764,11 +764,7 @@ index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c06
 +    turn_context: &TurnContext,
 +    registry: &mut ToolRegistry,
 +) {
-+    let is_supervisor = goal_supervisor::is_helper_source(&turn_context.session_source)
-+        && session
-+            .services
-+            .agent_control
-+            .is_hidden_agent(session.thread_id);
++    let is_supervisor = goal_supervisor::is_helper_session(session, &turn_context.session_source);
 +    if is_supervisor {
 +        goal_edit::register_supervisor(registry);
 +        goal_supervisor::register(registry);
@@ -778,19 +774,14 @@ index efe282cc73938c574f582581c96958754e24a75d..f7ddec47e8a3189f0b530bff337f6c06
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 595eaac7f67d5b8fd70310f11451e5b44e15bd30..d77944cc1467f7c19d9318d31bedd17bba5e9d88 100644
+index f9b045762d1fe7c7d1f848d58ef8067961abe8b6..9f076a6b2d02b754edf34540ddb6c050e667aafa 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
-@@ -149,14 +149,7 @@ pub(crate) fn build_tool_router(
+@@ -150,9 +150,7 @@ pub(crate) fn build_tool_router(
      };
      let mut registry = ToolRegistry::with_tool_policy(Arc::clone(&session.tool_policy));
      add_core_tool_sources(&context, &mut registry);
--    if saffron::goal_supervisor::is_helper_source(&turn_context.session_source)
--        && session
--            .services
--            .agent_control
--            .is_hidden_agent(session.thread_id)
--    {
+-    if saffron::goal_supervisor::is_helper_session(session, &turn_context.session_source) {
 -        saffron::goal_supervisor::register(&mut registry);
 -    }
 +    saffron::register_tools(session, turn_context, &mut registry);

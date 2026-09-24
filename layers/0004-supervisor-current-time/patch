@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 4e6e38fbd2e1ffa703ac83d13ebae58329ef8887..d95cf6466a2380ed9efa3f3b43828cd0c1c9dba4 100644
+index 818123505dfb9c8dc2278bb717fc898c200a54b7..c887370e7770f906c296809a21a0e12c1271968a 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -6,7 +6,10 @@ use std::sync::atomic::AtomicU64;
@@ -13,7 +13,7 @@ index 4e6e38fbd2e1ffa703ac83d13ebae58329ef8887..d95cf6466a2380ed9efa3f3b43828cd0
  use codex_protocol::AgentPath;
  use codex_protocol::ThreadId;
  use codex_protocol::protocol::AgentStatus;
-@@ -346,6 +349,10 @@ async fn spawn_helper(
+@@ -342,6 +345,10 @@ async fn spawn_helper(
  ) -> Result<ThreadId, String> {
      let mut config = parent.effective_session_config().await;
      config.ephemeral = true;
@@ -24,7 +24,7 @@ index 4e6e38fbd2e1ffa703ac83d13ebae58329ef8887..d95cf6466a2380ed9efa3f3b43828cd0
      config.developer_instructions = Some(match config.developer_instructions.take() {
          Some(existing) => format!("{existing}\n\n{}", include_str!("prompt.md")),
          None => include_str!("prompt.md").to_string(),
-@@ -360,7 +367,9 @@ async fn spawn_helper(
+@@ -356,7 +363,9 @@ async fn spawn_helper(
          agent_role: Some(HELPER_ROLE_NAME.to_string()),
      });
      let continuity = continuity(parent, goal).await;
@@ -33,9 +33,9 @@ index 4e6e38fbd2e1ffa703ac83d13ebae58329ef8887..d95cf6466a2380ed9efa3f3b43828cd0
 +    let prompt =
 +        render_checkin_prompt(parent.thread_id, checkin_time, &goal.objective, &continuity);
      let helper = Box::pin(
-         parent
-             .services
-@@ -391,9 +400,21 @@ async fn spawn_helper(
+         super::local_agent_control(parent).spawn_hidden_agent_with_metadata(
+             config,
+@@ -384,9 +393,21 @@ async fn spawn_helper(
  }
 
  /// Renders one bounded model-visible assignment for the ephemeral helper.
@@ -60,7 +60,7 @@ index 4e6e38fbd2e1ffa703ac83d13ebae58329ef8887..d95cf6466a2380ed9efa3f3b43828cd0
      truncate_text(&prompt, TruncationPolicy::Tokens(MAX_CHECKIN_PROMPT_TOKENS))
  }
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
-index fa20a7700be328f11b72d400e87b562c9e00f39a..5c09fcfe6bde59806301a75ae9d0b4f948e376ec 100644
+index 71803da53e4672bc1bf1c6449d027bffeac47a45..f04cf84807ec83bc632fd4093d463fb36dba9922 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
 @@ -1,5 +1,7 @@
@@ -71,7 +71,7 @@ index fa20a7700be328f11b72d400e87b562c9e00f39a..5c09fcfe6bde59806301a75ae9d0b4f9
  use pretty_assertions::assert_eq;
 
  #[test]
-@@ -11,11 +13,40 @@ fn failure_retry_is_exponential_and_capped() {
+@@ -11,12 +13,41 @@ fn failure_retry_is_exponential_and_capped() {
  }
 
  #[test]
@@ -115,3 +115,4 @@ index fa20a7700be328f11b72d400e87b562c9e00f39a..5c09fcfe6bde59806301a75ae9d0b4f9
 +    );
      assert!(prompt.len() < objective.len());
  }
+

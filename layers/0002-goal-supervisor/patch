@@ -483,8 +483,28 @@ index 0000000000000000000000000000000000000000..5f45fe996cad00e76d2e746d9a2ecb20
 +
 +    Ok(())
 +}
+diff --git a/codex-rs/core/src/agent/api.rs b/codex-rs/core/src/agent/api.rs
+index e2ef8de4b58ff1f64873118fed6aa291e9d179e4..1cd4788cb175cccf6015fb02287cd20c1c0c4945 100644
+--- a/codex-rs/core/src/agent/api.rs
++++ b/codex-rs/core/src/agent/api.rs
+@@ -94,6 +94,7 @@ pub trait AgentControl: Send + Sync {
+     /// Check capacity before accepting work. This advisory check does not reserve a slot.
+     fn check_turn_admission(
+         &self,
++        thread_id: ThreadId,
+         version: MultiAgentVersion,
+         source: &SessionSource,
+     ) -> Result<()>;
+@@ -103,6 +104,7 @@ pub trait AgentControl: Send + Sync {
+     /// Root and non-V2 turns return no guard.
+     fn admit_turn(
+         &self,
++        thread_id: ThreadId,
+         version: MultiAgentVersion,
+         source: &SessionSource,
+     ) -> Option<AgentExecutionGuard>;
 diff --git a/codex-rs/core/src/agent/control.rs b/codex-rs/core/src/agent/control.rs
-index fb048a5da5e1a1a548bb7b959cf3caa41a2e2475..47c9949dbde1ab04afc1b69d28cd214f62f23501 100644
+index 719336828f30a891c6991765d5dc116bd53760c8..409ef0f1516761fc5c321d8321b0d712d083971c 100644
 --- a/codex-rs/core/src/agent/control.rs
 +++ b/codex-rs/core/src/agent/control.rs
 @@ -5,6 +5,7 @@ use crate::agent::AgentStatus;
@@ -495,8 +515,8 @@ index fb048a5da5e1a1a548bb7b959cf3caa41a2e2475..47c9949dbde1ab04afc1b69d28cd214f
  use crate::agent::types::AgentMetadata;
  use crate::agent::types::LiveAgent;
  use crate::agent_communication::AgentCommunicationContext;
-@@ -400,6 +401,18 @@ impl LocalAgentControl {
-         Ok(thread_ids)
+@@ -344,6 +345,19 @@ impl LocalAgentControl {
+         self.runtime.registry.agent_metadata_for_thread(agent_id)
      }
 
 +    /// Returns a live thread for internal coordinators that already hold its ID.
@@ -504,17 +524,18 @@ index fb048a5da5e1a1a548bb7b959cf3caa41a2e2475..47c9949dbde1ab04afc1b69d28cd214f
 +        &self,
 +        thread_id: ThreadId,
 +    ) -> CodexResult<Arc<crate::CodexThread>> {
-+        self.upgrade()?.get_thread(thread_id).await
++        self.runtime.upgrade()?.get_thread(thread_id).await
 +    }
 +
 +    /// Returns whether `thread_id` was spawned through the hidden-helper seam.
 +    pub(crate) fn is_hidden_agent(&self, thread_id: ThreadId) -> bool {
 +        self.runtime.registry.is_hidden_thread(thread_id)
 +    }
-     pub(crate) async fn format_environment_context_subagents(
++
+     pub(crate) async fn list_agents(
          &self,
-         parent_thread_id: ThreadId,
-@@ -666,6 +679,7 @@ impl LocalAgentControl {
+         current_session_source: &SessionSource,
+@@ -539,6 +553,7 @@ impl LocalAgentControl {
              agent_path,
              agent_nickname,
              agent_role,
@@ -522,7 +543,7 @@ index fb048a5da5e1a1a548bb7b959cf3caa41a2e2475..47c9949dbde1ab04afc1b69d28cd214f
          })
      }
 
-@@ -678,18 +692,32 @@ impl LocalAgentControl {
+@@ -551,18 +566,32 @@ impl LocalAgentControl {
          depth: i32,
          agent_path: Option<AgentPath>,
          agent_role: Option<String>,
@@ -563,18 +584,18 @@ index fb048a5da5e1a1a548bb7b959cf3caa41a2e2475..47c9949dbde1ab04afc1b69d28cd214f
              parent_thread_id,
              depth,
 diff --git a/codex-rs/core/src/agent/control/api.rs b/codex-rs/core/src/agent/control/api.rs
-index 4f5e9f985f20986f5aa12ddd51292ac3d87af674..ebe6a20c2dec06d0f78afac74f8d6a25a5e8346f 100644
+index 9ee1d50c575e5d13f5d27db26e5d70570a3a637c..9090faa26e3213001d937b7aa65ff7b37d562962 100644
 --- a/codex-rs/core/src/agent/control/api.rs
 +++ b/codex-rs/core/src/agent/control/api.rs
-@@ -14,6 +14,7 @@ use crate::agent::api::SendRequest;
+@@ -13,6 +13,7 @@ use crate::agent::api::DeliveryReceipt;
+ use crate::agent::api::SendRequest;
  use crate::agent::api::SpawnRequest;
- use crate::agent::api::StatusSubscription;
  use crate::agent::types::AgentExecutionGuard;
 +use crate::agent::types::AgentListingVisibility;
  use crate::agent::types::LiveAgent;
  use crate::agent::types::MessageDeliveryMode;
  use crate::agent_communication::AgentCommunicationContext;
-@@ -76,7 +77,14 @@ impl AgentControl for LocalAgentControl {
+@@ -93,7 +94,14 @@ impl AgentControl for LocalAgentControl {
                      )
                  }
              };
@@ -590,25 +611,36 @@ index 4f5e9f985f20986f5aa12ddd51292ac3d87af674..ebe6a20c2dec06d0f78afac74f8d6a25
          })
      }
 
+@@ -246,18 +254,23 @@ impl AgentControl for LocalAgentControl {
+
+     fn check_turn_admission(
+         &self,
++        thread_id: ThreadId,
+         version: MultiAgentVersion,
+         source: &SessionSource,
+     ) -> Result<()> {
++        if self.runtime.registry.is_hidden_thread(thread_id) {
++            return Ok(());
++        }
+         self.ensure_execution_capacity(version, source)
+     }
+
+     fn admit_turn(
+         &self,
++        thread_id: ThreadId,
+         version: MultiAgentVersion,
+         source: &SessionSource,
+     ) -> Option<AgentExecutionGuard> {
+-        self.execution_guard(version, source)
++        self.execution_guard_for_thread(version, source, thread_id)
+     }
+
+     fn record_usage(&self, usage: TokenUsage) -> BoxFuture<'_, Result<()>> {
 diff --git a/codex-rs/core/src/agent/control/execution.rs b/codex-rs/core/src/agent/control/execution.rs
-index 9b605bd3ccd757106e17a360d02f44ec5e0ec294..c331375bb7acedadb77598d1e33fa1a89961b54a 100644
+index 084f7c0054e4442c22cbb456f17fabbcf9fc6279..4f104191f270e7f7c32a08e42b7edc924c08bc71 100644
 --- a/codex-rs/core/src/agent/control/execution.rs
 +++ b/codex-rs/core/src/agent/control/execution.rs
-@@ -35,7 +35,12 @@ impl LocalAgentControl {
-         &self,
-         thread: &CodexThread,
-     ) -> CodexResult<()> {
--        if thread.session.active_turn.lock().await.is_some() {
-+        if thread.session.active_turn.lock().await.is_some()
-+            || self
-+                .runtime
-+                .registry
-+                .is_hidden_thread(thread.session.thread_id)
-+        {
-             return Ok(());
-         }
-         let config = thread.session.get_config().await;
-@@ -71,6 +76,18 @@ impl LocalAgentControl {
+@@ -56,6 +56,18 @@ impl LocalAgentControl {
          is_execution_limited(multi_agent_version, session_source)
              .then(|| Arc::clone(&self.runtime.agent_execution_limiter).guard())
      }
@@ -628,11 +660,12 @@ index 9b605bd3ccd757106e17a360d02f44ec5e0ec294..c331375bb7acedadb77598d1e33fa1a8
 
  impl AgentExecutionLimiter {
 diff --git a/codex-rs/core/src/agent/control/execution_tests.rs b/codex-rs/core/src/agent/control/execution_tests.rs
-index f1b10840d1e516a063749c59d7ba60880b496722..39f161d78e6d8535646916f56e95abd61e28abf6 100644
+index f1b10840d1e516a063749c59d7ba60880b496722..adbcdcb039d427d59d3af74b2804dc8f269e5832 100644
 --- a/codex-rs/core/src/agent/control/execution_tests.rs
 +++ b/codex-rs/core/src/agent/control/execution_tests.rs
-@@ -1,4 +1,8 @@
+@@ -1,4 +1,9 @@
  use crate::agent::LocalAgentControl;
++use crate::agent::api::AgentControl;
 +use crate::agent::types::AgentListingVisibility;
 +use crate::agent::types::AgentMetadata;
 +use codex_protocol::AgentPath;
@@ -640,7 +673,7 @@ index f1b10840d1e516a063749c59d7ba60880b496722..39f161d78e6d8535646916f56e95abd6
  use codex_protocol::error::CodexErrorDetails;
  use codex_protocol::protocol::MultiAgentVersion;
  use codex_protocol::protocol::SessionSource;
-@@ -23,12 +27,13 @@ fn execution_guards_count_active_v2_subagent_turns() {
+@@ -23,12 +28,13 @@ fn execution_guards_count_active_v2_subagent_turns() {
          .agent_execution_limiter
          .initialize(/*max_threads*/ 2);
      let source = SessionSource::SubAgent(SubAgentSource::Other("worker".to_string()));
@@ -655,7 +688,7 @@ index f1b10840d1e516a063749c59d7ba60880b496722..39f161d78e6d8535646916f56e95abd6
          .expect("v2 subagent execution should be counted");
      let Err(err) = control.ensure_execution_capacity(MultiAgentVersion::V2, &source) else {
          panic!("second active turn should exceed the derived non-root cap");
-@@ -47,18 +52,54 @@ fn execution_guards_count_active_v2_subagent_turns() {
+@@ -47,18 +53,57 @@ fn execution_guards_count_active_v2_subagent_turns() {
  #[test]
  fn execution_guards_ignore_root_and_v1_turns() {
      let control = control_with_limit(/*max_threads*/ 0);
@@ -711,12 +744,15 @@ index f1b10840d1e516a063749c59d7ba60880b496722..39f161d78e6d8535646916f56e95abd6
 +            .execution_guard_for_thread(MultiAgentVersion::V2, &source, thread_id)
 +            .is_none()
 +    );
++    control
++        .check_turn_admission(thread_id, MultiAgentVersion::V2, &source)
++        .expect("hidden helpers should not consume agent capacity");
 +}
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb68573074866c9cd 100644
+index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a687bd9226 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
-@@ -281,11 +281,33 @@ impl LocalAgentControl {
+@@ -272,11 +272,33 @@ impl LocalAgentControl {
              SpawnInitialInput::UserInput(initial_input),
              session_source,
              SpawnAgentOptions::default(),
@@ -750,18 +786,18 @@ index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb6857307
      fn validate_loaded_v2_child(
          &self,
          thread: &CodexThread,
-@@ -632,8 +654,10 @@ impl LocalAgentControl {
+@@ -623,8 +645,10 @@ impl LocalAgentControl {
          initial_input: SpawnInitialInput,
          session_source: Option<SessionSource>,
          options: SpawnAgentOptions,
 +        visibility: AgentListingVisibility,
      ) -> CodexResult<(LiveAgent, ThreadConfigSnapshot)> {
-         let state = self.upgrade()?;
+         let state = self.runtime.upgrade()?;
 +        let hidden_helper = visibility == AgentListingVisibility::Hidden;
          let multi_agent_version = state
              .effective_multi_agent_version_for_spawn(
                  &InitialHistory::New,
-@@ -643,11 +667,12 @@ impl LocalAgentControl {
+@@ -634,11 +658,12 @@ impl LocalAgentControl {
                  &config,
              )
              .await;
@@ -776,7 +812,7 @@ index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb6857307
              && session_source
                  .as_ref()
                  .is_some_and(is_v2_resident_session_source);
-@@ -664,10 +689,13 @@ impl LocalAgentControl {
+@@ -655,10 +680,13 @@ impl LocalAgentControl {
          } else {
              agent_max_threads
          };
@@ -794,7 +830,7 @@ index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb6857307
          let inheritance = SpawnAgentThreadInheritance {
              environments: self
                  .inherited_environments_for_source(&state, session_source.as_ref())
-@@ -691,6 +719,7 @@ impl LocalAgentControl {
+@@ -682,6 +710,7 @@ impl LocalAgentControl {
                      depth,
                      agent_path,
                      agent_role,
@@ -802,9 +838,17 @@ index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb6857307
                      /*preferred_agent_nickname*/ None,
                  )?;
                  (Some(session_source), agent_metadata)
-@@ -744,11 +773,12 @@ impl LocalAgentControl {
+@@ -734,12 +763,20 @@ impl LocalAgentControl {
+         };
          agent_metadata.agent_id = Some(new_thread.thread_id);
          let mut pending_spawn = PendingSpawn::new(Arc::clone(&state), new_thread.thread_id);
++        if hidden_helper {
++            // Tool planning may begin as soon as the initial input is accepted.
++            // Publish the hidden identity first so the helper's first turn can
++            // authorize tools that require hidden registry membership.
++            reservation.commit_in_place(agent_metadata.clone());
++            pending_spawn.track_agent_registration(Arc::clone(&self.runtime.registry));
++        }
 
 -        if let Some(SessionSource::SubAgent(
 -            subagent_source @ SubAgentSource::ThreadSpawn {
@@ -820,7 +864,7 @@ index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb6857307
          {
              let client_metadata = match state.get_thread(*parent_thread_id).await {
                  Ok(parent_thread) => parent_thread.session.app_server_client_metadata().await,
-@@ -777,29 +807,31 @@ impl LocalAgentControl {
+@@ -768,29 +805,31 @@ impl LocalAgentControl {
              );
          }
 
@@ -875,7 +919,18 @@ index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb6857307
          }
 
          let start_options = TurnStartOptions {
-@@ -834,8 +866,10 @@ impl LocalAgentControl {
+@@ -816,7 +855,9 @@ impl LocalAgentControl {
+                 .await?;
+             }
+         }
+-        reservation.commit(agent_metadata.clone());
++        if !hidden_helper {
++            reservation.commit(agent_metadata.clone());
++        }
+         if let Some(residency_slot) = residency_slot {
+             residency_slot.commit(new_thread.thread_id);
+         }
+@@ -825,8 +866,10 @@ impl LocalAgentControl {
          // Notify a new thread has been created. This notification will be processed by clients
          // to subscribe or drain this newly created thread.
          // TODO(jif) add helper for drain
@@ -888,7 +943,7 @@ index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb6857307
              let child_reference = agent_metadata
                  .agent_path
                  .as_ref()
-@@ -1005,7 +1039,9 @@ impl LocalAgentControl {
+@@ -994,7 +1037,9 @@ impl LocalAgentControl {
                  metadata.user_input_order = None;
              }
              let response_item = &mut envelope.item;
@@ -899,7 +954,7 @@ index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb6857307
                  return false;
              }
              if !retain_forked_developer_message(
-@@ -1063,7 +1099,8 @@ impl LocalAgentControl {
+@@ -1051,7 +1096,8 @@ impl LocalAgentControl {
              true
          };
          forked_rollout_items.retain_mut(|item| {
@@ -909,7 +964,7 @@ index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb6857307
                  || destination_history_mode == Some(ThreadHistoryMode::Paginated)
                      && matches!(
                          &*item,
-@@ -1323,6 +1360,7 @@ impl LocalAgentControl {
+@@ -1310,6 +1356,7 @@ impl LocalAgentControl {
                  depth,
                  agent_path.or(resumed_agent_path),
                  resumed_agent_role,
@@ -917,11 +972,72 @@ index 304a09262b23272a4a137c6e8995176a98b68613..9f2914a9baf97b1fa349d95fb6857307
                  resumed_agent_nickname,
              )?,
              other => (other, AgentMetadata::default()),
+diff --git a/codex-rs/core/src/agent/control/spawn_guard.rs b/codex-rs/core/src/agent/control/spawn_guard.rs
+index 7df61e64ac1fc7e42ce4e5b9cb9d23c2357f35d5..4362373f104adf2becd3dd4460728986a3728eb0 100644
+--- a/codex-rs/core/src/agent/control/spawn_guard.rs
++++ b/codex-rs/core/src/agent/control/spawn_guard.rs
+@@ -1,15 +1,19 @@
+ //! Owns a spawned child until its initial input is accepted.
+
+-use crate::thread_manager::ThreadManagerState;
++use std::sync::Arc;
++
+ use codex_agent_graph_store::ThreadSpawnEdgeStatus;
+ use codex_protocol::ThreadId;
+-use std::sync::Arc;
+ use tokio::task::JoinHandle;
+ use tracing::warn;
+
++use crate::agent::registry::AgentRegistry;
++use crate::thread_manager::ThreadManagerState;
++
+ pub(super) struct PendingSpawn {
+     state: Arc<ThreadManagerState>,
+     child: Option<ThreadId>,
++    agent_registry: Option<Arc<AgentRegistry>>,
+     edge_write: Option<JoinHandle<()>>,
+ }
+
+@@ -18,10 +22,16 @@ impl PendingSpawn {
+         Self {
+             state,
+             child: Some(child),
++            agent_registry: None,
+             edge_write: None,
+         }
+     }
+
++    /// Roll back an agent registration if the pending spawn does not commit.
++    pub(super) fn track_agent_registration(&mut self, registry: Arc<AgentRegistry>) {
++        self.agent_registry = Some(registry);
++    }
++
+     pub(super) fn set_edge_write(&mut self, edge_write: JoinHandle<()>) {
+         self.edge_write = Some(edge_write);
+     }
+@@ -38,6 +48,7 @@ impl PendingSpawn {
+
+     pub(super) fn disarm(mut self) {
+         self.child = None;
++        self.agent_registry = None;
+     }
+ }
+
+@@ -46,6 +57,9 @@ impl Drop for PendingSpawn {
+         let Some(child) = self.child.take() else {
+             return;
+         };
++        if let Some(registry) = self.agent_registry.take() {
++            registry.release_spawned_thread(child);
++        }
+         let state = Arc::clone(&self.state);
+         let edge_write = self.edge_write.take();
+         drop(tokio::spawn(async move {
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index ee643af25947d07baaf9b7f730cc594f17c6a503..34beb1579baf344303e2687245e314922dee4efe 100644
+index 1357e6c3c11802ae5b2373f3c4bce1d0ca157967..9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -128,6 +128,11 @@ impl LocalAgentControl {
+@@ -127,6 +127,11 @@ impl LocalAgentControl {
      }
  }
 
@@ -934,7 +1050,7 @@ index ee643af25947d07baaf9b7f730cc594f17c6a503..34beb1579baf344303e2687245e31492
      mut cli_overrides: Vec<(String, TomlValue)>,
  ) -> (TempDir, Config) {
 diff --git a/codex-rs/core/src/agent/registry.rs b/codex-rs/core/src/agent/registry.rs
-index d7fae371d57f20ec518e4b2283d223cad80b2aab..912a55584e3fed35d0fb64b42e2a5014e03fb705 100644
+index d7fae371d57f20ec518e4b2283d223cad80b2aab..11bd5b8fd66c609b4b129e07efd74268bac441b3 100644
 --- a/codex-rs/core/src/agent/registry.rs
 +++ b/codex-rs/core/src/agent/registry.rs
 @@ -1,3 +1,4 @@
@@ -1053,8 +1169,14 @@ index d7fae371d57f20ec518e4b2283d223cad80b2aab..912a55584e3fed35d0fb64b42e2a5014
      reserved_agent_nickname: Option<String>,
      reserved_agent_path: Option<AgentPath>,
  }
-@@ -378,7 +405,8 @@ impl SpawnReservation {
+@@ -376,9 +403,14 @@ impl SpawnReservation {
+     }
+
      pub(crate) fn commit(mut self, agent_metadata: AgentMetadata) {
++        self.commit_in_place(agent_metadata);
++    }
++
++    pub(crate) fn commit_in_place(&mut self, agent_metadata: AgentMetadata) {
          self.reserved_agent_nickname = None;
          self.reserved_agent_path = None;
 -        self.state.register_spawned_thread(agent_metadata);
@@ -1063,7 +1185,7 @@ index d7fae371d57f20ec518e4b2283d223cad80b2aab..912a55584e3fed35d0fb64b42e2a5014
          self.active = false;
      }
  }
-@@ -389,7 +417,9 @@ impl Drop for SpawnReservation {
+@@ -389,7 +421,9 @@ impl Drop for SpawnReservation {
              if let Some(agent_path) = self.reserved_agent_path.take() {
                  self.state.release_reserved_agent_path(&agent_path);
              }
@@ -1131,10 +1253,10 @@ index 81dcd5354e39a22010234a46460b33037c5b33c2..1368f5aa05a8d94bd9f1e36651cb1950
 
  #[derive(Clone, Debug, PartialEq, Eq)]
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 24d5a8902a98bc97fece58d392a9c9f506b3b960..630ef68cd186ca2d9e51ed90fc022b43b2acf3d5 100644
+index b4fa389960a938bae1b99712490d9e31756aa14e..2b4368d6b6ff39da0ca5e5272d38c280470da506 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -310,6 +310,22 @@ impl CodexThread {
+@@ -316,6 +316,22 @@ impl CodexThread {
              .await
      }
 
@@ -1157,11 +1279,23 @@ index 24d5a8902a98bc97fece58d392a9c9f506b3b960..630ef68cd186ca2d9e51ed90fc022b43
      #[doc(hidden)]
      pub async fn ensure_rollout_materialized(&self) {
          self.session
+@@ -1087,6 +1103,10 @@ impl CodexThread {
+         let multi_agent_version = self
+             .multi_agent_version()
+             .unwrap_or_else(|| config.multi_agent_version_from_features());
+-        control.check_turn_admission(multi_agent_version, &self.session_source)
++        control.check_turn_admission(
++            self.session.thread_id,
++            multi_agent_version,
++            &self.session_source,
++        )
+     }
+ }
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 126a28f061d947e0604bb23a9a9394022032f721..fe8edfa58ffd3703561cc3c1fe024bb0e3807c07 100644
+index 6af76a573a7c868422a80dc115fcf7a6dea95841..2a1f3cd34789baf6956359fb8090930b6a0df167 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -133,6 +133,14 @@ mod skills;
+@@ -132,6 +132,14 @@ mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
@@ -1178,10 +1312,10 @@ index 126a28f061d947e0604bb23a9a9394022032f721..fe8edfa58ffd3703561cc3c1fe024bb0
  mod unified_exec;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..514e64be1a12c5a67d072e316655dd6e72165110
+index 0000000000000000000000000000000000000000..c6785f82d484fb311dadf355cf65ad85b38d6c8e
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,204 @@
 +//! Side effects selected by a goal supervisor helper.
 +
 +use std::sync::Arc;
@@ -1259,9 +1393,7 @@ index 0000000000000000000000000000000000000000..514e64be1a12c5a67d072e316655dd6e
 +    );
 +    let context =
 +        AgentCommunicationContext::new(AgentCommunicationKind::Followup, helper.thread_id);
-+    helper
-+        .services
-+        .agent_control
++    super::local_agent_control(helper)
 +        .send_inter_agent_communication(
 +            parent.thread_id,
 +            communication,
@@ -1303,9 +1435,7 @@ index 0000000000000000000000000000000000000000..514e64be1a12c5a67d072e316655dd6e
 +        return Err("the parent became busy before compaction could start".to_string());
 +    }
 +    let result = async {
-+        let thread = parent
-+            .services
-+            .agent_control
++        let thread = super::local_agent_control(parent)
 +            .get_live_thread(parent.thread_id)
 +            .await
 +            .map_err(|error| error.to_string())?;
@@ -1861,10 +1991,10 @@ index 0000000000000000000000000000000000000000..0ef7ce4d8ce9a2dfa9267d36b5ff995f
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/mod.rs b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a1427399ddc5a6847e669029b5203372f008436b
+index 0000000000000000000000000000000000000000..7a94491dda4628a416e2a65917c61e92351335e0
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/mod.rs
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,46 @@
 +//! Process-local supervision for active root-thread goals.
 +//!
 +//! Codex owns durable goal state and decides when an idle goal needs another
@@ -1875,6 +2005,10 @@ index 0000000000000000000000000000000000000000..a1427399ddc5a6847e669029b5203372
 +//! Helper identity, snooze deadlines, retry state, and continuity hints are
 +//! intentionally in memory. A restart discards them and the normal goal idle
 +//! lifecycle reconstructs supervision from the durable active goal.
++
++use crate::agent::LocalAgentControl;
++use crate::session::session::Session;
++use codex_protocol::protocol::SessionSource;
 +
 +mod actions;
 +pub(crate) mod guidance;
@@ -1890,6 +2024,23 @@ index 0000000000000000000000000000000000000000..a1427399ddc5a6847e669029b5203372
 +pub(crate) use tools::register;
 +
 +pub(crate) use history::preserves_fork_item;
++
++/// Returns the local controller that owns Saffron's hidden supervisor helper.
++///
++/// Saffron supervision is process-local: the helper must share the parent's
++/// registry and runtime even when the ordinary agent-control interface is
++/// backed by another implementation.
++fn local_agent_control(session: &Session) -> LocalAgentControl {
++    session
++        .services
++        .local_agent_runtime
++        .control(session.services.agent_control.identity())
++}
++
++/// Confirms both the private source identity and hidden registry membership.
++pub(crate) fn is_helper_session(session: &Session, source: &SessionSource) -> bool {
++    is_helper_source(source) && local_agent_control(session).is_hidden_agent(session.thread_id)
++}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/notification_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/notification_tests.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..e8ee31b611b5e6198fe8ad1381922f3aec94485c
@@ -2014,10 +2165,10 @@ index 0000000000000000000000000000000000000000..e2e556ee6128e6bc726bd3b8c21ed272
 +call more than one supervisor action. After the action returns, end your turn.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..47a561afee10db1e3a91183af1f189d8f430ed41
+index 0000000000000000000000000000000000000000..54fcd03d76f524b98f1aad138904b15a40114c93
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-@@ -0,0 +1,485 @@
+@@ -0,0 +1,482 @@
 +//! Runtime ownership and lifecycle for one root thread's supervisor helper.
 +
 +use std::sync::Arc;
@@ -2139,15 +2290,15 @@ index 0000000000000000000000000000000000000000..47a561afee10db1e3a91183af1f189d8
 +    if let Some((helper_id, active_goal_id)) = active {
 +        if active_goal_id == goal_id
 +            && matches!(
-+                parent.services.agent_control.get_status(helper_id).await,
++                super::local_agent_control(parent)
++                    .get_status(helper_id)
++                    .await,
 +                AgentStatus::PendingInit | AgentStatus::Running
 +            )
 +        {
 +            return Ok(true);
 +        }
-+        let _ = parent
-+            .services
-+            .agent_control
++        let _ = super::local_agent_control(parent)
 +            .shutdown_live_agent(helper_id)
 +            .await;
 +    }
@@ -2201,9 +2352,7 @@ index 0000000000000000000000000000000000000000..47a561afee10db1e3a91183af1f189d8
 +        state.active.take().map(|active| active.thread_id)
 +    };
 +    if let Some(helper_id) = helper_id
-+        && let Err(error) = parent
-+            .services
-+            .agent_control
++        && let Err(error) = super::local_agent_control(parent)
 +            .shutdown_live_agent(helper_id)
 +            .await
 +    {
@@ -2227,9 +2376,7 @@ index 0000000000000000000000000000000000000000..47a561afee10db1e3a91183af1f189d8
 +            "supervisor tools are available only in a Saffron supervisor helper".to_string(),
 +        );
 +    }
-+    helper
-+        .services
-+        .agent_control
++    super::local_agent_control(helper)
 +        .get_live_thread(parent_thread_id)
 +        .await
 +        .map(|thread| Arc::clone(&thread.session))
@@ -2308,28 +2455,25 @@ index 0000000000000000000000000000000000000000..47a561afee10db1e3a91183af1f189d8
 +    let continuity = continuity(parent, goal).await;
 +    let prompt = render_checkin_prompt(parent.thread_id, &goal.objective, &continuity);
 +    let helper = Box::pin(
-+        parent
-+            .services
-+            .agent_control
-+            .spawn_hidden_agent_with_metadata(
-+                config,
-+                vec![UserInput::Text {
-+                    text: prompt,
-+                    text_elements: Vec::new(),
-+                }],
-+                source,
-+                SpawnAgentOptions {
-+                    fork_parent_spawn_call_id: Some("saffron-goal-supervisor".to_string()),
-+                    fork_mode: Some(SpawnAgentForkMode::FullHistory),
-+                    parent_thread_id: Some(parent.thread_id),
-+                    parent_turn_id: None,
-+                    turn_trigger: None,
-+                    root_turn_id: None,
-+                    environments: None,
-+                    multi_agent_v2_usage_hints: None,
-+                    cyber_access_program: None,
-+                },
-+            ),
++        super::local_agent_control(parent).spawn_hidden_agent_with_metadata(
++            config,
++            vec![UserInput::Text {
++                text: prompt,
++                text_elements: Vec::new(),
++            }],
++            source,
++            SpawnAgentOptions {
++                fork_parent_spawn_call_id: Some("saffron-goal-supervisor".to_string()),
++                fork_mode: Some(SpawnAgentForkMode::FullHistory),
++                parent_thread_id: Some(parent.thread_id),
++                parent_turn_id: None,
++                turn_trigger: None,
++                root_turn_id: None,
++                environments: None,
++                multi_agent_v2_usage_hints: None,
++                cyber_access_program: None,
++            },
++        ),
 +    )
 +    .await
 +    .map_err(|error| error.to_string())?;
@@ -2363,9 +2507,7 @@ index 0000000000000000000000000000000000000000..47a561afee10db1e3a91183af1f189d8
 +        let Some(parent) = parent.upgrade() else {
 +            return;
 +        };
-+        let terminal_status = match parent
-+            .services
-+            .agent_control
++        let terminal_status = match super::local_agent_control(&parent)
 +            .subscribe_status(helper_id)
 +            .await
 +        {
@@ -2385,10 +2527,18 @@ index 0000000000000000000000000000000000000000..47a561afee10db1e3a91183af1f189d8
 +                }
 +                match terminal_status {
 +                    Some(status) => status,
-+                    None => parent.services.agent_control.get_status(helper_id).await,
++                    None => {
++                        super::local_agent_control(&parent)
++                            .get_status(helper_id)
++                            .await
++                    }
 +                }
 +            }
-+            Err(_) => parent.services.agent_control.get_status(helper_id).await,
++            Err(_) => {
++                super::local_agent_control(&parent)
++                    .get_status(helper_id)
++                    .await
++            }
 +        };
 +        finish_helper(&parent, helper_id, &goal_id, terminal_status).await;
 +    });
@@ -2415,9 +2565,7 @@ index 0000000000000000000000000000000000000000..47a561afee10db1e3a91183af1f189d8
 +        state.active = None;
 +        action
 +    };
-+    if let Err(error) = parent
-+        .services
-+        .agent_control
++    if let Err(error) = super::local_agent_control(parent)
 +        .shutdown_live_agent(helper_id)
 +        .await
 +    {
@@ -2926,10 +3074,10 @@ index 893a01ce5ad0bb1789d7b27ce5baad5f8a7a01e8..efe282cc73938c574f582581c9695875
  pub(crate) mod await_exec;
 +pub(crate) mod goal_supervisor;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index b977bb16f6dc9413e63252e2e423c016f4964724..9ab140fc2b3ec06848310b65542173bb3d0e0f02 100644
+index 2aea6cfa2256a69e385d724e9dc27210b41d6a55..832a5d915c7ca6c57ac47cc33effa8f861735de0 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2430,6 +2430,9 @@ impl Session {
+@@ -2420,6 +2420,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }
@@ -2940,10 +3088,10 @@ index b977bb16f6dc9413e63252e2e423c016f4964724..9ab140fc2b3ec06848310b65542173bb
          self.services
              .agent_control
 diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
-index 76befa42c6b57c9718ba3cd72a320b7929123ade..de3bc95b5db69b88905f66efcf5164cb45fc73e5 100644
+index 1183ef2db63f7dd8c4718297a200f21ed5350379..314ae6fa6d69292944c4910507357910ef9fc248 100644
 --- a/codex-rs/core/src/session/turn_context.rs
 +++ b/codex-rs/core/src/session/turn_context.rs
-@@ -910,6 +910,22 @@ impl Session {
+@@ -911,6 +911,22 @@ impl Session {
          config
      }
 
@@ -2967,40 +3115,54 @@ index 76befa42c6b57c9718ba3cd72a320b7929123ade..de3bc95b5db69b88905f66efcf5164cb
      #[instrument(name = "turn_context.make", level = "trace", skip_all)]
      pub(crate) fn make_turn_context(
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 2ad6096ea906379cb9e431f9cfc59107553b391c..68d40dfea1e6f1a5e1dced17aa49ca4c689cfe4e 100644
+index ab305bdac540decdc8228c8ffb6133a20f94a9d6..cd18d647d62c826575ef597b931385970b5cfb36 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -332,9 +332,10 @@ impl Session {
-         let mut active = self.active_turn.lock().await;
+@@ -333,6 +333,7 @@ impl Session {
          let turn = active.get_or_insert_with(ActiveTurn::default);
          debug_assert!(turn.task.is_none());
--        let agent_execution_guard = self.services.agent_control.execution_guard(
-+        let agent_execution_guard = self.services.agent_control.execution_guard_for_thread(
+         let agent_execution_guard = self.services.agent_control.admit_turn(
++            self.thread_id,
              turn_context.multi_agent_version,
              &turn_context.session_source,
-+            self.thread_id,
          );
-         let done_clone = Arc::clone(&done);
-         let session = Arc::clone(self);
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 106a9ae09608b9d9631204caeb940bce83c1720f..595eaac7f67d5b8fd70310f11451e5b44e15bd30 100644
+index 4009dee6c1e1ae19bfe0899dd5ee79502519fc03..f9b045762d1fe7c7d1f848d58ef8067961abe8b6 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
-@@ -149,6 +149,14 @@ pub(crate) fn build_tool_router(
+@@ -150,6 +150,9 @@ pub(crate) fn build_tool_router(
      };
      let mut registry = ToolRegistry::with_tool_policy(Arc::clone(&session.tool_policy));
      add_core_tool_sources(&context, &mut registry);
-+    if saffron::goal_supervisor::is_helper_source(&turn_context.session_source)
-+        && session
-+            .services
-+            .agent_control
-+            .is_hidden_agent(session.thread_id)
-+    {
++    if saffron::goal_supervisor::is_helper_session(session, &turn_context.session_source) {
 +        saffron::goal_supervisor::register(&mut registry);
 +    }
 
      let registered_mcp_tools = session.services.mcp_handler_cache.append_mcp_tools(
          mcp,
+diff --git a/codex-rs/core/src/unified_exec/process_manager/interaction.rs b/codex-rs/core/src/unified_exec/process_manager/interaction.rs
+index 48703e1e17e967453c9fbc5c0f870c85511515d2..a58d1fdddf20b87522485067c75aa5e5c97a8be5 100644
+--- a/codex-rs/core/src/unified_exec/process_manager/interaction.rs
++++ b/codex-rs/core/src/unified_exec/process_manager/interaction.rs
+@@ -200,7 +200,8 @@ impl ProcessInteraction<'_> {
+             tokio::pin!(output_published);
+             let has_output = {
+                 let output = self.output.output_buffer.lock().await;
+-                let has_output = output.retained_bytes() > 0 || output.omitted_bytes() > 0;
++                let has_output =
++                    output.pending.retained_bytes() > 0 || output.pending.omitted_bytes() > 0;
+                 output_published.as_mut().enable();
+                 has_output
+             };
+@@ -318,7 +319,7 @@ impl ProcessInteraction<'_> {
+             } else {
+                 Some(self.process_id)
+             };
+-            let output = std::mem::take(&mut *output);
++            let output = std::mem::take(&mut output.pending);
+             let outcome = ProcessInteractionOutcome {
+                 process_id,
+                 exit_code,
 diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
 index 7d826ac2381df8b0dafa39ef66959b22527a4604..c40cad928f6aa1777b70b341836323c0bbeac47a 100644
 --- a/codex-rs/ext/goal/src/runtime.rs
