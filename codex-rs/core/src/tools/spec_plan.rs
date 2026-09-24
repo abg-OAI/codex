@@ -149,14 +149,7 @@ pub(crate) fn build_tool_router(
     };
     let mut registry = ToolRegistry::with_tool_policy(Arc::clone(&session.tool_policy));
     add_core_tool_sources(&context, &mut registry);
-    if saffron::goal_supervisor::is_helper_source(&turn_context.session_source)
-        && session
-            .services
-            .agent_control
-            .is_hidden_agent(session.thread_id)
-    {
-        saffron::goal_supervisor::register(&mut registry);
-    }
+    saffron::register_tools(session, turn_context, &mut registry);
 
     let registered_mcp_tools = session.services.mcp_handler_cache.append_mcp_tools(
         mcp,
