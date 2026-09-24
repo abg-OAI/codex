@@ -13,6 +13,72 @@ fn failure_retry_is_exponential_and_capped() {
 }
 
 #[test]
+fn only_process_local_wake_requires_idle_retention() {
+    let mut state = State::default();
+    assert_eq!(state.idle_disposition(), IdleDisposition::Quiescent);
+
+    state.snooze = Some(Snooze {
+        wake: GoalWake {
+            thread_id: ThreadId::new(),
+            goal_id: "goal-id".to_string(),
+            goal_objective: "goal objective".to_string(),
+            goal_updated_at_ms: 1,
+            wake_at_ms: 2,
+        },
+        deadline: Instant::now() + Duration::from_secs(30 * 24 * 60 * 60),
+        idle_retention: IdleRetention::Required,
+    });
+    assert_eq!(state.idle_disposition(), IdleDisposition::ProcessLocalWork);
+
+    state.snooze.as_mut().expect("snooze").idle_retention = IdleRetention::Reconstructible;
+    assert_eq!(
+        state.idle_disposition(),
+        IdleDisposition::ReconstructibleSnooze
+    );
+}
+
+#[tokio::test]
+async fn idle_disposition_waits_for_transition_to_settle() {
+    let runtime = Arc::new(Runtime::default());
+    let transition = Arc::clone(&runtime.transition).lock_owned().await;
+    assert_eq!(
+        runtime.state.lock().await.idle_disposition(),
+        IdleDisposition::Quiescent
+    );
+    let (observation_started_tx, observation_started_rx) = tokio::sync::oneshot::channel();
+    let observer = tokio::spawn({
+        let runtime = Arc::clone(&runtime);
+        async move {
+            let _ = observation_started_tx.send(());
+            runtime.idle_disposition().await
+        }
+    });
+
+    observation_started_rx.await.expect("observer started");
+    tokio::task::yield_now().await;
+    assert!(!observer.is_finished());
+
+    runtime.state.lock().await.snooze = Some(Snooze {
+        wake: GoalWake {
+            thread_id: ThreadId::new(),
+            goal_id: "goal-id".to_string(),
+            goal_objective: "goal objective".to_string(),
+            goal_updated_at_ms: 1,
+            wake_at_ms: 2,
+        },
+        deadline: Instant::now() + Duration::from_secs(60),
+        idle_retention: IdleRetention::Required,
+    });
+    drop(transition);
+
+    let disposition = tokio::time::timeout(Duration::from_secs(5), observer)
+        .await
+        .expect("observer timed out")
+        .expect("observer completed");
+    assert_eq!(disposition, IdleDisposition::ProcessLocalWork);
+}
+
+#[test]
 fn each_checkin_prompt_includes_its_current_time() {
     let parent_id =
         ThreadId::from_string("018f0000-0000-7000-8000-000000000001").expect("thread id");
