@@ -35,7 +35,12 @@ impl LocalAgentControl {
         &self,
         thread: &CodexThread,
     ) -> CodexResult<()> {
-        if thread.session.active_turn.lock().await.is_some() {
+        if thread.session.active_turn.lock().await.is_some()
+            || self
+                .runtime
+                .registry
+                .is_hidden_thread(thread.session.thread_id)
+        {
             return Ok(());
         }
         let config = thread.session.get_config().await;
@@ -70,6 +75,18 @@ impl LocalAgentControl {
     ) -> Option<AgentExecutionGuard> {
         is_execution_limited(multi_agent_version, session_source)
             .then(|| Arc::clone(&self.runtime.agent_execution_limiter).guard())
+    }
+
+    pub(crate) fn execution_guard_for_thread(
+        &self,
+        multi_agent_version: MultiAgentVersion,
+        session_source: &SessionSource,
+        thread_id: codex_protocol::ThreadId,
+    ) -> Option<AgentExecutionGuard> {
+        if self.runtime.registry.is_hidden_thread(thread_id) {
+            return None;
+        }
+        self.execution_guard(multi_agent_version, session_source)
     }
 }
 

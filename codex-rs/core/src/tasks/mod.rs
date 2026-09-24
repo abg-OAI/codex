@@ -332,9 +332,10 @@ impl Session {
         let mut active = self.active_turn.lock().await;
         let turn = active.get_or_insert_with(ActiveTurn::default);
         debug_assert!(turn.task.is_none());
-        let agent_execution_guard = self.services.agent_control.execution_guard(
+        let agent_execution_guard = self.services.agent_control.execution_guard_for_thread(
             turn_context.multi_agent_version,
             &turn_context.session_source,
+            self.thread_id,
         );
         let done_clone = Arc::clone(&done);
         let session = Arc::clone(self);

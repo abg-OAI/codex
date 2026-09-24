@@ -14,6 +14,7 @@ use crate::agent::api::SendRequest;
 use crate::agent::api::SpawnRequest;
 use crate::agent::api::StatusSubscription;
 use crate::agent::types::AgentExecutionGuard;
+use crate::agent::types::AgentListingVisibility;
 use crate::agent::types::LiveAgent;
 use crate::agent::types::MessageDeliveryMode;
 use crate::agent_communication::AgentCommunicationContext;
@@ -76,7 +77,14 @@ impl AgentControl for LocalAgentControl {
                     )
                 }
             };
-            Box::pin(self.spawn_agent_internal(config, input, Some(source), options)).await
+            Box::pin(self.spawn_agent_internal(
+                config,
+                input,
+                Some(source),
+                options,
+                AgentListingVisibility::Listed,
+            ))
+            .await
         })
     }
 
