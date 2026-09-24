@@ -772,6 +772,19 @@ impl LocalAgentControl {
         };
         agent_metadata.agent_id = Some(new_thread.thread_id);
         let mut pending_spawn = PendingSpawn::new(Arc::clone(&state), new_thread.thread_id);
+        // Bridge the interval before the initial turn installs its task-owned
+        // guard. A failed submission drops this guard with the spawn future.
+        let _spawn_ancestor_retention_guard = if hidden_helper {
+            None
+        } else {
+            notification_source.as_ref().and_then(|source| {
+                self.ancestor_turn_retention_guard(
+                    multi_agent_version,
+                    source,
+                    new_thread.thread_id,
+                )
+            })
+        };
 
         if !hidden_helper
             && let Some(SessionSource::SubAgent(
