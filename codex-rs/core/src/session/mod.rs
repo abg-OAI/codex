@@ -2420,6 +2420,9 @@ impl Session {
         if !is_final(&status) {
             return;
         }
+        if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
+            return;
+        }
 
         self.services
             .agent_control
