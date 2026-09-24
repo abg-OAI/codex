@@ -26,23 +26,31 @@ index 51f3e06b9a54249d83d2a3d1ebf6bdd5120e9cb4..b6ddac3bdd680b1243965762432e1f8b
  mod selected_environment;
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_guidance.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_guidance.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d704391f65594f530b8deb33b1c5ecbebbe978f
+index 0000000000000000000000000000000000000000..dfe22e03510c01c4ac7768845fcf9e3df0e3ca62
 --- /dev/null
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_guidance.rs
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,172 @@
 +use anyhow::Result;
 +use app_test_support::MockResponsesConfig;
 +use app_test_support::TestAppServer;
++use codex_app_server_protocol::ThreadCompactStartParams;
++use codex_app_server_protocol::ThreadCompactStartResponse;
++use codex_app_server_protocol::ThreadResumeParams;
++use codex_app_server_protocol::ThreadResumeResponse;
 +use codex_app_server_protocol::ThreadStartParams;
++use codex_app_server_protocol::TurnCompletedNotification;
 +use codex_app_server_protocol::TurnStartParams;
 +use codex_app_server_protocol::UserInput;
 +use codex_features::Feature;
 +use core_test_support::responses;
 +use pretty_assertions::assert_eq;
 +use tempfile::TempDir;
++use tokio::time::timeout;
++
++const RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 +
 +#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-+async fn goal_waiting_guidance_is_limited_to_goal_turns() -> Result<()> {
++async fn goal_lifecycle_guidance_persists_without_keyword_routing() -> Result<()> {
 +    let server = responses::start_mock_server().await;
 +    let model_responses = responses::mount_sse_sequence(
 +        &server,
@@ -63,17 +71,104 @@ index 0000000000000000000000000000000000000000..4d704391f65594f530b8deb33b1c5ecb
 +        .build_initialized()
 +        .await?;
 +
-+    submit_turn(&mut app_server, "Track this as a durable goal.").await?;
-+    submit_turn(&mut app_server, "Summarize the current changes.").await?;
++    let thread = app_server
++        .start_thread(ThreadStartParams::default())
++        .await?;
++    submit_turn(
++        &mut app_server,
++        &thread.thread.id,
++        "Summarize the current changes.",
++    )
++    .await?;
++    submit_turn(
++        &mut app_server,
++        &thread.thread.id,
++        "Continue with the next task.",
++    )
++    .await?;
 +
 +    let requests = model_responses.requests();
 +    assert_eq!(requests.len(), 2);
-+    let guidance = goal_guidance(&requests[0]).expect("goal guidance");
-+    assert!(guidance.contains("Goal mode is autonomous"));
-+    assert!(guidance.contains("blocked-goal process"));
-+    assert!(guidance.contains("snooze"));
-+    assert!(!guidance.contains("await_exec"));
-+    assert!(goal_guidance(&requests[1]).is_none());
++    let guidance = goal_guidance(&requests[0]);
++    assert_eq!(guidance.len(), 1);
++    assert!(guidance[0].contains("An active goal continues autonomously"));
++    assert!(guidance[0].contains("blocked-goal audit"));
++    assert!(guidance[0].contains("snooze"));
++    assert!(!guidance[0].contains("await_exec"));
++    assert_eq!(goal_guidance(&requests[1]).len(), 1);
++
++    Ok(())
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn goal_lifecycle_guidance_survives_compaction_and_resume_once() -> Result<()> {
++    let server = responses::start_mock_server().await;
++    let model_responses = responses::mount_sse_sequence(
++        &server,
++        vec![
++            assistant_response("seed-turn"),
++            assistant_response("compact-turn"),
++            assistant_response("post-compact-turn"),
++            assistant_response("resumed-turn"),
++        ],
++    )
++    .await;
++
++    let codex_home = TempDir::new()?;
++    MockResponsesConfig::new(&server.uri())
++        .enable_feature(Feature::Goals)
++        .write(codex_home.path())?;
++    let mut app_server = TestAppServer::builder()
++        .with_codex_home(codex_home.path())
++        .without_managed_config()
++        .build_initialized()
++        .await?;
++
++    let thread = app_server
++        .start_thread(ThreadStartParams::default())
++        .await?;
++    let thread_id = thread.thread.id;
++    submit_turn(&mut app_server, &thread_id, "Start the work.").await?;
++
++    let compact_id = app_server
++        .send_thread_compact_start_request(ThreadCompactStartParams {
++            thread_id: thread_id.clone(),
++        })
++        .await?;
++    let _: ThreadCompactStartResponse =
++        timeout(RESPONSE_TIMEOUT, app_server.read_response(compact_id)).await??;
++    let _: TurnCompletedNotification = timeout(
++        RESPONSE_TIMEOUT,
++        app_server.read_notification("turn/completed"),
++    )
++    .await??;
++
++    submit_turn(&mut app_server, &thread_id, "Continue after compaction.").await?;
++    timeout(RESPONSE_TIMEOUT, app_server.shutdown_gracefully()).await??;
++
++    let mut app_server = TestAppServer::builder()
++        .with_codex_home(codex_home.path())
++        .without_managed_config()
++        .build_initialized()
++        .await?;
++    let resume_id = app_server
++        .send_thread_resume_request(ThreadResumeParams {
++            thread_id: thread_id.clone(),
++            exclude_turns: true,
++            ..Default::default()
++        })
++        .await?;
++    let _: ThreadResumeResponse =
++        timeout(RESPONSE_TIMEOUT, app_server.read_response(resume_id)).await??;
++    submit_turn(&mut app_server, &thread_id, "Continue after resume.").await?;
++
++    let requests = model_responses.requests();
++    assert_eq!(requests.len(), 4);
++    assert!(
++        requests
++            .iter()
++            .all(|request| goal_guidance(request).len() == 1)
++    );
 +
 +    Ok(())
 +}
@@ -86,13 +181,10 @@ index 0000000000000000000000000000000000000000..4d704391f65594f530b8deb33b1c5ecb
 +    ])
 +}
 +
-+async fn submit_turn(app_server: &mut TestAppServer, input: &str) -> Result<()> {
-+    let thread = app_server
-+        .start_thread(ThreadStartParams::default())
-+        .await?;
++async fn submit_turn(app_server: &mut TestAppServer, thread_id: &str, input: &str) -> Result<()> {
 +    app_server
 +        .start_turn_and_wait_for_completion(TurnStartParams {
-+            thread_id: thread.thread.id,
++            thread_id: thread_id.to_string(),
 +            input: vec![UserInput::Text {
 +                text: input.to_string(),
 +                text_elements: Vec::new(),
@@ -103,11 +195,12 @@ index 0000000000000000000000000000000000000000..4d704391f65594f530b8deb33b1c5ecb
 +    Ok(())
 +}
 +
-+fn goal_guidance(request: &responses::ResponsesRequest) -> Option<String> {
++fn goal_guidance(request: &responses::ResponsesRequest) -> Vec<String> {
 +    request
 +        .message_input_texts("developer")
 +        .into_iter()
-+        .find(|text| text.contains("<saffron_goal_waiting>"))
++        .filter(|text| text.contains("<saffron_goal_supervisor>"))
++        .collect()
 +}
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 new file mode 100644
@@ -1405,51 +1498,72 @@ index 0000000000000000000000000000000000000000..2ea972c2cd02484d0d5d6c63a9c10bcd
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/guidance.rs b/codex-rs/core/src/saffron/goal_supervisor/guidance.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee66686242a8929b3da50e0996dc7938485cc857
+index 0000000000000000000000000000000000000000..3332386db24eadff830ed90bba3f7241a2bc5f90
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/guidance.rs
-@@ -0,0 +1,107 @@
-+//! Turn-local guidance for activating and deferring durable goals.
+@@ -0,0 +1,167 @@
++//! Persistent root-thread guidance for durable goal execution.
 +
 +use std::sync::Arc;
 +
-+use codex_context_fragments::AdditionalContextDeveloperFragment;
 +use codex_extension_api::ConfigContributor;
-+use codex_extension_api::ContextualUserFragment;
++use codex_extension_api::ContextContributor;
 +use codex_extension_api::ExtensionData;
 +use codex_extension_api::ExtensionFuture;
 +use codex_extension_api::ExtensionRegistryBuilder;
++use codex_extension_api::PreviousWorldStateSection;
++use codex_extension_api::RenderedWorldStateFragment;
 +use codex_extension_api::ThreadLifecycleContributor;
 +use codex_extension_api::ThreadStartInput;
-+use codex_extension_api::TurnInputContext;
-+use codex_extension_api::TurnInputContributor;
++use codex_extension_api::WorldStateContributionInput;
++use codex_extension_api::WorldStateSectionContribution;
 +use codex_features::Feature;
-+use codex_protocol::user_input::UserInput;
++use serde_json::Value;
++use serde_json::json;
 +
 +use crate::config::Config;
 +
-+const CONTEXT_KEY: &str = "saffron_goal_waiting";
++const SECTION_ID: &str = "saffron_goal_supervisor";
++const START_MARKER: &str = "<saffron_goal_supervisor>";
++const END_MARKER: &str = "</saffron_goal_supervisor>";
++const LEGACY_START_MARKER: &str = "<saffron_goal_waiting>";
++const LEGACY_END_MARKER: &str = "</saffron_goal_waiting>";
++const REPLACEMENT_NOTICE: &str =
++    "These goal-supervisor instructions replace the previously provided instructions.";
++const REMOVAL_NOTICE: &str =
++    "The previously provided goal-supervisor instructions no longer apply.";
 +const INSTRUCTIONS: &str = concat!(
-+    "If this turn requests durable continuation, call create_goal before claiming the goal is ",
-+    "active. Goal mode is autonomous. For optional clarification, make a supported, reversible ",
-+    "assumption and continue. If authority or information is indispensable, follow the ",
-+    "blocked-goal process. Yield for a snooze only when every unfinished part awaits a future ",
-+    "deadline or an external process that can change without parent action."
++    "## Goal supervision\n\n",
++    "If this turn requests durable continuation, call `create_goal` before claiming the goal ",
++    "is active. An active goal continues autonomously. Treat supervisor follow-ups as task ",
++    "instructions. Resolve optional clarification and reversible choices with a supported ",
++    "default and continue. Only indispensable authority or information may enter the blocked-",
++    "goal audit. Waiting for user input is not a snooze condition; snooze only for a future ",
++    "boundary or an already-running external process when no useful work can proceed."
 +);
 +
-+/// Installs the model-visible routing hint beside the app-server goal extension.
++/// Installs the root lifecycle contract beside the app-server goal extension.
 +pub(crate) fn install(builder: &mut ExtensionRegistryBuilder<Config>) {
 +    let extension = Arc::new(GoalGuidanceExtension);
 +    builder.thread_lifecycle_contributor(extension.clone());
 +    builder.config_contributor(extension.clone());
-+    builder.turn_input_contributor(extension);
++    builder.prompt_contributor(extension);
 +}
 +
 +#[derive(Debug)]
 +struct GoalGuidanceExtension;
 +
-+#[derive(Debug)]
-+struct GoalGuidanceEnabled(bool);
++#[derive(Clone, Copy, Debug)]
++struct GoalGuidanceState {
++    is_root: bool,
++    goals_enabled: bool,
++}
++
++impl GoalGuidanceState {
++    fn enabled(self) -> bool {
++        self.is_root && self.goals_enabled
++    }
++}
 +
 +impl ThreadLifecycleContributor<Config> for GoalGuidanceExtension {
 +    fn on_thread_start<'a>(
@@ -1457,7 +1571,10 @@ index 0000000000000000000000000000000000000000..ee66686242a8929b3da50e0996dc7938
 +        input: ThreadStartInput<'a, Config>,
 +    ) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            set_enabled(input.thread_store, input.config);
++            input.thread_store.insert(GoalGuidanceState {
++                is_root: !input.session_source.is_non_root_agent(),
++                goals_enabled: input.config.features.enabled(Feature::Goals),
++            });
 +        })
 +    }
 +}
@@ -1470,51 +1587,168 @@ index 0000000000000000000000000000000000000000..ee66686242a8929b3da50e0996dc7938
 +        _previous_config: &Config,
 +        new_config: &Config,
 +    ) {
-+        set_enabled(thread_store, new_config);
++        let is_root = thread_store
++            .get::<GoalGuidanceState>()
++            .is_some_and(|state| state.is_root);
++        thread_store.insert(GoalGuidanceState {
++            is_root,
++            goals_enabled: new_config.features.enabled(Feature::Goals),
++        });
 +    }
 +}
 +
-+impl TurnInputContributor for GoalGuidanceExtension {
-+    fn contribute<'a>(
++impl ContextContributor for GoalGuidanceExtension {
++    fn contribute_world_state<'a>(
 +        &'a self,
-+        input: TurnInputContext,
-+        _extension_metrics: Option<Arc<dyn codex_extension_api::ExtensionMetrics>>,
-+        _session_store: &'a ExtensionData,
-+        thread_store: &'a ExtensionData,
-+        _turn_store: &'a ExtensionData,
-+    ) -> ExtensionFuture<'a, Vec<Box<dyn ContextualUserFragment + Send>>> {
++        input: WorldStateContributionInput<'a>,
++    ) -> ExtensionFuture<'a, Vec<WorldStateSectionContribution>> {
 +        Box::pin(async move {
-+            if !thread_store
-+                .get::<GoalGuidanceEnabled>()
-+                .is_some_and(|enabled| enabled.0)
-+                || !mentions_goal(&input.user_input)
-+            {
-+                return Vec::new();
-+            }
-+
-+            vec![Box::new(AdditionalContextDeveloperFragment::new(
-+                CONTEXT_KEY.to_string(),
-+                INSTRUCTIONS.to_string(),
-+            )) as Box<dyn ContextualUserFragment + Send>]
++            let enabled = input
++                .thread_store
++                .get::<GoalGuidanceState>()
++                .is_some_and(|state| state.enabled());
++            vec![guidance_section(enabled)]
 +        })
 +    }
 +}
 +
-+fn set_enabled(thread_store: &ExtensionData, config: &Config) {
-+    thread_store.insert(GoalGuidanceEnabled(config.features.enabled(Feature::Goals)));
++fn guidance_section(enabled: bool) -> WorldStateSectionContribution {
++    let instructions = enabled.then_some(INSTRUCTIONS);
++    WorldStateSectionContribution::new(
++        SECTION_ID,
++        json!({ "instructions": instructions }),
++        move |previous| render_guidance_diff(instructions, previous),
++    )
++    .with_legacy_matcher(matches_legacy_guidance)
++    .with_retained_fragment_matcher(matches_guidance)
 +}
 +
-+/// Goal terminology is uncommon enough to be a useful routing signal, while
-+/// the conditional wording in `INSTRUCTIONS` keeps explanatory questions from
-+/// becoming requests to create a goal.
-+fn mentions_goal(input: &[UserInput]) -> bool {
-+    input.iter().any(|item| {
-+        let UserInput::Text { text, .. } = item else {
-+            return false;
-+        };
-+        text.split(|character: char| !character.is_alphanumeric())
-+            .any(|word| word.eq_ignore_ascii_case("goal") || word.eq_ignore_ascii_case("goals"))
-+    })
++fn render_guidance_diff(
++    instructions: Option<&'static str>,
++    previous: PreviousWorldStateSection<'_>,
++) -> Option<RenderedWorldStateFragment> {
++    let previous_instructions = match previous {
++        PreviousWorldStateSection::Absent => Some(None),
++        PreviousWorldStateSection::Unknown => None,
++        PreviousWorldStateSection::Known(previous) => Some(snapshot_instructions(previous)),
++    };
++    if previous_instructions == Some(instructions) {
++        return None;
++    }
++
++    let body = match instructions {
++        Some(instructions) if previous_instructions == Some(None) => instructions.to_string(),
++        Some(instructions) => format!("{REPLACEMENT_NOTICE}\n\n{instructions}"),
++        None if previous_instructions == Some(None) => return None,
++        None => REMOVAL_NOTICE.to_string(),
++    };
++    Some(RenderedWorldStateFragment::new(
++        "developer",
++        (START_MARKER, END_MARKER),
++        format!("\n{body}\n"),
++    ))
++}
++
++fn snapshot_instructions(snapshot: &Value) -> Option<&str> {
++    snapshot.get("instructions").and_then(Value::as_str)
++}
++
++fn matches_guidance(role: &str, text: &str) -> bool {
++    matches_marked_guidance(role, text, START_MARKER, END_MARKER)
++}
++
++fn matches_legacy_guidance(role: &str, text: &str) -> bool {
++    matches_guidance(role, text)
++        || matches_marked_guidance(role, text, LEGACY_START_MARKER, LEGACY_END_MARKER)
++}
++
++fn matches_marked_guidance(role: &str, text: &str, start: &str, end: &str) -> bool {
++    role == "developer" && text.trim_start().starts_with(start) && text.trim_end().ends_with(end)
++}
++
++#[cfg(test)]
++#[path = "guidance_tests.rs"]
++mod tests;
+diff --git a/codex-rs/core/src/saffron/goal_supervisor/guidance_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/guidance_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..5a3e35924279f6303abc1e3d1d71b6594a0e893e
+--- /dev/null
++++ b/codex-rs/core/src/saffron/goal_supervisor/guidance_tests.rs
+@@ -0,0 +1,75 @@
++use super::*;
++
++use pretty_assertions::assert_eq;
++
++#[test]
++fn persistent_guidance_is_emitted_once_for_unchanged_state() {
++    let section = guidance_section(true);
++    let initial = section
++        .render_diff(PreviousWorldStateSection::Absent)
++        .expect("initial guidance");
++
++    assert_eq!(initial.body(), format!("\n{INSTRUCTIONS}\n"));
++    assert!(section.matches_retained_fragment("developer", &rendered(initial)));
++    assert_eq!(
++        section.render_diff(PreviousWorldStateSection::Known(section.snapshot())),
++        None
++    );
++}
++
++#[test]
++fn guidance_is_replaced_or_retired_when_configuration_changes() {
++    let enabled = guidance_section(true);
++    let disabled = guidance_section(false);
++
++    let replaced = enabled
++        .render_diff(PreviousWorldStateSection::Unknown)
++        .expect("replacement guidance");
++    assert_eq!(
++        replaced.body(),
++        format!("\n{REPLACEMENT_NOTICE}\n\n{INSTRUCTIONS}\n")
++    );
++
++    let retired = disabled
++        .render_diff(PreviousWorldStateSection::Known(enabled.snapshot()))
++        .expect("retirement guidance");
++    assert_eq!(retired.body(), format!("\n{REMOVAL_NOTICE}\n"));
++}
++
++#[test]
++fn prior_turn_local_guidance_is_recognized_for_replacement() {
++    let legacy = format!("{LEGACY_START_MARKER}old guidance{LEGACY_END_MARKER}");
++
++    assert!(guidance_section(true).matches_legacy_fragment("developer", &legacy));
++    assert!(!guidance_section(true).matches_retained_fragment("developer", &legacy));
++}
++
++#[test]
++fn guidance_is_root_scoped() {
++    assert!(
++        GoalGuidanceState {
++            is_root: true,
++            goals_enabled: true,
++        }
++        .enabled()
++    );
++    assert!(
++        !GoalGuidanceState {
++            is_root: false,
++            goals_enabled: true,
++        }
++        .enabled()
++    );
++    assert!(
++        !GoalGuidanceState {
++            is_root: true,
++            goals_enabled: false,
++        }
++        .enabled()
++    );
++}
++
++fn rendered(fragment: RenderedWorldStateFragment) -> String {
++    let (start, end) = fragment.markers();
++    format!("{start}{}{end}", fragment.body())
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/history.rs b/codex-rs/core/src/saffron/goal_supervisor/history.rs
 new file mode 100644
@@ -1746,10 +1980,10 @@ index 0000000000000000000000000000000000000000..e8ee31b611b5e6198fe8ad1381922f3a
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/prompt.md b/codex-rs/core/src/saffron/goal_supervisor/prompt.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..b7b79c79e2a0394cd84d464ac7b943d56f4215fa
+index 0000000000000000000000000000000000000000..e2e556ee6128e6bc726bd3b8c21ed2728f489e4f
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/prompt.md
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,28 @@
 +# Saffron Goal Supervisor
 +
 +You are a short-lived supervisory helper for an idle parent task. You inherit
@@ -1760,16 +1994,19 @@ index 0000000000000000000000000000000000000000..b7b79c79e2a0394cd84d464ac7b943d5
 +
 +1. `saffron.supervisor_close_self`: complete only when the evidence proves that
 +   no required work remains.
-+2. `saffron.supervisor_compact_parent_context`: compact only when context
-+   pressure prevents useful progress.
-+3. `saffron.supervisor_followup_parent`: follow up whenever the parent can make
-+   useful progress now. Questions, uncertainty, missing preferences, and
-+   internal decisions are unfinished work. Direct the parent to use a supported,
-+   reversible assumption when possible. When user authority or information is
-+   indispensable, wake the parent to advance the blocked-goal process.
++2. `saffron.supervisor_followup_parent`: follow up whenever the parent can make
++   useful progress now, a completed or stalled subagent needs attention, a due
++   schedule needs action, or a user decision must be surfaced. Questions,
++   uncertainty, missing preferences, and internal decisions are unfinished
++   work. Direct the parent to use a supported, reversible assumption when
++   possible. When user authority or information is indispensable, wake the
++   parent to advance the blocked-goal process.
++3. `saffron.supervisor_compact_parent_context`: compact only when the previous
++   corrective follow-up was ignored and context pressure prevents useful
++   progress.
 +4. `saffron.supervisor_snooze`: snooze only when every unfinished part depends
-+   on a future deadline or an external process that can change without parent
-+   action, and no useful parent action remains. Mixed work requires a follow-up.
++   on a future deadline or an already-running non-human process, and no useful
++   parent action remains. Mixed work requires a follow-up.
 +   Snooze to a scheduled boundary, or use bounded, evidence-based backoff for an
 +   external process.
 +
@@ -2313,7 +2550,7 @@ index 0000000000000000000000000000000000000000..71803da53e4672bc1bf1c6449d027bff
 +}
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/tools.rs b/codex-rs/core/src/saffron/goal_supervisor/tools.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..77c88285da276db035351bd832bef5fde560608d
+index 0000000000000000000000000000000000000000..d878c03c2e00ffcf9501115619724ed419152545
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/tools.rs
 @@ -0,0 +1,285 @@
@@ -2498,10 +2735,10 @@ index 0000000000000000000000000000000000000000..77c88285da276db035351bd832bef5fd
 +                "Wake the supervised parent with one concrete next task. Use this when the active goal can make useful progress now."
 +            }
 +            Self::Snooze => {
-+                "Snooze only when every unfinished part depends on a future deadline or external process that can change without parent action, and no useful parent action remains. Use supervisor_followup_parent for mixed work, unanswered questions, or missing user authority or information."
++                "Snooze only when every unfinished part depends on a future deadline or an already-running non-human process, and no useful parent action remains. Use supervisor_followup_parent for mixed work, unanswered questions, or missing user authority or information."
 +            }
 +            Self::Compact => {
-+                "Request context compaction for the idle supervised parent. Use this only when context pressure is blocking useful progress."
++                "Request context compaction for the idle supervised parent. Use this only after an ignored corrective follow-up when context pressure is blocking useful progress."
 +            }
 +            Self::Complete => {
 +                "Mark the supervised active goal complete. Use this only when inherited evidence establishes that no required work remains."
@@ -2527,13 +2764,13 @@ index 0000000000000000000000000000000000000000..77c88285da276db035351bd832bef5fd
 +                    (
 +                        "delay_seconds".to_string(),
 +                        JsonSchema::integer(Some(format!(
-+                            "Whole seconds to a known scheduled boundary or a bounded, evidence-based recheck of an external process, from 1 through {MAX_SNOOZE_SECONDS}."
++                            "Whole seconds to a known scheduled boundary or a bounded, evidence-based recheck of an already-running non-human process, from 1 through {MAX_SNOOZE_SECONDS}."
 +                        ))),
 +                    ),
 +                    (
 +                        "reason".to_string(),
 +                        JsonSchema::string(Some(
-+                            "Concise observed external condition or scheduled boundary that prevents useful parent action."
++                            "Concise observed non-human process or scheduled boundary that prevents useful parent action."
 +                                .to_string(),
 +                        )),
 +                    ),
@@ -2604,7 +2841,7 @@ index 0000000000000000000000000000000000000000..77c88285da276db035351bd832bef5fd
 +mod tests;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/tools_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/tools_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4c7ecd7560579934741f4457c627ee90a083b36f
+index 0000000000000000000000000000000000000000..4f6d68622e2383b8bf49c1d2c159c2b04712ad29
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/goal_supervisor/tools_tests.rs
 @@ -0,0 +1,71 @@
@@ -2655,13 +2892,13 @@ index 0000000000000000000000000000000000000000..4c7ecd7560579934741f4457c627ee90
 +                (
 +                    "delay_seconds".to_string(),
 +                    JsonSchema::integer(Some(format!(
-+                        "Whole seconds to a known scheduled boundary or a bounded, evidence-based recheck of an external process, from 1 through {MAX_SNOOZE_SECONDS}."
++                        "Whole seconds to a known scheduled boundary or a bounded, evidence-based recheck of an already-running non-human process, from 1 through {MAX_SNOOZE_SECONDS}."
 +                    ))),
 +                ),
 +                (
 +                    "reason".to_string(),
 +                    JsonSchema::string(Some(
-+                        "Concise observed external condition or scheduled boundary that prevents useful parent action."
++                        "Concise observed non-human process or scheduled boundary that prevents useful parent action."
 +                            .to_string(),
 +                    )),
 +                ),
@@ -2765,10 +3002,10 @@ index 106a9ae09608b9d9631204caeb940bce83c1720f..595eaac7f67d5b8fd70310f11451e5b4
      let registered_mcp_tools = session.services.mcp_handler_cache.append_mcp_tools(
          mcp,
 diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
-index 7d826ac2381df8b0dafa39ef66959b22527a4604..9ba5aac20a4310b9cb747d78cc9623f5d4e8f2c8 100644
+index 7d826ac2381df8b0dafa39ef66959b22527a4604..c40cad928f6aa1777b70b341836323c0bbeac47a 100644
 --- a/codex-rs/ext/goal/src/runtime.rs
 +++ b/codex-rs/ext/goal/src/runtime.rs
-@@ -460,10 +460,20 @@ impl GoalRuntimeHandle {
+@@ -460,21 +460,36 @@ impl GoalRuntimeHandle {
              .map_err(|err| err.to_string())?
          else {
              self.inner.accounting_state.clear_active_goal();
@@ -2778,18 +3015,26 @@ index 7d826ac2381df8b0dafa39ef66959b22527a4604..9ba5aac20a4310b9cb747d78cc9623f5
          if goal.status != codex_state::ThreadGoalStatus::Active {
              self.inner.accounting_state.clear_active_goal();
 +            thread.stop_saffron_goal_supervisor().await;
-+            return Ok(());
-+        }
-+        let goal_id = goal.goal_id.clone();
-+        let goal = protocol_goal_from_state(goal);
-+        if thread
-+            .start_saffron_goal_supervisor_checkin(&goal_id, &goal)
-+            .await?
-+        {
              return Ok(());
          }
++        let goal_id = goal.goal_id.clone();
++        let goal = protocol_goal_from_state(goal);
++        match thread
++            .start_saffron_goal_supervisor_checkin(&goal_id, &goal)
++            .await
++        {
++            Ok(true) => return Ok(()),
++            Ok(false) => {}
++            Err(error) => {
++                tracing::warn!(
++                    thread_id = %self.thread_id(),
++                    %error,
++                    "Saffron supervision could not claim the idle goal; using ordinary continuation"
++                );
++            }
++        }
          let start_options = thread
-@@ -471,10 +481,7 @@ impl GoalRuntimeHandle {
+             .thread_extension_data()
              .get::<TurnStartOptions>()
              .map(|options| options.as_ref().clone())
              .unwrap_or_default();

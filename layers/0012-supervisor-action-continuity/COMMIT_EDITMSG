@@ -1,10 +1,11 @@
 Persist supervisor action continuity
 
-Supervisor check-ins lost the last committed action when a parent
-session unloaded because the context lived only in process memory.
+Supervisor check-ins lost the last committed action when a parent session
+unloaded because the context lived only in process memory.
 
-Store the action and its timestamp in Saffron’s auxiliary database.
-Scope persisted state to the goal, clear it when the goal changes or
-ends, and restore it at the existing continuity boundary. Preserve
-snooze delay and reason so a reconstructed supervisor can evaluate the
-preceding external wait.
+Store the action and its timestamp in Saffron's auxiliary database. Scope
+persisted state to the goal, clear it when the goal changes or ends, and
+restore it at the existing continuity boundary. Preserve snooze delay and
+reason, a bounded copy of a delivered follow-up, and aggregate snooze count
+and duration so a reconstructed supervisor can evaluate the preceding action
+without retaining private reasoning or an unbounded transcript.

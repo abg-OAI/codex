@@ -1,25 +1,26 @@
 Add Saffron goal supervision
 
-Idle root goals need a lightweight watchdog without changing Codex's
-durable goal ownership.
+Idle root goals need a lightweight watchdog without changing Codex durable
+goal ownership.
 
-Add a process-local supervisor that creates one bounded, hidden,
-full-history helper for an active root goal. Hidden helpers neither
-appear in user agent lists nor consume normal agent capacity, and their
-privileged actions are authorized by registry identity rather than a
-role name. The supervisor owns its communication with the parent, so
-Codex does not also enqueue ordinary child-completion messages.
+Add a process-local supervisor that creates one bounded, hidden, full-history
+helper for an active root goal. Hidden helpers neither appear in user agent
+lists nor consume normal agent capacity, and their privileged actions are
+authorized by registry identity rather than a role name. The supervisor owns
+its communication with the parent, so Codex does not also enqueue ordinary
+child-completion messages.
 
-The helper can resume its parent, snooze with capped retry backoff,
-compact parent context, or complete the goal. Snoozes are reserved for
-future deadlines and independently changing external processes; user
-questions and internal decisions wake the parent instead. Every snooze
-records the external condition or scheduled boundary that justifies it.
+The helper can resume its parent, snooze with capped retry backoff, compact
+parent context, or complete the goal. Snoozes are reserved for future
+deadlines and already-running non-human processes; user questions and
+internal decisions wake the parent instead. Every snooze records the process
+or scheduled boundary that justifies it.
 
-On app-server turns that mention a goal, guide root agents to activate
-durable goals and continue autonomously. Optional clarification uses a
-supported, reversible assumption; indispensable authority or
-information enters the blocked-goal process.
+Give root threads one persistent lifecycle contract while Goals and Saffron
+supervision are enabled. World State restores the guidance after compaction
+and resume without duplication. When an idle goal cannot acquire a supervisor
+owner, fall back to ordinary goal continuation.
 
-Cover hidden-helper accounting, authority checks, supervisor runtime
-behavior, root guidance, and the app-server lifecycle.
+Cover hidden-helper accounting, authority checks, supervisor runtime behavior,
+root guidance across ordinary turns, compaction and resume, and the app-server
+lifecycle.
