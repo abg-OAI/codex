@@ -8,6 +8,7 @@
 pub(crate) mod await_exec;
 mod goal_edit;
 pub(crate) mod goal_supervisor;
+mod storage;
 
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
