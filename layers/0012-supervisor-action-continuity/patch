@@ -28,14 +28,18 @@ index 2057a471c52033220dc8357d1b8ff2bf7da13be5..60bc80747658473117f349074d719b17
          crate::saffron::goal_supervisor::stop(&self.session).await;
      }
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/actions.rs b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-index 0e9dca3c6ca5aa1e311591ee026293d1800c41b9..f08324c8cba3a89184c7b35d171452728a097141 100644
+index 0e9dca3c6ca5aa1e311591ee026293d1800c41b9..5aeb7f07335c564eaf9107ff4b41e17e40d23483 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/actions.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/actions.rs
-@@ -29,12 +29,12 @@ pub(super) async fn followup(
+@@ -28,13 +28,15 @@ pub(super) async fn followup(
+     if message.is_empty() {
          return Err("message must not be empty".to_string());
      }
-     let action = Action::Followup;
+-    let action = Action::Followup;
 -    runtime::select_action(parent, helper.thread_id, action.clone()).await?;
++    let action = Action::Followup {
++        delivered_message: runtime::bounded_followup_message(message),
++    };
 +    let goal_id = runtime::select_action(parent, helper.thread_id, action.clone()).await?;
      if let Err(error) = deliver_parent_message(helper, parent, message).await {
          runtime::clear_failed_action(parent, helper.thread_id, &action).await;
@@ -46,7 +50,7 @@ index 0e9dca3c6ca5aa1e311591ee026293d1800c41b9..f08324c8cba3a89184c7b35d17145272
      Ok(())
  }
 
-@@ -114,13 +114,13 @@ pub(super) async fn snooze(
+@@ -114,13 +116,13 @@ pub(super) async fn snooze(
          return Err(error);
      }
      runtime::schedule_wake(parent, &supervisor_runtime, snooze);
@@ -62,7 +66,7 @@ index 0e9dca3c6ca5aa1e311591ee026293d1800c41b9..f08324c8cba3a89184c7b35d17145272
      if parent.active_turn.lock().await.is_some() {
          runtime::clear_failed_action(parent, helper_id, &action).await;
          return Err("the parent became busy before compaction could start".to_string());
-@@ -141,7 +141,7 @@ pub(super) async fn compact(parent: &Arc<Session>, helper_id: ThreadId) -> Resul
+@@ -141,7 +143,7 @@ pub(super) async fn compact(parent: &Arc<Session>, helper_id: ThreadId) -> Resul
      if result.is_err() {
          runtime::clear_failed_action(parent, helper_id, &action).await;
      } else {
@@ -71,7 +75,7 @@ index 0e9dca3c6ca5aa1e311591ee026293d1800c41b9..f08324c8cba3a89184c7b35d17145272
      }
      result
  }
-@@ -196,6 +196,6 @@ pub(super) async fn complete(
+@@ -196,6 +198,6 @@ pub(super) async fn complete(
              }),
          })
          .await;
@@ -115,7 +119,7 @@ index d362c5529ee66e755a819ece8d887e40ff7c7117..b347bf2ad246e69a9dab125763e66a71
  mod actions;
  mod failure;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9820ab57f 100644
+index db9df29d5ae924746af15e053243a5f37b6cbd5f..7a5abb8316f1831a494b7e877b892231095c5bd8 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -32,6 +32,8 @@ use super::failure;
@@ -127,7 +131,15 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
  use crate::saffron::storage::GoalWake;
  use crate::saffron::storage::SaffronStore;
  use crate::session::session::Session;
-@@ -66,7 +68,7 @@ struct State {
+@@ -39,6 +41,7 @@ use crate::session::session::Session;
+ const INITIAL_FAILURE_RETRY: Duration = Duration::from_secs(60);
+ const MAX_FAILURE_RETRY: Duration = Duration::from_secs(60 * 60);
+ const MAX_CHECKIN_PROMPT_TOKENS: usize = 1_000;
++const MAX_DELIVERED_FOLLOWUP_CHARS: usize = 2_000;
+
+ /// Ephemeral state attached to the supervised parent thread.
+ pub(super) struct Runtime {
+@@ -66,7 +69,7 @@ struct State {
      active: Option<ActiveHelper>,
      snooze: Option<Snooze>,
      consecutive_failures: u32,
@@ -136,7 +148,14 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
  }
 
  impl State {
-@@ -183,6 +185,13 @@ pub(super) enum Action {
+@@ -177,12 +180,21 @@ impl Snooze {
+ #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+ #[serde(rename_all = "snake_case")]
+ pub(super) enum Action {
+-    Followup,
++    Followup { delivered_message: String },
+     Snooze { delay_seconds: u64, reason: String },
+     Compact,
      Complete,
  }
 
@@ -145,12 +164,14 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
 +    goal_id: String,
 +    action: Action,
 +    action_at_ms: i64,
++    snooze_count: u64,
++    snoozed_seconds: u64,
 +}
 +
  impl Default for Runtime {
      fn default() -> Self {
          Self {
-@@ -391,7 +400,7 @@ pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: Contin
+@@ -391,7 +403,7 @@ pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: Contin
      }
  }
 
@@ -159,7 +180,7 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
  pub(crate) async fn stop(parent: &Arc<Session>) {
      let runtime = runtime(parent);
      let _transition = Arc::clone(&runtime.transition).lock_owned().await;
-@@ -415,6 +424,12 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
+@@ -415,6 +427,12 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
      {
          warn!(%helper_id, "failed to stop Saffron goal supervisor: {error}");
      }
@@ -172,7 +193,7 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
  }
 
  pub(in crate::saffron) async fn parent_for_helper(
-@@ -540,13 +555,105 @@ pub(in crate::saffron) async fn clear_failed_goal_edit(parent: &Session, helper_
+@@ -540,13 +558,124 @@ pub(in crate::saffron) async fn clear_failed_goal_edit(parent: &Session, helper_
      }
  }
 
@@ -199,10 +220,25 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
 +        }
 +        None
 +    } else {
++        let (mut snooze_count, mut snoozed_seconds) = runtime
++            .state
++            .lock()
++            .await
++            .previous_action
++            .as_ref()
++            .filter(|previous| previous.goal_id == goal_id)
++            .map(|previous| (previous.snooze_count, previous.snoozed_seconds))
++            .unwrap_or_default();
++        if let Action::Snooze { delay_seconds, .. } = &action {
++            snooze_count = snooze_count.saturating_add(1);
++            snoozed_seconds = snoozed_seconds.saturating_add(*delay_seconds);
++        }
 +        let previous_action = PreviousAction {
 +            goal_id: goal_id.to_string(),
 +            action: action.clone(),
 +            action_at_ms,
++            snooze_count,
++            snoozed_seconds,
 +        };
 +        if let Err(error) = persist_action(parent, &previous_action).await {
 +            warn!(
@@ -224,7 +260,9 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
 +        return Err("goal state is unavailable".to_string());
 +    };
 +    let action = match &previous_action.action {
-+        Action::Followup => GoalSupervisorAction::Followup,
++        Action::Followup { delivered_message } => GoalSupervisorAction::Followup {
++            delivered_message: Some(delivered_message.clone()),
++        },
 +        Action::Snooze {
 +            delay_seconds,
 +            reason,
@@ -243,6 +281,8 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
 +            goal_id: previous_action.goal_id.clone(),
 +            action,
 +            action_at_ms: previous_action.action_at_ms,
++            snooze_count: previous_action.snooze_count,
++            snoozed_seconds: previous_action.snoozed_seconds,
 +        })
 +        .await
 +        .map_err(|error| error.to_string())
@@ -280,7 +320,18 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
  pub(super) async fn clear_failed_action(parent: &Session, helper_id: ThreadId, action: &Action) {
      let runtime = runtime(parent);
      let mut state = runtime.state.lock().await;
-@@ -713,18 +820,80 @@ fn render_checkin_prompt(
+@@ -622,6 +751,10 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
+         .get_or_init(Runtime::default)
+ }
+
++pub(super) fn bounded_followup_message(message: &str) -> String {
++    message.chars().take(MAX_DELIVERED_FOLLOWUP_CHARS).collect()
++}
++
+ /// Reports whether unfinished process-local supervision requires retention.
+ ///
+ /// An active helper and an automatic failure retry retain the parent. An
+@@ -713,18 +846,88 @@ fn render_checkin_prompt(
 
  async fn continuity(parent: &Session, goal: &codex_state::ThreadGoal) -> String {
      let runtime = runtime(parent);
@@ -316,6 +367,10 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
 -        "consecutive_failures": state.consecutive_failures,
 +        "previous_action": previous_action.as_ref().map(|previous| &previous.action),
 +        "previous_action_at_ms": previous_action.as_ref().map(|previous| previous.action_at_ms),
++        "goal_timing": {
++            "snooze_count_since_goal_created": previous_action.as_ref().map_or(0, |previous| previous.snooze_count),
++            "snoozed_seconds_since_goal_created": previous_action.as_ref().map_or(0, |previous| previous.snoozed_seconds),
++        },
 +        "consecutive_failures": consecutive_failures,
      })
      .to_string()
@@ -337,7 +392,9 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
 +        Ok(Some(continuity)) => Some(PreviousAction {
 +            goal_id: continuity.goal_id,
 +            action: match continuity.action {
-+                GoalSupervisorAction::Followup => Action::Followup,
++                GoalSupervisorAction::Followup { delivered_message } => Action::Followup {
++                    delivered_message: delivered_message.unwrap_or_default(),
++                },
 +                GoalSupervisorAction::Snooze {
 +                    delay_seconds,
 +                    reason,
@@ -348,6 +405,8 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
 +                GoalSupervisorAction::Compact => Action::Compact,
 +            },
 +            action_at_ms: continuity.action_at_ms,
++            snooze_count: continuity.snooze_count,
++            snoozed_seconds: continuity.snoozed_seconds,
 +        }),
 +        Ok(None) => None,
 +        Err(error) => {
@@ -365,10 +424,10 @@ index db9df29d5ae924746af15e053243a5f37b6cbd5f..0db71684b876008edff3c312d29a08c9
      tokio::spawn(async move {
          let Some(parent) = parent.upgrade() else {
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
-index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51d88d6f7d 100644
+index f1d8e4b0343ee1d24c68560cd18747b961243cae..6f92a00bb2141f642ec7fed1caaf237cc1dbb6dd 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
-@@ -473,6 +473,196 @@ fn each_checkin_prompt_includes_its_current_time() {
+@@ -473,6 +473,280 @@ fn each_checkin_prompt_includes_its_current_time() {
      );
  }
 
@@ -379,8 +438,12 @@ index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51
 +    let persisted = GoalSupervisorContinuity {
 +        thread_id: parent.thread_id,
 +        goal_id: goal.goal_id.clone(),
-+        action: GoalSupervisorAction::Followup,
++        action: GoalSupervisorAction::Followup {
++            delivered_message: Some("continue the accepted implementation".to_string()),
++        },
 +        action_at_ms: 1_787_288_448_000,
++        snooze_count: 2,
++        snoozed_seconds: 600,
 +    };
 +    store
 +        .set_goal_supervisor_continuity(&persisted)
@@ -398,8 +461,16 @@ index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51
 +            "goal_updated_at": goal.updated_at.timestamp(),
 +            "tokens_used": 0,
 +            "time_used_seconds": 0,
-+            "previous_action": "followup",
++            "previous_action": {
++                "followup": {
++                    "delivered_message": "continue the accepted implementation",
++                }
++            },
 +            "previous_action_at_ms": 1_787_288_448_000_i64,
++            "goal_timing": {
++                "snooze_count_since_goal_created": 2,
++                "snoozed_seconds_since_goal_created": 600,
++            },
 +            "consecutive_failures": 0,
 +        })
 +    );
@@ -407,8 +478,12 @@ index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51
 +        runtime(&parent).state.lock().await.previous_action,
 +        Some(PreviousAction {
 +            goal_id: goal.goal_id,
-+            action: Action::Followup,
++            action: Action::Followup {
++                delivered_message: "continue the accepted implementation".to_string(),
++            },
 +            action_at_ms: persisted.action_at_ms,
++            snooze_count: 2,
++            snoozed_seconds: 600,
 +        })
 +    );
 +}
@@ -426,6 +501,8 @@ index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51
 +                reason: "remote release build is still running".to_string(),
 +            },
 +            action_at_ms: 1_787_288_448_000,
++            snooze_count: 4,
++            snoozed_seconds: 1_800,
 +        })
 +        .await
 +        .expect("persist continuity");
@@ -446,6 +523,55 @@ index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51
 +        rendered["previous_action_at_ms"],
 +        serde_json::json!(1_787_288_448_000_i64)
 +    );
++    assert_eq!(
++        rendered["goal_timing"],
++        serde_json::json!({
++            "snooze_count_since_goal_created": 4,
++            "snoozed_seconds_since_goal_created": 1_800,
++        })
++    );
++}
++
++#[tokio::test]
++async fn committed_actions_accumulate_snooze_totals_for_the_active_goal() {
++    let (_home, parent, store) = parent_with_saffron_store().await;
++    let goal = test_goal(parent.thread_id);
++    runtime(&parent).state.lock().await.goal_id = Some(goal.goal_id.clone());
++
++    commit_action(
++        &parent,
++        &goal.goal_id,
++        Action::Snooze {
++            delay_seconds: 60,
++            reason: "build is still running".to_string(),
++        },
++    )
++    .await;
++    commit_action(
++        &parent,
++        &goal.goal_id,
++        Action::Followup {
++            delivered_message: "consume the completed worker".to_string(),
++        },
++    )
++    .await;
++    commit_action(
++        &parent,
++        &goal.goal_id,
++        Action::Snooze {
++            delay_seconds: 120,
++            reason: "build remains in progress".to_string(),
++        },
++    )
++    .await;
++
++    let continuity = store
++        .reconcile_goal_supervisor_continuity(parent.thread_id, &goal.goal_id)
++        .await
++        .expect("load persisted continuity")
++        .expect("persisted continuity");
++    assert_eq!(continuity.snooze_count, 2);
++    assert_eq!(continuity.snoozed_seconds, 180);
 +}
 +
 +#[tokio::test]
@@ -456,8 +582,12 @@ index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51
 +        .set_goal_supervisor_continuity(&GoalSupervisorContinuity {
 +            thread_id: parent.thread_id,
 +            goal_id: previous_goal.goal_id.clone(),
-+            action: GoalSupervisorAction::Followup,
++            action: GoalSupervisorAction::Followup {
++                delivered_message: Some("continue".to_string()),
++            },
 +            action_at_ms: 10,
++            snooze_count: 1,
++            snoozed_seconds: 60,
 +        })
 +        .await
 +        .expect("persist continuity");
@@ -492,6 +622,8 @@ index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51
 +            goal_id: goal.goal_id.clone(),
 +            action: GoalSupervisorAction::Compact,
 +            action_at_ms: 10,
++            snooze_count: 0,
++            snoozed_seconds: 0,
 +        })
 +        .await
 +        .expect("persist continuity");
@@ -521,8 +653,12 @@ index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51
 +    state.goal_id = Some(replacement_goal.goal_id.clone());
 +    state.previous_action = Some(PreviousAction {
 +        goal_id: previous_goal.goal_id,
-+        action: Action::Followup,
++        action: Action::Followup {
++            delivered_message: "continue".to_string(),
++        },
 +        action_at_ms: 10,
++        snooze_count: 1,
++        snoozed_seconds: 60,
 +    });
 +    drop(state);
 +
@@ -545,7 +681,14 @@ index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51
 +    };
 +    runtime(&parent).state.lock().await.goal_id = Some(replacement_goal.goal_id.clone());
 +
-+    commit_action(&parent, &previous_goal.goal_id, Action::Followup).await;
++    commit_action(
++        &parent,
++        &previous_goal.goal_id,
++        Action::Followup {
++            delivered_message: "continue".to_string(),
++        },
++    )
++    .await;
 +
 +    let rendered: serde_json::Value =
 +        serde_json::from_str(&continuity(&parent, &replacement_goal).await)
@@ -565,10 +708,20 @@ index f1d8e4b0343ee1d24c68560cd18747b961243cae..2ed98a2eb69ecfa553d7ccc9ffea2b51
  #[test]
  fn checkin_prompt_bounds_large_goal_objectives_without_losing_current_time() {
      let objective = "long objective ".repeat(2_000);
-@@ -486,6 +676,22 @@ fn checkin_prompt_bounds_large_goal_objectives_without_losing_current_time() {
+@@ -486,6 +760,32 @@ fn checkin_prompt_bounds_large_goal_objectives_without_losing_current_time() {
      assert!(prompt.len() < objective.len());
  }
 
++#[test]
++fn delivered_followup_context_has_a_hard_character_limit() {
++    let message = "🦀".repeat(MAX_DELIVERED_FOLLOWUP_CHARS + 1);
++
++    assert_eq!(
++        bounded_followup_message(&message),
++        "🦀".repeat(MAX_DELIVERED_FOLLOWUP_CHARS)
++    );
++}
++
 +async fn parent_with_saffron_store() -> (tempfile::TempDir, Arc<Session>, SaffronStore) {
 +    let home = tempfile::tempdir().expect("SQLite home");
 +    let state_db = codex_state::StateRuntime::init(
@@ -617,11 +770,25 @@ index 0000000000000000000000000000000000000000..30bebca2e1ef43d2fa46631cd52e82ad
 +        )
 +    )
 +);
+diff --git a/codex-rs/core/src/saffron/migrations/0003_goal_supervisor_action_context.sql b/codex-rs/core/src/saffron/migrations/0003_goal_supervisor_action_context.sql
+new file mode 100644
+index 0000000000000000000000000000000000000000..827f7c7d36c9f8c8fc1fd4d2230af9ce1dca8076
+--- /dev/null
++++ b/codex-rs/core/src/saffron/migrations/0003_goal_supervisor_action_context.sql
+@@ -0,0 +1,8 @@
++ALTER TABLE goal_supervisor_continuity
++ADD COLUMN delivered_followup_message TEXT;
++
++ALTER TABLE goal_supervisor_continuity
++ADD COLUMN snooze_count INTEGER NOT NULL DEFAULT 0 CHECK (snooze_count >= 0);
++
++ALTER TABLE goal_supervisor_continuity
++ADD COLUMN snoozed_seconds INTEGER NOT NULL DEFAULT 0 CHECK (snoozed_seconds >= 0);
 diff --git a/codex-rs/core/src/saffron/storage.rs b/codex-rs/core/src/saffron/storage.rs
-index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0be22a3d78 100644
+index 43b46e3608af2d134cc7768612e8f2a328c1e105..5b425692ec34070b4fe0dad9375783551b04aa4a 100644
 --- a/codex-rs/core/src/saffron/storage.rs
 +++ b/codex-rs/core/src/saffron/storage.rs
-@@ -37,6 +37,36 @@ pub(super) struct GoalWake {
+@@ -37,6 +37,38 @@ pub(super) struct GoalWake {
      pub(super) wake_at_ms: i64,
  }
 
@@ -635,12 +802,14 @@ index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0b
 +    pub(super) goal_id: String,
 +    pub(super) action: GoalSupervisorAction,
 +    pub(super) action_at_ms: i64,
++    pub(super) snooze_count: u64,
++    pub(super) snoozed_seconds: u64,
 +}
 +
 +/// Action variants that can be useful to a later check-in for the same goal.
 +#[derive(Clone, Debug, Eq, PartialEq)]
 +pub(super) enum GoalSupervisorAction {
-+    Followup,
++    Followup { delivered_message: Option<String> },
 +    Snooze { delay_seconds: u64, reason: String },
 +    Compact,
 +}
@@ -648,7 +817,7 @@ index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0b
 +impl GoalSupervisorAction {
 +    fn kind(&self) -> &'static str {
 +        match self {
-+            Self::Followup => "followup",
++            Self::Followup { .. } => "followup",
 +            Self::Snooze { .. } => "snooze",
 +            Self::Compact => "compact",
 +        }
@@ -658,7 +827,7 @@ index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0b
  /// Connection owner for Saffron's independent auxiliary database.
  #[derive(Clone)]
  pub(super) struct SaffronStore {
-@@ -143,6 +173,145 @@ WHERE thread_id = ?
+@@ -143,6 +175,168 @@ WHERE thread_id = ?
          }
          Ok(cleared)
      }
@@ -688,7 +857,10 @@ index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0b
 +    action_kind,
 +    action_at_ms,
 +    snooze_delay_seconds,
-+    snooze_reason
++    snooze_reason,
++    delivered_followup_message,
++    snooze_count,
++    snoozed_seconds
 +FROM goal_supervisor_continuity
 +WHERE thread_id = ? AND goal_id = ?
 +            "#,
@@ -707,13 +879,21 @@ index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0b
 +        &self,
 +        continuity: &GoalSupervisorContinuity,
 +    ) -> anyhow::Result<()> {
-+        let (snooze_delay_seconds, snooze_reason) = match &continuity.action {
-+            GoalSupervisorAction::Snooze {
-+                delay_seconds,
-+                reason,
-+            } => (Some(i64::try_from(*delay_seconds)?), Some(reason.as_str())),
-+            GoalSupervisorAction::Followup | GoalSupervisorAction::Compact => (None, None),
-+        };
++        let (snooze_delay_seconds, snooze_reason, delivered_followup_message) =
++            match &continuity.action {
++                GoalSupervisorAction::Snooze {
++                    delay_seconds,
++                    reason,
++                } => (
++                    Some(i64::try_from(*delay_seconds)?),
++                    Some(reason.as_str()),
++                    None,
++                ),
++                GoalSupervisorAction::Followup { delivered_message } => {
++                    (None, None, delivered_message.as_deref())
++                }
++                GoalSupervisorAction::Compact => (None, None, None),
++            };
 +        sqlx::query(
 +            r#"
 +INSERT INTO goal_supervisor_continuity (
@@ -722,14 +902,20 @@ index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0b
 +    action_kind,
 +    action_at_ms,
 +    snooze_delay_seconds,
-+    snooze_reason
-+) VALUES (?, ?, ?, ?, ?, ?)
++    snooze_reason,
++    delivered_followup_message,
++    snooze_count,
++    snoozed_seconds
++) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 +ON CONFLICT(thread_id) DO UPDATE SET
 +    goal_id = excluded.goal_id,
 +    action_kind = excluded.action_kind,
 +    action_at_ms = excluded.action_at_ms,
 +    snooze_delay_seconds = excluded.snooze_delay_seconds,
-+    snooze_reason = excluded.snooze_reason
++    snooze_reason = excluded.snooze_reason,
++    delivered_followup_message = excluded.delivered_followup_message,
++    snooze_count = excluded.snooze_count,
++    snoozed_seconds = excluded.snoozed_seconds
 +            "#,
 +        )
 +        .bind(continuity.thread_id.to_string())
@@ -738,6 +924,9 @@ index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0b
 +        .bind(continuity.action_at_ms)
 +        .bind(snooze_delay_seconds)
 +        .bind(snooze_reason)
++        .bind(delivered_followup_message)
++        .bind(i64::try_from(continuity.snooze_count)?)
++        .bind(i64::try_from(continuity.snoozed_seconds)?)
 +        .execute(&self.pool)
 +        .await?;
 +        Ok(())
@@ -786,8 +975,9 @@ index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0b
 +    let action_kind = row.try_get::<String, _>("action_kind")?;
 +    let delay_seconds = row.try_get::<Option<i64>, _>("snooze_delay_seconds")?;
 +    let reason = row.try_get::<Option<String>, _>("snooze_reason")?;
++    let delivered_message = row.try_get::<Option<String>, _>("delivered_followup_message")?;
 +    let action = match (action_kind.as_str(), delay_seconds, reason) {
-+        ("followup", None, None) => GoalSupervisorAction::Followup,
++        ("followup", None, None) => GoalSupervisorAction::Followup { delivered_message },
 +        ("snooze", Some(delay_seconds), Some(reason)) => GoalSupervisorAction::Snooze {
 +            delay_seconds: u64::try_from(delay_seconds)?,
 +            reason,
@@ -800,12 +990,14 @@ index 43b46e3608af2d134cc7768612e8f2a328c1e105..65398294b96537b60163fc2f45b89f0b
 +        goal_id: row.try_get("goal_id")?,
 +        action,
 +        action_at_ms: row.try_get("action_at_ms")?,
++        snooze_count: u64::try_from(row.try_get::<i64, _>("snooze_count")?)?,
++        snoozed_seconds: u64::try_from(row.try_get::<i64, _>("snoozed_seconds")?)?,
 +    })
  }
 
  fn notify_wake_changed() {
 diff --git a/codex-rs/core/src/saffron/storage_tests.rs b/codex-rs/core/src/saffron/storage_tests.rs
-index 04b0ce79c06aaf586405241898e493f5f7b753b2..b7f302200625cf89863f85ff8b23f6cae4a5dd4a 100644
+index 04b0ce79c06aaf586405241898e493f5f7b753b2..52a52eb7ea5468d7200c1bc06f95997ed6ed60c0 100644
 --- a/codex-rs/core/src/saffron/storage_tests.rs
 +++ b/codex-rs/core/src/saffron/storage_tests.rs
 @@ -17,7 +17,7 @@ async fn saffron_migrations_have_an_independent_ledger() -> anyhow::Result<()> {
@@ -813,11 +1005,11 @@ index 04b0ce79c06aaf586405241898e493f5f7b753b2..b7f302200625cf89863f85ff8b23f6ca
      assert_eq!(
          migration_versions(home.path().join(SAFFRON_DB_FILENAME), &sqlite).await?,
 -        vec![1]
-+        vec![1, 2]
++        vec![1, 2, 3]
      );
      assert_eq!(
          migration_versions(state.sqlite().state_db_path(), &sqlite).await?,
-@@ -26,6 +26,101 @@ async fn saffron_migrations_have_an_independent_ledger() -> anyhow::Result<()> {
+@@ -26,6 +26,113 @@ async fn saffron_migrations_have_an_independent_ledger() -> anyhow::Result<()> {
      Ok(())
  }
 
@@ -834,6 +1026,8 @@ index 04b0ce79c06aaf586405241898e493f5f7b753b2..b7f302200625cf89863f85ff8b23f6ca
 +            reason: "release build is still running".to_string(),
 +        },
 +        action_at_ms: 1_787_288_448_000,
++        snooze_count: 3,
++        snoozed_seconds: 2_377,
 +    };
 +
 +    store.set_goal_supervisor_continuity(&continuity).await?;
@@ -856,14 +1050,20 @@ index 04b0ce79c06aaf586405241898e493f5f7b753b2..b7f302200625cf89863f85ff8b23f6ca
 +    let previous = GoalSupervisorContinuity {
 +        thread_id,
 +        goal_id: "goal-a".to_string(),
-+        action: GoalSupervisorAction::Followup,
++        action: GoalSupervisorAction::Followup {
++            delivered_message: Some("continue the accepted implementation".to_string()),
++        },
 +        action_at_ms: 10,
++        snooze_count: 1,
++        snoozed_seconds: 60,
 +    };
 +    let replacement = GoalSupervisorContinuity {
 +        thread_id,
 +        goal_id: "goal-b".to_string(),
 +        action: GoalSupervisorAction::Compact,
 +        action_at_ms: 20,
++        snooze_count: 0,
++        snoozed_seconds: 0,
 +    };
 +
 +    store.set_goal_supervisor_continuity(&previous).await?;
@@ -897,8 +1097,12 @@ index 04b0ce79c06aaf586405241898e493f5f7b753b2..b7f302200625cf89863f85ff8b23f6ca
 +    let continuity = GoalSupervisorContinuity {
 +        thread_id: ThreadId::new(),
 +        goal_id: "completed-goal".to_string(),
-+        action: GoalSupervisorAction::Followup,
++        action: GoalSupervisorAction::Followup {
++            delivered_message: Some("continue the release".to_string()),
++        },
 +        action_at_ms: 10,
++        snooze_count: 0,
++        snoozed_seconds: 0,
 +    };
 +
 +    store.set_goal_supervisor_continuity(&continuity).await?;

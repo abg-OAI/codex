@@ -545,10 +545,10 @@ index a1427399ddc5a6847e669029b5203372f008436b..ac7bdca0b9545a315041032e289bd87e
  pub(crate) use runtime::stop;
  pub(crate) use tools::register;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/prompt.md b/codex-rs/core/src/saffron/goal_supervisor/prompt.md
-index b7b79c79e2a0394cd84d464ac7b943d56f4215fa..f03cacdf74c8b07eafb408b79eb8b962751d8d89 100644
+index e2e556ee6128e6bc726bd3b8c21ed2728f489e4f..68eae1e06eedb40295321ec442cbc6804b5ab793 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/prompt.md
 +++ b/codex-rs/core/src/saffron/goal_supervisor/prompt.md
-@@ -21,5 +21,12 @@ action:
+@@ -24,5 +24,12 @@ action:
     Snooze to a scheduled boundary, or use bounded, evidence-based backoff for an
     external process.
 
@@ -798,21 +798,26 @@ index 595eaac7f67d5b8fd70310f11451e5b44e15bd30..d77944cc1467f7c19d9318d31bedd17b
      let registered_mcp_tools = session.services.mcp_handler_cache.append_mcp_tools(
          mcp,
 diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
-index 9ba5aac20a4310b9cb747d78cc9623f5d4e8f2c8..4eeb45b0520ae072a5a0b9caf96c1f21b0892230 100644
+index c40cad928f6aa1777b70b341836323c0bbeac47a..48515f0e45992c555e89b76f4b238e5b00c63fb7 100644
 --- a/codex-rs/ext/goal/src/runtime.rs
 +++ b/codex-rs/ext/goal/src/runtime.rs
-@@ -468,14 +468,10 @@ impl GoalRuntimeHandle {
+@@ -468,12 +468,7 @@ impl GoalRuntimeHandle {
              thread.stop_saffron_goal_supervisor().await;
              return Ok(());
          }
 -        let goal_id = goal.goal_id.clone();
 -        let goal = protocol_goal_from_state(goal);
--        if thread
+-        match thread
 -            .start_saffron_goal_supervisor_checkin(&goal_id, &goal)
--            .await?
+-            .await
 -        {
-+        if thread.start_saffron_goal_supervisor_checkin(&goal).await? {
-             return Ok(());
++        match thread.start_saffron_goal_supervisor_checkin(&goal).await {
+             Ok(true) => return Ok(()),
+             Ok(false) => {}
+             Err(error) => {
+@@ -484,6 +479,7 @@ impl GoalRuntimeHandle {
+                 );
+             }
          }
 +        let goal = protocol_goal_from_state(goal);
          let start_options = thread
