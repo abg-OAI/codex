@@ -1,0 +1,832 @@
+diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
+index 3627f608e70e9f237757bd1ebecaff540647df33..6adfc5d5a60edb1276f2c4c793cfb3a6bf2a1cbc 100644
+--- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
++++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
+@@ -6,6 +6,7 @@ use app_test_support::MockResponsesConfig;
+ use app_test_support::TestAppServer;
+ use app_test_support::create_fake_rollout;
+ use app_test_support::create_mock_responses_server_repeating_assistant;
++use codex_app_server_protocol::ThreadGoalSetResponse;
+ use codex_app_server_protocol::ThreadGoalStatus;
+ use codex_app_server_protocol::ThreadGoalUpdatedNotification;
+ use codex_app_server_protocol::ThreadLoadedListParams;
+@@ -128,6 +129,147 @@ async fn root_can_edit_its_active_goal_without_changing_other_goal_state() -> Re
+     Ok(())
+ }
+
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn root_can_resume_a_paused_goal_and_account_subsequent_work() -> Result<()> {
++    let server = responses::start_mock_server().await;
++    let model_responses = responses::mount_sse_sequence(
++        &server,
++        vec![
++            responses::sse(vec![
++                responses::ev_response_created("resume-goal"),
++                responses::ev_function_call_with_namespace(
++                    "resume-goal-call",
++                    "saffron",
++                    "resume_goal",
++                    &json!({}).to_string(),
++                ),
++                responses::ev_completed_with_tokens("resume-goal", /*total_tokens*/ 50),
++            ]),
++            responses::sse(vec![
++                responses::ev_response_created("observe-goal"),
++                responses::ev_function_call(
++                    "observe-goal-call",
++                    "get_goal",
++                    &json!({}).to_string(),
++                ),
++                responses::ev_completed_with_tokens("observe-goal", /*total_tokens*/ 80),
++            ]),
++            responses::sse(vec![
++                responses::ev_response_created("complete-goal"),
++                responses::ev_function_call(
++                    "complete-goal-call",
++                    "update_goal",
++                    &json!({ "status": "complete" }).to_string(),
++                ),
++                responses::ev_completed_with_tokens("complete-goal", /*total_tokens*/ 100),
++            ]),
++            responses::sse(vec![
++                responses::ev_response_created("root-finished"),
++                responses::ev_assistant_message("root-message", "Goal resumed and completed."),
++                responses::ev_completed_with_tokens("root-finished", /*total_tokens*/ 120),
++            ]),
++        ],
++    )
++    .await;
++
++    let codex_home = TempDir::new()?;
++    MockResponsesConfig::new(&server.uri())
++        .enable_feature(Feature::Goals)
++        .write(codex_home.path())?;
++    let mut app_server = TestAppServer::builder()
++        .with_codex_home(codex_home.path())
++        .without_managed_config()
++        .build_initialized()
++        .await?;
++    let thread = app_server
++        .start_thread(ThreadStartParams::default())
++        .await?;
++
++    let set_id = app_server
++        .send_raw_request(
++            "thread/goal/set",
++            Some(json!({
++                "threadId": thread.thread.id,
++                "objective": "finish the paused release",
++                "status": "paused",
++                "tokenBudget": 20_000,
++            })),
++        )
++        .await?;
++    let paused: ThreadGoalSetResponse = app_server.read_response(set_id).await?;
++    assert_eq!(paused.goal.status, ThreadGoalStatus::Paused);
++
++    let state_db = test_state_db(codex_home.path()).await?;
++    let thread_id = ThreadId::from_string(&thread.thread.id)?;
++    let original = state_db
++        .thread_goals()
++        .get_thread_goal(thread_id)
++        .await?
++        .context("paused goal")?;
++
++    app_server
++        .start_turn_and_wait_for_completion(TurnStartParams {
++            thread_id: thread.thread.id,
++            input: vec![UserInput::Text {
++                text: "Resume the paused goal and finish it.".to_string(),
++                text_elements: Vec::new(),
++            }],
++            ..Default::default()
++        })
++        .await?;
++
++    let requests = model_responses.requests();
++    assert_eq!(requests.len(), 4);
++    assert!(
++        requests[0].tool_by_name("saffron", "resume_goal").is_some(),
++        "the root should receive the goal-resumption tool"
++    );
++    assert!(
++        requests[1]
++            .function_call_output_text("resume-goal-call")
++            .is_some_and(|output| {
++                output.contains("finish the paused release")
++                    && output.contains("20000")
++                    && output.contains("active")
++            }),
++        "the resume result should retain the objective and budget while becoming active"
++    );
++
++    let completed = state_db
++        .thread_goals()
++        .get_thread_goal(thread_id)
++        .await?
++        .context("completed goal")?;
++    assert_eq!(completed.goal_id, original.goal_id);
++    assert_eq!(completed.objective, original.objective);
++    assert_eq!(completed.token_budget, original.token_budget);
++    assert_eq!(completed.created_at, original.created_at);
++    assert_eq!(completed.status, codex_state::ThreadGoalStatus::Complete);
++    assert!(
++        completed.tokens_used > original.tokens_used,
++        "work after resumption should count toward the durable goal"
++    );
++
++    let mut resume_updates = 0;
++    while app_server
++        .pending_notification_methods()
++        .iter()
++        .any(|method| method == "thread/goal/updated")
++    {
++        let notification: ThreadGoalUpdatedNotification =
++            app_server.read_notification("thread/goal/updated").await?;
++        if notification.turn_id.is_some()
++            && notification.goal.status == ThreadGoalStatus::Active
++            && notification.goal.tokens_used == original.tokens_used
++        {
++            resume_updates += 1;
++        }
++    }
++    assert_eq!(resume_updates, 1, "goal resumption should emit one update");
++
++    Ok(())
++}
++
+ #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
+     let server = responses::start_mock_server().await;
+diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
+index e7273e079c7f80cab67e6db1b4e2826bcd3f96d0..fea0fc13eef726c34f685593e85a9f31e9c9c48f 100644
+--- a/codex-rs/core/src/lib.rs
++++ b/codex-rs/core/src/lib.rs
+@@ -153,6 +153,14 @@ pub use codex_prompts as review_prompts;
+ mod thread_manager;
+ pub(crate) mod web_search;
+ pub(crate) mod windows_sandbox_read_grants;
++#[doc(hidden)]
++pub use saffron::goal_resume::GoalResumeCapability;
++#[doc(hidden)]
++pub use saffron::goal_resume::GoalResumeCapabilityHandle;
++#[doc(hidden)]
++pub use saffron::goal_resume::GoalResumeError;
++#[doc(hidden)]
++pub use saffron::goal_resume::GoalResumeRequest;
+ pub use saffron::goal_scheduler::GoalActivator as SaffronGoalActivator;
+ pub use saffron::goal_scheduler::GoalSchedule as SaffronGoalSchedule;
+ pub use saffron::goal_scheduler::GoalSchedulerHandle as SaffronGoalSchedulerHandle;
+diff --git a/codex-rs/core/src/saffron/goal_resume.rs b/codex-rs/core/src/saffron/goal_resume.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ed5a437be1d8965e5fa0e9f07938922774658fb9
+--- /dev/null
++++ b/codex-rs/core/src/saffron/goal_resume.rs
+@@ -0,0 +1,209 @@
++//! Root-only resumption of a durable goal through an extension-owned capability.
++//!
++//! Core owns the model-facing authority policy while the goal extension owns
++//! the complete state transition and runtime lifecycle. The capability keeps
++//! this boundary independent of the Saffron tool name and prevents the handler
++//! from coordinating persistence, accounting, continuation, or events.
++
++use std::collections::BTreeMap;
++use std::sync::Arc;
++
++use codex_extension_api::ExtensionFuture;
++use codex_features::Feature;
++use codex_protocol::protocol::ThreadGoal;
++use codex_tools::JsonSchema;
++use codex_tools::JsonToolOutput;
++use codex_tools::ResponsesApiNamespace;
++use codex_tools::ResponsesApiNamespaceTool;
++use codex_tools::ResponsesApiTool;
++use codex_tools::ToolName;
++use codex_tools::ToolOutput;
++use codex_tools::ToolSpec;
++use serde::Deserialize;
++use serde_json::json;
++
++use crate::function_tool::FunctionCallError;
++use crate::session::session::Session;
++use crate::session::turn_context::TurnContext;
++use crate::tools::context::ToolInvocation;
++use crate::tools::context::ToolPayload;
++use crate::tools::context::boxed_tool_output;
++use crate::tools::handlers::parse_arguments;
++use crate::tools::registry::CoreToolRuntime;
++use crate::tools::registry::ToolExecutor;
++use crate::tools::registry::ToolRegistry;
++
++const NAMESPACE: &str = "saffron";
++const TOOL_NAME: &str = "resume_goal";
++
++/// Context needed to attribute a completed goal resumption.
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct GoalResumeRequest {
++    /// Identifier used for the resulting goal-updated event.
++    pub event_id: String,
++    /// Turn to which the goal-updated event belongs, when one is active.
++    pub turn_id: Option<String>,
++}
++
++/// Stable failures from an extension-owned goal resumption.
++#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
++pub enum GoalResumeError {
++    #[error("there is no durable goal to resume")]
++    GoalNotFound,
++    #[error("the durable goal is already active")]
++    AlreadyActive,
++    #[error("the durable goal cannot resume because its token budget is exhausted")]
++    TokenBudgetExhausted,
++    #[error("the completed durable goal cannot be resumed; create a new goal instead")]
++    Completed,
++    #[error("the durable goal changed before it could be resumed")]
++    Changed,
++    #[error("failed to resume the durable goal: {0}")]
++    Internal(String),
++}
++
++/// Performs one complete, revision-guarded goal resumption for a thread.
++///
++/// Implementations own persistence, runtime accounting, automatic
++/// continuation, and event emission. A caller chooses only the event
++/// attribution; it must not reproduce any part of the transition.
++pub trait GoalResumeCapability: Send + Sync {
++    fn resume<'a>(
++        &'a self,
++        request: GoalResumeRequest,
++    ) -> ExtensionFuture<'a, Result<ThreadGoal, GoalResumeError>>;
++}
++
++/// Thread-scoped access to the installed goal-resumption capability.
++#[derive(Clone)]
++pub struct GoalResumeCapabilityHandle {
++    inner: Arc<dyn GoalResumeCapability>,
++}
++
++impl GoalResumeCapabilityHandle {
++    /// Wraps the goal extension implementation installed for one thread.
++    pub fn new(capability: impl GoalResumeCapability + 'static) -> Self {
++        Self {
++            inner: Arc::new(capability),
++        }
++    }
++
++    /// Runs the complete goal-resumption operation.
++    pub async fn resume(&self, request: GoalResumeRequest) -> Result<ThreadGoal, GoalResumeError> {
++        self.inner.resume(request).await
++    }
++}
++
++impl std::fmt::Debug for GoalResumeCapabilityHandle {
++    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        formatter
++            .debug_struct("GoalResumeCapabilityHandle")
++            .finish_non_exhaustive()
++    }
++}
++
++/// Registers resumption only for root threads with a usable goal runtime.
++pub(super) fn register_root_if_available(
++    session: &Session,
++    turn_context: &TurnContext,
++    registry: &mut ToolRegistry,
++) {
++    if turn_context.config.features.get().enabled(Feature::Goals)
++        && session.services.state_db.is_some()
++        && !turn_context.session_source.is_non_root_agent()
++        && let Some(capability) = session
++            .services
++            .thread_extension_data
++            .get::<GoalResumeCapabilityHandle>()
++    {
++        registry.add(Handler { capability });
++    }
++}
++
++/// Applies root authority policy before delegating the complete transition.
++struct Handler {
++    capability: Arc<GoalResumeCapabilityHandle>,
++}
++
++impl Handler {
++    async fn handle_call(
++        &self,
++        invocation: ToolInvocation,
++    ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
++        let ToolInvocation {
++            session,
++            turn,
++            call_id,
++            payload,
++            ..
++        } = invocation;
++        let ToolPayload::Function { arguments } = payload else {
++            return Err(FunctionCallError::RespondToModel(
++                "goal resumption received an unsupported payload".to_string(),
++            ));
++        };
++        let _: ResumeGoalArgs = parse_arguments(&arguments)?;
++        if session.session_source().await.is_non_root_agent() {
++            return Err(FunctionCallError::RespondToModel(
++                "only a root thread may resume its durable goal".to_string(),
++            ));
++        }
++
++        let goal = self
++            .capability
++            .resume(GoalResumeRequest {
++                event_id: format!("saffron-resume-goal-{call_id}"),
++                turn_id: Some(turn.sub_id.clone()),
++            })
++            .await
++            .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
++
++        Ok(boxed_tool_output(JsonToolOutput::new(
++            json!({ "goal": goal }),
++        )))
++    }
++}
++
++impl ToolExecutor<ToolInvocation> for Handler {
++    fn tool_name(&self) -> ToolName {
++        ToolName::namespaced(NAMESPACE, TOOL_NAME)
++    }
++
++    fn spec(&self) -> ToolSpec {
++        ToolSpec::Namespace(ResponsesApiNamespace {
++            name: NAMESPACE.to_string(),
++            description: "Saffron extensions for long-running process and goal coordination."
++                .to_string(),
++            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
++                name: TOOL_NAME.to_string(),
++                description: "Resume this thread's paused, blocked, or usage-limited durable goal only when the user or system explicitly requested resumption. The goal keeps its identity, objective, budget, and accumulated usage. Never revoke a stopped state on your own."
++                    .to_string(),
++                strict: false,
++                defer_loading: None,
++                parameters: JsonSchema::object(
++                    BTreeMap::new(),
++                    /*required*/ None,
++                    /*additional_properties*/ Some(false.into()),
++                ),
++                output_schema: None,
++            })],
++        })
++    }
++
++    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
++    where
++        ToolInvocation: 'a,
++    {
++        Box::pin(self.handle_call(invocation))
++    }
++}
++
++impl CoreToolRuntime for Handler {
++    fn matches_kind(&self, payload: &ToolPayload) -> bool {
++        matches!(payload, ToolPayload::Function { .. })
++    }
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct ResumeGoalArgs {}
+diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
+index debe40e34e67ff15df5a91e8fd08005e8e9db89b..ee348ea2843a974bd8bfa9c4f12940603213a540 100644
+--- a/codex-rs/core/src/saffron/mod.rs
++++ b/codex-rs/core/src/saffron/mod.rs
+@@ -7,6 +7,7 @@
+
+ pub(crate) mod await_exec;
+ mod goal_edit;
++pub(crate) mod goal_resume;
+ pub(crate) mod goal_scheduler;
+ pub(crate) mod goal_supervisor;
+ mod storage;
+@@ -34,4 +35,5 @@ pub(crate) fn register_tools(
+     }
+
+     goal_edit::register_root_if_available(session, turn_context, registry);
++    goal_resume::register_root_if_available(session, turn_context, registry);
+ }
+diff --git a/codex-rs/ext/goal/src/extension.rs b/codex-rs/ext/goal/src/extension.rs
+index 1ec9ee6378602988c2bf747433646c7cb32b86de..ebc52a87a53fc19e02ad6c45e6e59e45e295255c 100644
+--- a/codex-rs/ext/goal/src/extension.rs
++++ b/codex-rs/ext/goal/src/extension.rs
+@@ -42,6 +42,7 @@ use crate::analytics::GoalAnalytics;
+ use crate::api::GoalService;
+ use crate::events::GoalEventEmitter;
+ use crate::metrics::GoalMetrics;
++use crate::resume::GoalResumeRuntime;
+ use crate::runtime::ActiveGoalStopReason;
+ use crate::runtime::GoalRuntimeConfig;
+ use crate::runtime::GoalRuntimeHandle;
+@@ -159,6 +160,15 @@ where
+             });
+             runtime.set_enabled(enabled);
+             self.goal_service.register_runtime(&runtime);
++            input
++                .thread_store
++                .insert(codex_core::GoalResumeCapabilityHandle::new(
++                    GoalResumeRuntime::new(
++                        runtime.as_ref().clone(),
++                        Arc::clone(&self.state_dbs),
++                        self.event_emitter.clone(),
++                    ),
++                ));
+         })
+     }
+
+diff --git a/codex-rs/ext/goal/src/lib.rs b/codex-rs/ext/goal/src/lib.rs
+index ccd091affce4646394f7c6e41f84b2153feb6654..8aa4a6aa69bb05a44e661f2e5ef5927d143b19a3 100644
+--- a/codex-rs/ext/goal/src/lib.rs
++++ b/codex-rs/ext/goal/src/lib.rs
+@@ -6,6 +6,7 @@ mod api;
+ mod events;
+ mod extension;
+ mod metrics;
++mod resume;
+ mod runtime;
+ mod spec;
+ mod steering;
+diff --git a/codex-rs/ext/goal/src/resume.rs b/codex-rs/ext/goal/src/resume.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..42c09b10b301aa5d9a6587666e0c20442108b333
+--- /dev/null
++++ b/codex-rs/ext/goal/src/resume.rs
+@@ -0,0 +1,105 @@
++//! Goal-extension implementation of the host's resumption capability.
++//!
++//! The capability keeps one resume attempt under the goal runtime's mutation
++//! lock through accounting, snapshot validation, and persistence. Runtime
++//! effects happen after releasing that lock because idle continuation acquires
++//! it again.
++
++use std::sync::Arc;
++
++use codex_core::GoalResumeCapability;
++use codex_core::GoalResumeError;
++use codex_core::GoalResumeRequest;
++use codex_extension_api::ExtensionFuture;
++use codex_protocol::protocol::ThreadGoal;
++
++use crate::events::GoalEventEmitter;
++use crate::runtime::GoalRuntimeHandle;
++use crate::runtime::PreviousGoalSnapshot;
++use crate::tool::protocol_goal_from_state;
++
++pub(crate) struct GoalResumeRuntime {
++    runtime: GoalRuntimeHandle,
++    state_dbs: Arc<codex_state::StateRuntime>,
++    event_emitter: GoalEventEmitter,
++}
++
++impl GoalResumeRuntime {
++    pub(crate) fn new(
++        runtime: GoalRuntimeHandle,
++        state_dbs: Arc<codex_state::StateRuntime>,
++        event_emitter: GoalEventEmitter,
++    ) -> Self {
++        Self {
++            runtime,
++            state_dbs,
++            event_emitter,
++        }
++    }
++
++    async fn resume_goal(&self, request: GoalResumeRequest) -> Result<ThreadGoal, GoalResumeError> {
++        let goal_state_permit = self
++            .runtime
++            .goal_state_permit()
++            .await
++            .map_err(GoalResumeError::Internal)?;
++        let current = self
++            .state_dbs
++            .thread_goals()
++            .get_thread_goal(self.runtime.thread_id())
++            .await
++            .map_err(|error| GoalResumeError::Internal(error.to_string()))?
++            .ok_or(GoalResumeError::GoalNotFound)?;
++        match current.status {
++            codex_state::ThreadGoalStatus::Paused
++            | codex_state::ThreadGoalStatus::Blocked
++            | codex_state::ThreadGoalStatus::UsageLimited => {}
++            codex_state::ThreadGoalStatus::Active => {
++                return Err(GoalResumeError::AlreadyActive);
++            }
++            codex_state::ThreadGoalStatus::BudgetLimited => {
++                return Err(GoalResumeError::TokenBudgetExhausted);
++            }
++            codex_state::ThreadGoalStatus::Complete => {
++                return Err(GoalResumeError::Completed);
++            }
++        }
++        self.runtime
++            .prepare_external_goal_mutation()
++            .await
++            .map_err(GoalResumeError::Internal)?;
++
++        let previous_goal = PreviousGoalSnapshot::from(&current);
++        let resumed = self
++            .state_dbs
++            .thread_goals()
++            .resume_thread_goal(&current)
++            .await
++            .map_err(|error| GoalResumeError::Internal(error.to_string()))?
++            .ok_or(GoalResumeError::Changed)?;
++        self.runtime.clear_pending_turn_start_options().await;
++        drop(goal_state_permit);
++
++        let goal = protocol_goal_from_state(resumed.clone());
++        self.event_emitter
++            .thread_goal_updated(request.event_id, request.turn_id, goal.clone());
++        if let Err(error) = self
++            .runtime
++            .apply_external_goal_set(resumed, Some(previous_goal))
++            .await
++        {
++            tracing::warn!(%error, "failed to apply resumed goal runtime effects");
++        }
++
++        Ok(goal)
++    }
++}
++
++impl GoalResumeCapability for GoalResumeRuntime {
++    fn resume<'a>(
++        &'a self,
++        request: GoalResumeRequest,
++    ) -> ExtensionFuture<'a, Result<ThreadGoal, GoalResumeError>> {
++        Box::pin(self.resume_goal(request))
++    }
++}
+diff --git a/codex-rs/state/src/runtime/goals.rs b/codex-rs/state/src/runtime/goals.rs
+index e2ac3a5ac005f9c3563ae9fa1a05630ad2cb6f80..4f60dec3ed177a441e60bdcddc1e4905e425f2fa 100644
+--- a/codex-rs/state/src/runtime/goals.rs
++++ b/codex-rs/state/src/runtime/goals.rs
+@@ -4,6 +4,7 @@ use uuid::Uuid;
+
+ mod active_goal_listing;
+ mod active_goal_objective;
++mod resumable_goal;
+
+ pub use active_goal_objective::ThreadGoalRevision;
+
+diff --git a/codex-rs/state/src/runtime/goals/resumable_goal.rs b/codex-rs/state/src/runtime/goals/resumable_goal.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..f2914bd25d41b1e5df844ae8b95d1e3373195f2e
+--- /dev/null
++++ b/codex-rs/state/src/runtime/goals/resumable_goal.rs
+@@ -0,0 +1,73 @@
++//! Conditional transitions from a stopped goal back to active work.
++//!
++//! A resume decision is made from a complete durable snapshot. This module
++//! applies that decision only while the same snapshot remains stored, so a
++//! concurrent user edit, status transition, accounting update, or replacement
++//! takes precedence over the stale decision.
++
++use chrono::Utc;
++
++use super::GoalStore;
++use super::datetime_to_epoch_millis;
++use super::thread_goal_from_row;
++
++impl GoalStore {
++    /// Resumes `expected` if the complete goal snapshot is still current.
++    ///
++    /// A missing result means the goal was removed, replaced, changed, is not
++    /// in a resumable status, or has exhausted its token budget. A successful
++    /// update preserves every field other than status and `updated_at`.
++    pub async fn resume_thread_goal(
++        &self,
++        expected: &crate::ThreadGoal,
++    ) -> anyhow::Result<Option<crate::ThreadGoal>> {
++        let now_ms = datetime_to_epoch_millis(Utc::now());
++        let row = sqlx::query(
++            r#"
++UPDATE thread_goals
++SET
++    status = 'active',
++    updated_at_ms = MAX(?, updated_at_ms + 1)
++WHERE thread_id = ?
++  AND goal_id = ?
++  AND objective = ?
++  AND status = ?
++  AND token_budget IS ?
++  AND tokens_used = ?
++  AND time_used_seconds = ?
++  AND created_at_ms = ?
++  AND updated_at_ms = ?
++  AND status IN ('paused', 'blocked', 'usage_limited')
++  AND (token_budget IS NULL OR tokens_used < token_budget)
++RETURNING
++    thread_id,
++    goal_id,
++    objective,
++    status,
++    token_budget,
++    tokens_used,
++    time_used_seconds,
++    created_at_ms,
++    updated_at_ms
++            "#,
++        )
++        .bind(now_ms)
++        .bind(expected.thread_id.to_string())
++        .bind(&expected.goal_id)
++        .bind(&expected.objective)
++        .bind(expected.status.as_str())
++        .bind(expected.token_budget)
++        .bind(expected.tokens_used)
++        .bind(expected.time_used_seconds)
++        .bind(datetime_to_epoch_millis(expected.created_at))
++        .bind(datetime_to_epoch_millis(expected.updated_at))
++        .fetch_optional(self.pool.as_ref())
++        .await?;
++
++        row.map(|row| thread_goal_from_row(&row)).transpose()
++    }
++}
++
++#[cfg(test)]
++#[path = "resumable_goal_tests.rs"]
++mod tests;
+diff --git a/codex-rs/state/src/runtime/goals/resumable_goal_tests.rs b/codex-rs/state/src/runtime/goals/resumable_goal_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..fdcd30ace0618617ac3f4591bc2da93507dd8825
+--- /dev/null
++++ b/codex-rs/state/src/runtime/goals/resumable_goal_tests.rs
+@@ -0,0 +1,172 @@
++use crate::GoalAccountingMode;
++use crate::GoalAccountingOutcome;
++use crate::GoalUpdate;
++use crate::StateRuntime;
++use crate::ThreadGoalStatus;
++use crate::runtime::test_support::unique_temp_dir;
++use codex_protocol::ThreadId;
++use codex_utils_absolute_path::test_support::PathExt;
++use pretty_assertions::assert_eq;
++
++async fn test_runtime() -> std::sync::Arc<StateRuntime> {
++    StateRuntime::init(
++        crate::SqliteConfig::new_for_testing(unique_temp_dir().as_path().abs()),
++        "test-provider".to_string(),
++    )
++    .await
++    .expect("state db should initialize")
++}
++
++async fn create_stopped_goal(
++    runtime: &StateRuntime,
++    thread_id: ThreadId,
++    status: ThreadGoalStatus,
++) -> crate::ThreadGoal {
++    runtime
++        .thread_goals()
++        .replace_thread_goal(
++            thread_id,
++            "finish the release",
++            status,
++            /*token_budget*/ Some(10_000),
++        )
++        .await
++        .expect("goal should be created")
++}
++
++#[tokio::test]
++async fn resume_preserves_each_supported_stopped_goal() -> anyhow::Result<()> {
++    for status in [
++        ThreadGoalStatus::Paused,
++        ThreadGoalStatus::Blocked,
++        ThreadGoalStatus::UsageLimited,
++    ] {
++        let runtime = test_runtime().await;
++        let thread_id = ThreadId::new();
++        let original = create_stopped_goal(&runtime, thread_id, status).await;
++        let accounted = runtime
++            .thread_goals()
++            .account_thread_goal_usage(
++                thread_id,
++                /*time_delta_seconds*/ 7,
++                /*token_delta*/ 300,
++                GoalAccountingMode::ActiveOrStopped,
++                Some(&original.goal_id),
++            )
++            .await?;
++        let GoalAccountingOutcome::Updated(original) = accounted else {
++            panic!("stopped goal usage should be recorded");
++        };
++
++        let resumed = runtime
++            .thread_goals()
++            .resume_thread_goal(&original)
++            .await?
++            .expect("supported stopped goal should resume");
++
++        let mut expected = original.clone();
++        expected.status = ThreadGoalStatus::Active;
++        expected.updated_at = resumed.updated_at;
++        assert_eq!(resumed, expected);
++        assert!(resumed.updated_at > original.updated_at);
++    }
++
++    Ok(())
++}
++
++#[tokio::test]
++async fn resume_rejects_a_stale_goal_snapshot() -> anyhow::Result<()> {
++    let runtime = test_runtime().await;
++    let thread_id = ThreadId::new();
++    let original = create_stopped_goal(&runtime, thread_id, ThreadGoalStatus::Paused).await;
++    let edited = runtime
++        .thread_goals()
++        .update_thread_goal(
++            thread_id,
++            GoalUpdate {
++                objective: Some("finish the release and announce it".to_string()),
++                status: None,
++                token_budget: None,
++                expected_goal_id: Some(original.goal_id.clone()),
++            },
++        )
++        .await?
++        .expect("goal should still exist");
++
++    assert!(
++        runtime
++            .thread_goals()
++            .resume_thread_goal(&original)
++            .await?
++            .is_none()
++    );
++    assert_eq!(
++        runtime.thread_goals().get_thread_goal(thread_id).await?,
++        Some(edited)
++    );
++
++    Ok(())
++}
++
++#[tokio::test]
++async fn resume_rejects_unsupported_or_budget_exhausted_goals() -> anyhow::Result<()> {
++    for status in [
++        ThreadGoalStatus::Active,
++        ThreadGoalStatus::BudgetLimited,
++        ThreadGoalStatus::Complete,
++    ] {
++        let runtime = test_runtime().await;
++        let thread_id = ThreadId::new();
++        let goal = runtime
++            .thread_goals()
++            .replace_thread_goal(
++                thread_id,
++                "finish the release",
++                status,
++                /*token_budget*/ None,
++            )
++            .await?;
++        assert!(
++            runtime
++                .thread_goals()
++                .resume_thread_goal(&goal)
++                .await?
++                .is_none()
++        );
++    }
++
++    let runtime = test_runtime().await;
++    let thread_id = ThreadId::new();
++    let goal = runtime
++        .thread_goals()
++        .replace_thread_goal(
++            thread_id,
++            "finish the release",
++            ThreadGoalStatus::Paused,
++            /*token_budget*/ Some(100),
++        )
++        .await?;
++    let GoalAccountingOutcome::Updated(exhausted) = runtime
++        .thread_goals()
++        .account_thread_goal_usage(
++            thread_id,
++            /*time_delta_seconds*/ 0,
++            /*token_delta*/ 100,
++            GoalAccountingMode::ActiveOrStopped,
++            Some(&goal.goal_id),
++        )
++        .await?
++    else {
++        panic!("stopped goal usage should be recorded");
++    };
++    assert_eq!(exhausted.status, ThreadGoalStatus::BudgetLimited);
++    assert!(
++        runtime
++            .thread_goals()
++            .resume_thread_goal(&exhausted)
++            .await?
++            .is_none()
++    );
++
++    Ok(())
++}

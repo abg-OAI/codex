@@ -1,0 +1,11 @@
+Allow root agents to resume durable goals
+
+Paused and blocked goals currently require an app-server caller to
+reactivate them. An explicit user request therefore cannot be honored
+by a running root agent without granting the model the broader
+update_goal transition.
+
+Add a root-only Saffron tool backed by a goal-extension capability
+that owns conditional persistence and runtime effects. Resumption now
+preserves goal identity and accounting while rejecting stale, active,
+exhausted, or completed goals.
