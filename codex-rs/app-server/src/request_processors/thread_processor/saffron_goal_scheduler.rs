@@ -205,7 +205,7 @@ impl ThreadRequestProcessor {
                 }
                 pending_thread_unloads.insert(thread_id);
             }
-            super::super::thread_lifecycle::unload_thread_without_subscribers(
+            super::super::thread_lifecycle::try_unload_thread_without_subscribers(
                 Arc::clone(&self.thread_manager),
                 Arc::clone(&self.outgoing),
                 Arc::clone(&self.pending_thread_unloads),
