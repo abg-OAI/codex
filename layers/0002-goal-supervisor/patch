@@ -504,7 +504,7 @@ index e2ef8de4b58ff1f64873118fed6aa291e9d179e4..1cd4788cb175cccf6015fb02287cd20c
          source: &SessionSource,
      ) -> Option<AgentExecutionGuard>;
 diff --git a/codex-rs/core/src/agent/control.rs b/codex-rs/core/src/agent/control.rs
-index 719336828f30a891c6991765d5dc116bd53760c8..409ef0f1516761fc5c321d8321b0d712d083971c 100644
+index 705d48c1d5b43d749909bcc10c13c63632acda3a..5e120cb1e83cf92109cbb0a19f2796a27b88ab35 100644
 --- a/codex-rs/core/src/agent/control.rs
 +++ b/codex-rs/core/src/agent/control.rs
 @@ -5,6 +5,7 @@ use crate::agent::AgentStatus;
@@ -515,7 +515,7 @@ index 719336828f30a891c6991765d5dc116bd53760c8..409ef0f1516761fc5c321d8321b0d712
  use crate::agent::types::AgentMetadata;
  use crate::agent::types::LiveAgent;
  use crate::agent_communication::AgentCommunicationContext;
-@@ -344,6 +345,19 @@ impl LocalAgentControl {
+@@ -345,6 +346,19 @@ impl LocalAgentControl {
          self.runtime.registry.agent_metadata_for_thread(agent_id)
      }
 
@@ -535,7 +535,7 @@ index 719336828f30a891c6991765d5dc116bd53760c8..409ef0f1516761fc5c321d8321b0d712
      pub(crate) async fn list_agents(
          &self,
          current_session_source: &SessionSource,
-@@ -539,6 +553,7 @@ impl LocalAgentControl {
+@@ -540,6 +554,7 @@ impl LocalAgentControl {
              agent_path,
              agent_nickname,
              agent_role,
@@ -543,7 +543,7 @@ index 719336828f30a891c6991765d5dc116bd53760c8..409ef0f1516761fc5c321d8321b0d712
          })
      }
 
-@@ -551,18 +566,32 @@ impl LocalAgentControl {
+@@ -552,18 +567,32 @@ impl LocalAgentControl {
          depth: i32,
          agent_path: Option<AgentPath>,
          agent_role: Option<String>,
@@ -749,10 +749,10 @@ index f1b10840d1e516a063749c59d7ba60880b496722..adbcdcb039d427d59d3af74b2804dc8f
 +        .expect("hidden helpers should not consume agent capacity");
 +}
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a687bd9226 100644
+index 9b642981a3505aba3b52f08a6f4475202688d9dd..c0d7115f9af4a15749d762d95c533d40e756a4dd 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
-@@ -272,11 +272,33 @@ impl LocalAgentControl {
+@@ -282,11 +282,33 @@ impl LocalAgentControl {
              SpawnInitialInput::UserInput(initial_input),
              session_source,
              SpawnAgentOptions::default(),
@@ -786,21 +786,22 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
      fn validate_loaded_v2_child(
          &self,
          thread: &CodexThread,
-@@ -623,8 +645,10 @@ impl LocalAgentControl {
+@@ -633,9 +655,11 @@ impl LocalAgentControl {
          initial_input: SpawnInitialInput,
          session_source: Option<SessionSource>,
          options: SpawnAgentOptions,
 +        visibility: AgentListingVisibility,
      ) -> CodexResult<(LiveAgent, ThreadConfigSnapshot)> {
+         let spawn_started_at = Instant::now();
          let state = self.runtime.upgrade()?;
 +        let hidden_helper = visibility == AgentListingVisibility::Hidden;
          let multi_agent_version = state
              .effective_multi_agent_version_for_spawn(
                  &InitialHistory::New,
-@@ -634,11 +658,12 @@ impl LocalAgentControl {
-                 &config,
+@@ -646,11 +670,12 @@ impl LocalAgentControl {
              )
              .await;
+         let product_sku = config.apps_mcp_product_sku.clone();
 -        if let Some(session_source) = session_source.as_ref() {
 +        if !hidden_helper && let Some(session_source) = session_source.as_ref() {
              self.ensure_execution_capacity(multi_agent_version, session_source)?;
@@ -812,7 +813,7 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
              && session_source
                  .as_ref()
                  .is_some_and(is_v2_resident_session_source);
-@@ -655,10 +680,13 @@ impl LocalAgentControl {
+@@ -671,10 +696,13 @@ impl LocalAgentControl {
          } else {
              agent_max_threads
          };
@@ -830,7 +831,7 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
          let inheritance = SpawnAgentThreadInheritance {
              environments: self
                  .inherited_environments_for_source(&state, session_source.as_ref())
-@@ -682,6 +710,7 @@ impl LocalAgentControl {
+@@ -698,6 +726,7 @@ impl LocalAgentControl {
                      depth,
                      agent_path,
                      agent_role,
@@ -838,7 +839,7 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
                      /*preferred_agent_nickname*/ None,
                  )?;
                  (Some(session_source), agent_metadata)
-@@ -734,12 +763,20 @@ impl LocalAgentControl {
+@@ -769,12 +798,20 @@ impl LocalAgentControl {
          };
          agent_metadata.agent_id = Some(new_thread.thread_id);
          let mut pending_spawn = PendingSpawn::new(Arc::clone(&state), new_thread.thread_id);
@@ -864,7 +865,7 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
          {
              let client_metadata = match state.get_thread(*parent_thread_id).await {
                  Ok(parent_thread) => parent_thread.session.app_server_client_metadata().await,
-@@ -768,29 +805,31 @@ impl LocalAgentControl {
+@@ -803,32 +840,36 @@ impl LocalAgentControl {
              );
          }
 
@@ -881,6 +882,7 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
 -                )
 -                .await;
 -        }));
+-        let durability_wait_started_at = Instant::now();
 -        if options.fork_mode.is_some() {
 -            tokio::join!(
 -                new_thread
@@ -889,9 +891,13 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
 -                    .ensure_rollout_materialized(PersistContext::Standard),
 -                pending_spawn.wait_for_edge(),
 -            );
--        } else {
++        let durability_wait = if hidden_helper {
++            Duration::ZERO
+         } else {
 -            pending_spawn.wait_for_edge().await;
-+        if !hidden_helper {
+-        }
+-        let durability_wait = durability_wait_started_at.elapsed();
++            let durability_wait_started_at = Instant::now();
 +            let control = self.clone();
 +            let child = Arc::clone(&new_thread.thread);
 +            let child_thread_id = new_thread.thread_id;
@@ -916,13 +922,15 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
 +            } else {
 +                pending_spawn.wait_for_edge().await;
 +            }
-         }
++            durability_wait_started_at.elapsed()
++        };
 
          let start_options = TurnStartOptions {
-@@ -816,7 +855,9 @@ impl LocalAgentControl {
-                 .await?;
+             parent_turn_id: options.parent_turn_id,
+@@ -855,7 +896,9 @@ impl LocalAgentControl {
              }
          }
+         let input_admission = input_admission_started_at.elapsed();
 -        reservation.commit(agent_metadata.clone());
 +        if !hidden_helper {
 +            reservation.commit(agent_metadata.clone());
@@ -930,7 +938,7 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
          if let Some(residency_slot) = residency_slot {
              residency_slot.commit(new_thread.thread_id);
          }
-@@ -825,8 +866,10 @@ impl LocalAgentControl {
+@@ -864,8 +907,10 @@ impl LocalAgentControl {
          // Notify a new thread has been created. This notification will be processed by clients
          // to subscribe or drain this newly created thread.
          // TODO(jif) add helper for drain
@@ -943,7 +951,7 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
              let child_reference = agent_metadata
                  .agent_path
                  .as_ref()
-@@ -994,7 +1037,9 @@ impl LocalAgentControl {
+@@ -1052,7 +1097,9 @@ impl LocalAgentControl {
                  metadata.user_input_order = None;
              }
              let response_item = &mut envelope.item;
@@ -954,7 +962,7 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
                  return false;
              }
              if !retain_forked_developer_message(
-@@ -1051,7 +1096,8 @@ impl LocalAgentControl {
+@@ -1109,7 +1156,8 @@ impl LocalAgentControl {
              true
          };
          forked_rollout_items.retain_mut(|item| {
@@ -964,7 +972,7 @@ index 7fe302678d408570e24d9b74707202ba3f276831..654d98112eaca69ef9d73c37df81f7a6
                  || destination_history_mode == Some(ThreadHistoryMode::Paginated)
                      && matches!(
                          &*item,
-@@ -1310,6 +1356,7 @@ impl LocalAgentControl {
+@@ -1376,6 +1424,7 @@ impl LocalAgentControl {
                  depth,
                  agent_path.or(resumed_agent_path),
                  resumed_agent_role,
@@ -1034,10 +1042,10 @@ index 7df61e64ac1fc7e42ce4e5b9cb9d23c2357f35d5..4362373f104adf2becd3dd4460728986
          let edge_write = self.edge_write.take();
          drop(tokio::spawn(async move {
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 1357e6c3c11802ae5b2373f3c4bce1d0ca157967..9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2 100644
+index ceaeaa3213224e4243dca558a809bcaf11d18de6..a235c14327fb2045a3a4b794175e2b4f20d83438 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -127,6 +127,11 @@ impl LocalAgentControl {
+@@ -128,6 +128,11 @@ impl LocalAgentControl {
      }
  }
 
@@ -1253,10 +1261,10 @@ index 81dcd5354e39a22010234a46460b33037c5b33c2..1368f5aa05a8d94bd9f1e36651cb1950
 
  #[derive(Clone, Debug, PartialEq, Eq)]
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index b4fa389960a938bae1b99712490d9e31756aa14e..2b4368d6b6ff39da0ca5e5272d38c280470da506 100644
+index 4812c2b056c518b87597027e8d74fdfb9055601b..204cc4b812b978262f88617d3c8b2b7bc0c5e77d 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -316,6 +316,22 @@ impl CodexThread {
+@@ -319,6 +319,22 @@ impl CodexThread {
              .await
      }
 
@@ -1279,7 +1287,7 @@ index b4fa389960a938bae1b99712490d9e31756aa14e..2b4368d6b6ff39da0ca5e5272d38c280
      #[doc(hidden)]
      pub async fn ensure_rollout_materialized(&self) {
          self.session
-@@ -1087,6 +1103,10 @@ impl CodexThread {
+@@ -1129,6 +1145,10 @@ impl CodexThread {
          let multi_agent_version = self
              .multi_agent_version()
              .unwrap_or_else(|| config.multi_agent_version_from_features());
@@ -3074,10 +3082,10 @@ index 893a01ce5ad0bb1789d7b27ce5baad5f8a7a01e8..efe282cc73938c574f582581c9695875
  pub(crate) mod await_exec;
 +pub(crate) mod goal_supervisor;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 2aea6cfa2256a69e385d724e9dc27210b41d6a55..832a5d915c7ca6c57ac47cc33effa8f861735de0 100644
+index b568942429e263abfd654e67aa79ea6e6109af25..4e5402a008c308c6a21c0a85aa2062e60ddaa482 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2420,6 +2420,9 @@ impl Session {
+@@ -2421,6 +2421,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }
@@ -3088,10 +3096,10 @@ index 2aea6cfa2256a69e385d724e9dc27210b41d6a55..832a5d915c7ca6c57ac47cc33effa8f8
          self.services
              .agent_control
 diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
-index 1183ef2db63f7dd8c4718297a200f21ed5350379..314ae6fa6d69292944c4910507357910ef9fc248 100644
+index 6043ad94fec28c9ee1e8068a1878d10b852d0ab2..20c161302f24be4d5fa8bf25d512350d174631d1 100644
 --- a/codex-rs/core/src/session/turn_context.rs
 +++ b/codex-rs/core/src/session/turn_context.rs
-@@ -911,6 +911,22 @@ impl Session {
+@@ -910,6 +910,22 @@ impl Session {
          config
      }
 
@@ -3127,7 +3135,7 @@ index ab305bdac540decdc8228c8ffb6133a20f94a9d6..cd18d647d62c826575ef597b93138597
              &turn_context.session_source,
          );
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 4009dee6c1e1ae19bfe0899dd5ee79502519fc03..f9b045762d1fe7c7d1f848d58ef8067961abe8b6 100644
+index 85bf4b099168671012ba42e7c6eabd8885c21aa8..91bcb39621ab4ebaed6f6a57890ad82043669ba8 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -150,6 +150,9 @@ pub(crate) fn build_tool_router(
