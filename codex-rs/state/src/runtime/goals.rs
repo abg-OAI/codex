@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 mod active_goal_listing;
 mod active_goal_objective;
+mod resumable_goal;
 
 pub use active_goal_objective::ThreadGoalRevision;
 
