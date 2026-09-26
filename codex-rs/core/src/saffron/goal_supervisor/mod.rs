@@ -14,12 +14,14 @@ use crate::session::session::Session;
 use codex_protocol::protocol::SessionSource;
 
 mod actions;
+mod failure;
 pub(crate) mod guidance;
 mod history;
 mod identity;
 mod runtime;
 mod tools;
 
+pub(crate) use failure::record_turn_error;
 pub(crate) use identity::HELPER_ROLE_NAME;
 pub(crate) use identity::is_helper_source;
 pub(super) use runtime::begin_goal_edit;
