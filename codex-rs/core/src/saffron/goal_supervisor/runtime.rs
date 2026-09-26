@@ -32,6 +32,8 @@ use super::failure;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::types::SpawnAgentForkMode;
 use crate::agent::types::SpawnAgentOptions;
+use crate::saffron::storage::GoalSupervisorAction;
+use crate::saffron::storage::GoalSupervisorContinuity;
 use crate::saffron::storage::GoalWake;
 use crate::saffron::storage::SaffronStore;
 use crate::session::session::Session;
@@ -39,6 +41,7 @@ use crate::session::session::Session;
 const INITIAL_FAILURE_RETRY: Duration = Duration::from_secs(60);
 const MAX_FAILURE_RETRY: Duration = Duration::from_secs(60 * 60);
 const MAX_CHECKIN_PROMPT_TOKENS: usize = 1_000;
+const MAX_DELIVERED_FOLLOWUP_CHARS: usize = 2_000;
 
 /// Ephemeral state attached to the supervised parent thread.
 pub(super) struct Runtime {
@@ -66,7 +69,7 @@ struct State {
     active: Option<ActiveHelper>,
     snooze: Option<Snooze>,
     consecutive_failures: u32,
-    previous_action: Option<Action>,
+    previous_action: Option<PreviousAction>,
 }
 
 impl State {
@@ -177,10 +180,19 @@ impl Snooze {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Action {
-    Followup,
+    Followup { delivered_message: String },
     Snooze { delay_seconds: u64, reason: String },
     Compact,
     Complete,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreviousAction {
+    goal_id: String,
+    action: Action,
+    action_at_ms: i64,
+    snooze_count: u64,
+    snoozed_seconds: u64,
 }
 
 impl Default for Runtime {
@@ -387,7 +399,7 @@ pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: Contin
     }
 }
 
-/// Cancels process-local supervision when no active goal remains.
+/// Cancels supervision and removes its continuity when no active goal remains.
 pub(crate) async fn stop(parent: &Arc<Session>) {
     let runtime = runtime(parent);
     let _transition = Arc::clone(&runtime.transition).lock_owned().await;
@@ -408,6 +420,12 @@ pub(crate) async fn stop(parent: &Arc<Session>) {
             .await
     {
         warn!(%helper_id, "failed to stop Saffron goal supervisor: {error}");
+    }
+    if let Err(error) = clear_persisted_action(parent).await {
+        warn!(
+            thread_id = %parent.thread_id,
+            "failed to clear Saffron supervisor continuity: {error}"
+        );
     }
 }
 
@@ -532,11 +550,122 @@ pub(in crate::saffron) async fn clear_failed_goal_edit(parent: &Session, helper_
     }
 }
 
-pub(super) async fn commit_action(parent: &Session, action: Action) {
+pub(super) async fn commit_action(parent: &Session, goal_id: &str, action: Action) {
     let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    if runtime.state.lock().await.goal_id.as_deref() != Some(goal_id) {
+        debug!(
+            thread_id = %parent.thread_id,
+            %goal_id,
+            "discarded action continuity for a replaced goal"
+        );
+        return;
+    }
+    let action_at_ms = Utc::now().timestamp_millis();
+    let previous_action = if matches!(&action, Action::Complete) {
+        if let Err(error) = clear_persisted_action_for_goal(parent, goal_id).await {
+            warn!(
+                thread_id = %parent.thread_id,
+                %goal_id,
+                "failed to clear completed Saffron supervisor continuity: {error}"
+            );
+        }
+        None
+    } else {
+        let (mut snooze_count, mut snoozed_seconds) = runtime
+            .state
+            .lock()
+            .await
+            .previous_action
+            .as_ref()
+            .filter(|previous| previous.goal_id == goal_id)
+            .map(|previous| (previous.snooze_count, previous.snoozed_seconds))
+            .unwrap_or_default();
+        if let Action::Snooze { delay_seconds, .. } = &action {
+            snooze_count = snooze_count.saturating_add(1);
+            snoozed_seconds = snoozed_seconds.saturating_add(*delay_seconds);
+        }
+        let previous_action = PreviousAction {
+            goal_id: goal_id.to_string(),
+            action: action.clone(),
+            action_at_ms,
+            snooze_count,
+            snoozed_seconds,
+        };
+        if let Err(error) = persist_action(parent, &previous_action).await {
+            warn!(
+                thread_id = %parent.thread_id,
+                %goal_id,
+                "failed to persist Saffron supervisor continuity: {error}"
+            );
+        }
+        Some(previous_action)
+    };
     let mut state = runtime.state.lock().await;
-    state.previous_action = Some(action);
+    state.previous_action = previous_action;
     state.consecutive_failures = 0;
+}
+
+async fn persist_action(parent: &Session, previous_action: &PreviousAction) -> Result<(), String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Err("goal state is unavailable".to_string());
+    };
+    let action = match &previous_action.action {
+        Action::Followup { delivered_message } => GoalSupervisorAction::Followup {
+            delivered_message: Some(delivered_message.clone()),
+        },
+        Action::Snooze {
+            delay_seconds,
+            reason,
+        } => GoalSupervisorAction::Snooze {
+            delay_seconds: *delay_seconds,
+            reason: reason.clone(),
+        },
+        Action::Compact => GoalSupervisorAction::Compact,
+        Action::Complete => return Ok(()),
+    };
+    SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?
+        .set_goal_supervisor_continuity(&GoalSupervisorContinuity {
+            thread_id: parent.thread_id,
+            goal_id: previous_action.goal_id.clone(),
+            action,
+            action_at_ms: previous_action.action_at_ms,
+            snooze_count: previous_action.snooze_count,
+            snoozed_seconds: previous_action.snoozed_seconds,
+        })
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub(super) async fn clear_persisted_action_for_goal(
+    parent: &Session,
+    goal_id: &str,
+) -> Result<(), String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Ok(());
+    };
+    SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?
+        .clear_goal_supervisor_continuity_for_goal(parent.thread_id, goal_id)
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+async fn clear_persisted_action(parent: &Session) -> Result<(), String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Ok(());
+    };
+    SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?
+        .clear_goal_supervisor_continuity(parent.thread_id)
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 pub(super) async fn clear_failed_action(parent: &Session, helper_id: ThreadId, action: &Action) {
@@ -612,6 +741,10 @@ pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
         .services
         .thread_extension_data
         .get_or_init(Runtime::default)
+}
+
+pub(super) fn bounded_followup_message(message: &str) -> String {
+    message.chars().take(MAX_DELIVERED_FOLLOWUP_CHARS).collect()
 }
 
 /// Reports whether unfinished process-local supervision requires retention.
@@ -702,16 +835,86 @@ fn render_checkin_prompt(
 
 async fn continuity(parent: &Session, goal: &codex_state::ThreadGoal) -> String {
     let runtime = runtime(parent);
-    let state = runtime.state.lock().await;
+    let (mut previous_action, consecutive_failures) = {
+        let mut state = runtime.state.lock().await;
+        if state
+            .previous_action
+            .as_ref()
+            .is_some_and(|previous| previous.goal_id != goal.goal_id)
+        {
+            state.previous_action = None;
+        }
+        (state.previous_action.clone(), state.consecutive_failures)
+    };
+    if previous_action.is_none() {
+        previous_action = restore_persisted_action(parent, goal).await;
+        if previous_action.is_some() {
+            let mut state = runtime.state.lock().await;
+            if state.goal_id.as_deref() == Some(goal.goal_id.as_str())
+                && state.previous_action.is_none()
+            {
+                state.previous_action.clone_from(&previous_action);
+            }
+        }
+    }
     serde_json::json!({
         "goal_created_at": goal.created_at.timestamp(),
         "goal_updated_at": goal.updated_at.timestamp(),
         "tokens_used": goal.tokens_used,
         "time_used_seconds": goal.time_used_seconds,
-        "previous_action": state.previous_action,
-        "consecutive_failures": state.consecutive_failures,
+        "previous_action": previous_action.as_ref().map(|previous| &previous.action),
+        "previous_action_at_ms": previous_action.as_ref().map(|previous| previous.action_at_ms),
+        "goal_timing": {
+            "snooze_count_since_goal_created": previous_action.as_ref().map_or(0, |previous| previous.snooze_count),
+            "snoozed_seconds_since_goal_created": previous_action.as_ref().map_or(0, |previous| previous.snoozed_seconds),
+        },
+        "consecutive_failures": consecutive_failures,
     })
     .to_string()
+}
+
+async fn restore_persisted_action(
+    parent: &Session,
+    goal: &codex_state::ThreadGoal,
+) -> Option<PreviousAction> {
+    let state_db = parent.services.state_db.as_ref()?;
+    let result = async {
+        let store = SaffronStore::open(state_db.sqlite()).await?;
+        store
+            .reconcile_goal_supervisor_continuity(parent.thread_id, &goal.goal_id)
+            .await
+    }
+    .await;
+    match result {
+        Ok(Some(continuity)) => Some(PreviousAction {
+            goal_id: continuity.goal_id,
+            action: match continuity.action {
+                GoalSupervisorAction::Followup { delivered_message } => Action::Followup {
+                    delivered_message: delivered_message.unwrap_or_default(),
+                },
+                GoalSupervisorAction::Snooze {
+                    delay_seconds,
+                    reason,
+                } => Action::Snooze {
+                    delay_seconds,
+                    reason,
+                },
+                GoalSupervisorAction::Compact => Action::Compact,
+            },
+            action_at_ms: continuity.action_at_ms,
+            snooze_count: continuity.snooze_count,
+            snoozed_seconds: continuity.snoozed_seconds,
+        }),
+        Ok(None) => None,
+        Err(error) => {
+            warn!(
+                thread_id = %parent.thread_id,
+                goal_id = %goal.goal_id,
+                "failed to restore Saffron supervisor continuity: {error}"
+            );
+            None
+        }
+    }
 }
 
 fn watch_helper(parent: Weak<Session>, helper_id: ThreadId, goal_id: String) {
