@@ -343,7 +343,7 @@ impl CodexThread {
             .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
     }
 
-    /// Clears process-local supervisor state after a goal becomes inactive.
+    /// Clears supervisor state after a goal becomes inactive.
     pub async fn stop_saffron_goal_supervisor(&self) {
         crate::saffron::goal_supervisor::stop(&self.session).await;
     }
