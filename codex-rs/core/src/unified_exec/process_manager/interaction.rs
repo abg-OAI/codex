@@ -200,7 +200,8 @@ impl ProcessInteraction<'_> {
             tokio::pin!(output_published);
             let has_output = {
                 let output = self.output.output_buffer.lock().await;
-                let has_output = output.retained_bytes() > 0 || output.omitted_bytes() > 0;
+                let has_output =
+                    output.pending.retained_bytes() > 0 || output.pending.omitted_bytes() > 0;
                 output_published.as_mut().enable();
                 has_output
             };
@@ -318,7 +319,7 @@ impl ProcessInteraction<'_> {
             } else {
                 Some(self.process_id)
             };
-            let output = std::mem::take(&mut *output);
+            let output = std::mem::take(&mut output.pending);
             let outcome = ProcessInteractionOutcome {
                 process_id,
                 exit_code,
