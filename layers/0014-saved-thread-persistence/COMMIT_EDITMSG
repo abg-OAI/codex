@@ -1,0 +1,6 @@
+Preserve persistence for saved thread resumes
+
+Use target-owned persistence intent when an agent cold-loads an
+evicted thread, so ephemeral sender config cannot strip durability.
+Repair saved threads already loaded without a writer in place and
+reconcile accepted live history before public read or resume exposes it.
