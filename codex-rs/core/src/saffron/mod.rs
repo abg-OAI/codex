@@ -10,6 +10,7 @@ mod goal_edit;
 pub(crate) mod goal_scheduler;
 pub(crate) mod goal_supervisor;
 mod storage;
+pub(crate) mod subagent_completion;
 
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
