@@ -397,6 +397,7 @@ async fn enqueue_queue_only_agent_mail(codex: &CodexThread, text: &str) {
                 /*trigger_turn*/ false,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await
         .expect("submit queue-only agent mail");
@@ -2106,6 +2107,7 @@ async fn terminal_compaction_error_does_not_retry_pending_input(
                         /*trigger_turn*/ true,
                     ),
                     start_options: Default::default(),
+                    accepted: None,
                 })
                 .await?;
             codex.submit(Op::RealtimeConversationListVoices).await?;
