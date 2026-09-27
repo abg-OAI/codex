@@ -28,13 +28,15 @@ pub(super) async fn followup(
     if message.is_empty() {
         return Err("message must not be empty".to_string());
     }
-    let action = Action::Followup;
-    runtime::select_action(parent, helper.thread_id, action.clone()).await?;
+    let action = Action::Followup {
+        delivered_message: runtime::bounded_followup_message(message),
+    };
+    let goal_id = runtime::select_action(parent, helper.thread_id, action.clone()).await?;
     if let Err(error) = deliver_parent_message(helper, parent, message).await {
         runtime::clear_failed_action(parent, helper.thread_id, &action).await;
         return Err(error);
     }
-    runtime::commit_action(parent, action).await;
+    runtime::commit_action(parent, &goal_id, action).await;
     Ok(())
 }
 
@@ -112,13 +114,13 @@ pub(super) async fn snooze(
         return Err(error);
     }
     runtime::schedule_wake(parent, &supervisor_runtime, snooze);
-    runtime::commit_action(parent, action).await;
+    runtime::commit_action(parent, &goal_id, action).await;
     Ok(())
 }
 
 pub(super) async fn compact(parent: &Arc<Session>, helper_id: ThreadId) -> Result<String, String> {
     let action = Action::Compact;
-    runtime::select_action(parent, helper_id, action.clone()).await?;
+    let goal_id = runtime::select_action(parent, helper_id, action.clone()).await?;
     if parent.active_turn.lock().await.is_some() {
         runtime::clear_failed_action(parent, helper_id, &action).await;
         return Err("the parent became busy before compaction could start".to_string());
@@ -137,7 +139,7 @@ pub(super) async fn compact(parent: &Arc<Session>, helper_id: ThreadId) -> Resul
     if result.is_err() {
         runtime::clear_failed_action(parent, helper_id, &action).await;
     } else {
-        runtime::commit_action(parent, action).await;
+        runtime::commit_action(parent, &goal_id, action).await;
     }
     result
 }
@@ -192,6 +194,6 @@ pub(super) async fn complete(
             }),
         })
         .await;
-    runtime::commit_action(parent, action).await;
+    runtime::commit_action(parent, &goal_id, action).await;
     Ok(goal)
 }
