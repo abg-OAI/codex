@@ -12,3 +12,7 @@ side effect; the losing helper is retired before it can select an action.
 Keep due wakes durable until a successor owns continuation. Passive mail
 remains queued while the supervisor proceeds, and failed helper starts
 replace due wakes with durable retries.
+
+Classify automatic root turns started by agent mail as goal continuations
+while the thread has an active goal. Preserve explicit turn triggers so
+callers retain their own classification.
