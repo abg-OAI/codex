@@ -1,15 +1,23 @@
-collaboration: Wake parents for child results
+collaboration: Wake parents for actionable child results
 
 A finished MultiAgentV2 child previously queued its terminal result
 without starting an idle parent turn.
 The parent could remain idle or unload before consuming the result.
 
-Make terminal results request a parent turn.
-Keep each live child's ancestor chain resident until the recipient
-mailbox accepts the handoff.
-Transfer each triggering delivery's ancestor lease into the recipient
+Make terminal results request a parent turn by default.
+Give spawned V2 subagents `saffron.set_completion_delivery` so a
+successful result can instead remain queued for the parent’s next turn.
+Keep that choice scoped to one child turn.
+Failures and abnormal termination continue to wake the parent.
+Wait for every terminal handoff to enter the parent mailbox.
+Fold queue-only mail into the next naturally started turn while leaving
+triggering mail under the pending-work scheduler.
+
+Keep each live child’s ancestor chain resident until the recipient
+mailbox accepts a triggering handoff.
+Transfer each triggering delivery’s ancestor lease into the recipient
 mailbox, then into the turn that drains it.
-Keep the finishing child's execution slot through terminal acceptance.
+Keep the finishing child’s execution slot through terminal acceptance.
 Recheck idle unload eligibility in the session submission queue so an
 accepted wake cannot be discarded by an earlier idle observation.
 During terminal session teardown, discard queued mailbox work instead
