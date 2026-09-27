@@ -19,6 +19,7 @@ use tokio::sync::oneshot;
 
 use super::TurnTokenUsage;
 use crate::agent::types::AgentExecutionGuard;
+use crate::saffron::subagent_completion::AncestorTurnRetentionGuard;
 use crate::session::TurnInputQueue;
 use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
@@ -78,7 +79,8 @@ pub(crate) struct RunningTask {
     pub(crate) cancellation_token: CancellationToken,
     pub(crate) handle: AbortOnDropHandle<()>,
     pub(crate) turn_context: Arc<TurnContext>,
-    pub(crate) _agent_execution_guard: Option<AgentExecutionGuard>,
+    pub(crate) agent_execution_guard: Option<AgentExecutionGuard>,
+    pub(crate) ancestor_turn_retention_guard: Option<AncestorTurnRetentionGuard>,
     pub(crate) _diagnostics_guard: GaugeGuard,
     // Timer recorded when the task drops to capture the full turn duration.
     pub(crate) _timer: Option<codex_otel::Timer>,
@@ -93,6 +95,9 @@ pub(crate) struct TurnState {
     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
     pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
     pub(crate) pending_input: TurnInputQueue,
+    /// Leases transferred from triggering mailbox items stay with the active
+    /// turn across the queued-to-running handoff and through its lifecycle.
+    pub(crate) mailbox_ancestor_retention_guards: Vec<AncestorTurnRetentionGuard>,
     mailbox_delivery_phase: MailboxDeliveryPhase,
     granted_permissions_by_environment_id: HashMap<String, AdditionalPermissionProfile>,
     strict_auto_review_enabled: bool,
