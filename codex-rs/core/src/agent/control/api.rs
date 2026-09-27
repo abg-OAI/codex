@@ -13,6 +13,7 @@ use crate::agent::api::DeliveryReceipt;
 use crate::agent::api::SendRequest;
 use crate::agent::api::SpawnRequest;
 use crate::agent::types::AgentExecutionGuard;
+use crate::agent::types::AgentListingVisibility;
 use crate::agent::types::LiveAgent;
 use crate::agent::types::MessageDeliveryMode;
 use crate::agent_communication::AgentCommunicationContext;
@@ -93,7 +94,14 @@ impl AgentControl for LocalAgentControl {
                     )
                 }
             };
-            Box::pin(self.spawn_agent_internal(config, input, Some(source), options)).await
+            Box::pin(self.spawn_agent_internal(
+                config,
+                input,
+                Some(source),
+                options,
+                AgentListingVisibility::Listed,
+            ))
+            .await
         })
     }
 
@@ -246,18 +254,23 @@ impl AgentControl for LocalAgentControl {
 
     fn check_turn_admission(
         &self,
+        thread_id: ThreadId,
         version: MultiAgentVersion,
         source: &SessionSource,
     ) -> Result<()> {
+        if self.runtime.registry.is_hidden_thread(thread_id) {
+            return Ok(());
+        }
         self.ensure_execution_capacity(version, source)
     }
 
     fn admit_turn(
         &self,
+        thread_id: ThreadId,
         version: MultiAgentVersion,
         source: &SessionSource,
     ) -> Option<AgentExecutionGuard> {
-        self.execution_guard(version, source)
+        self.execution_guard_for_thread(version, source, thread_id)
     }
 
     fn record_usage(&self, usage: TokenUsage) -> BoxFuture<'_, Result<()>> {
