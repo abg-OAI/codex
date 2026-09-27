@@ -333,6 +333,7 @@ impl Session {
         let turn = active.get_or_insert_with(ActiveTurn::default);
         debug_assert!(turn.task.is_none());
         let agent_execution_guard = self.services.agent_control.admit_turn(
+            self.thread_id,
             turn_context.multi_agent_version,
             &turn_context.session_source,
         );
