@@ -196,6 +196,7 @@ impl V2Residency {
                     }
                 }
                 let environments = candidate_thread.environment_selections().await;
+                let ephemeral = candidate_thread.config_snapshot().await.ephemeral;
                 let mut threads = manager.threads.write().await;
                 if threads
                     .get(&candidate_thread_id)
@@ -208,7 +209,7 @@ impl V2Residency {
                     .services
                     .local_agent_runtime
                     .registry
-                    .save_evicted_environments(candidate_thread_id, environments);
+                    .save_evicted_runtime_settings(candidate_thread_id, environments, ephemeral);
                 // Keep publication excluded until both entries have been removed.
                 threads.remove(&candidate_thread_id);
                 residency.remove(candidate_thread_id);
