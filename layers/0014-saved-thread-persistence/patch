@@ -538,7 +538,7 @@ index 1424c631d67e42a44b6f2af3bb297775e1daeb61..72739007ecee4158a1063e6076c23415
                  threads.remove(&candidate_thread_id);
                  residency.remove(candidate_thread_id);
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 8f9f20e573bdd907dc1eaa952ec7ef38406076ee..a218145c2317fc91710f50ee125f622fe4c9307c 100644
+index 574178ad3799622de7acd0cd041e271dd6adae29..372b8275dbb77c4ac302b6c6bfeef85a3aa75b3e 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -383,6 +383,13 @@ impl LocalAgentControl {
@@ -586,10 +586,10 @@ index 8f9f20e573bdd907dc1eaa952ec7ef38406076ee..a218145c2317fc91710f50ee125f622f
                      self.touch_loaded_v2_residency(&state, thread_id).await;
                      return Ok(());
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 8710f194bfafb718242c0747cb21a7d3ee166cea..11d3155723464e476c04d156ce1a6e1490565ba0 100644
+index 303be211f3002af3f3df26db697be7882dc15325..5a7d698c449b1f26e9fe9186417d4122dbc1f217 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -1941,6 +1941,122 @@ async fn v2_sibling_reload_preserves_shared_instructions_after_root_unloads(shar
+@@ -1942,6 +1942,122 @@ async fn v2_sibling_reload_preserves_shared_instructions_after_root_unloads(shar
      );
  }
 
@@ -814,7 +814,7 @@ index b2cdea3b342d6e47b541ee9b3e22609470082cc4..f3d1185c7fe71ebf5e71245230bc8295
 
      /// Returns startup metadata without the one-time initial message replay.
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
-index ee348ea2843a974bd8bfa9c4f12940603213a540..2a8bf1ba01aaac81d3fb4eaf1cabc3f4c59fafaa 100644
+index bb75b5ef21638ffaec0e460cbbfb670324a5858a..ce13be03f1986a62708aa751fef7e5d35d633a67 100644
 --- a/codex-rs/core/src/saffron/mod.rs
 +++ b/codex-rs/core/src/saffron/mod.rs
 @@ -10,6 +10,7 @@ mod goal_edit;
@@ -824,7 +824,7 @@ index ee348ea2843a974bd8bfa9c4f12940603213a540..2a8bf1ba01aaac81d3fb4eaf1cabc3f4
 +pub(crate) mod saved_thread_persistence;
  mod storage;
  pub(crate) mod subagent_completion;
-
+ mod subagent_completion_tool;
 diff --git a/codex-rs/core/src/saffron/saved_thread_persistence.rs b/codex-rs/core/src/saffron/saved_thread_persistence.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..11ea280fbb434b84f579eac05f3d15c0dfe7af7d
@@ -869,7 +869,7 @@ index b08267e9840c82898033daa6b8111e871834ed1b..d38b007cd5faa9b8637c636ed4624b9b
          startup_prewarm.abort().await;
      }
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a5876fb33 100644
+index baeebdfd0f49f41e39069d6bfc1f4702b88e17a9..a9ac0efd9ea42d8bcfb4c55bcd2bcd750e44f388 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -246,6 +246,7 @@ mod mcp_prewarm;
@@ -908,7 +908,7 @@ index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a
      }
 
      pub(crate) async fn set_thread_memory_mode(
-@@ -3610,8 +3621,9 @@ impl Session {
+@@ -3615,8 +3626,9 @@ impl Session {
              .iter()
              .map(|envelope| envelope.item.clone())
              .collect::<Vec<_>>();
@@ -919,7 +919,7 @@ index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a
              state
                  .current_time_reminder
                  .note_recorded_items(&response_items);
-@@ -3651,7 +3663,8 @@ impl Session {
+@@ -3656,7 +3668,8 @@ impl Session {
              state
                  .history
                  .record_annotated_items(&mut items, model_info.truncation_policy.into());
@@ -929,7 +929,7 @@ index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a
          for image in image_preparations {
              self.services
                  .analytics_events_client
-@@ -3662,13 +3675,14 @@ impl Session {
+@@ -3667,13 +3680,14 @@ impl Session {
          }
          let rollout_items: Vec<RolloutItem> =
              items.into_iter().map(RolloutItem::ResponseItem).collect();
@@ -945,7 +945,7 @@ index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a
          if turn_context.config.memories.disable_on_external_context
              && let Some(item) = response_items
                  .iter()
-@@ -3986,18 +4000,21 @@ impl Session {
+@@ -3991,18 +4005,21 @@ impl Session {
              .await;
          let items = items.as_ref();
          let response_item = items[0].clone();
@@ -970,7 +970,7 @@ index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a
          self.send_raw_response_items(turn_context, items).await;
      }
 
-@@ -4110,8 +4127,9 @@ impl Session {
+@@ -4115,8 +4132,9 @@ impl Session {
          // A new history window needs a full checkpoint, even when it contains only
          // extension metadata and model-visible context will be rebuilt on the next turn.
          let mut world_state_item = None;
@@ -981,7 +981,7 @@ index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a
              let snapshot = world_state_baseline
                  .map(|world_state| world_state.snapshot())
                  .or_else(|| {
-@@ -4136,7 +4154,7 @@ impl Session {
+@@ -4141,7 +4159,7 @@ impl Session {
                  world_state_item = Some(WorldStateItem::full(snapshot.clone().into_object()));
                  state.history.set_world_state_baseline(snapshot);
              }
@@ -990,7 +990,7 @@ index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a
                  message: metadata.message,
                  replacement_history: Some(replacement_history),
                  guardian_history: state.history.guardian_history_checkpoint(),
-@@ -4156,7 +4174,8 @@ impl Session {
+@@ -4161,7 +4179,8 @@ impl Session {
                      last_started_turn_id: state.last_started_turn_id.clone(),
                      previous_turn_settings: state.previous_turn_settings(),
                  }),
@@ -1000,7 +1000,7 @@ index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a
          };
 
          let mut rollout_items = vec![RolloutItem::Compacted(compacted_item)];
-@@ -4171,13 +4190,14 @@ impl Session {
+@@ -4176,13 +4195,14 @@ impl Session {
          rollout_items.push(RolloutItem::EventMsg(
              thread_settings::applied_event(self).await,
          ));
@@ -1016,7 +1016,7 @@ index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a
          {
              let mut state = self.state.lock().await;
              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
-@@ -4511,6 +4531,11 @@ impl Session {
+@@ -4516,6 +4536,11 @@ impl Session {
 
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
@@ -1028,7 +1028,7 @@ index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..8dc37f850c81a819dc520224975fbf1a
          if let Some(live_thread) = self.live_thread()
              && let Err(e) = live_thread.append_items(items).await
          {
-@@ -4715,12 +4740,13 @@ impl Session {
+@@ -4720,12 +4745,13 @@ impl Session {
          }
          // Persist one `TurnContextItem` per real user turn so resume/lazy replay can recover the
          // latest durable baseline even when this turn emitted no model-visible context diffs.

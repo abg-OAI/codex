@@ -153,15 +153,36 @@ index ec084660b107a4d5c323218260508daa3cb1be12..32e9587d33d318ec0ef86d34c9cf3d74
                  Arc::clone(&self.thread_manager),
                  Arc::clone(&self.outgoing),
                  Arc::clone(&self.pending_thread_unloads),
+diff --git a/codex-rs/core/src/agent/api.rs b/codex-rs/core/src/agent/api.rs
+index 1cd4788cb175cccf6015fb02287cd20c1c0c4945..aa6f9f26e67e5e966c3d2d28b0ac86b7cb55b5d4 100644
+--- a/codex-rs/core/src/agent/api.rs
++++ b/codex-rs/core/src/agent/api.rs
+@@ -227,6 +227,8 @@ pub struct AgentTurnOutcome {
+     pub parent_turn_id: Option<String>,
+     pub initiating_agent_path: Option<AgentPath>,
+     pub status: AgentStatus,
++    /// Controls whether a successful terminal result starts an idle parent turn.
++    pub completion_delivery_mode: MessageDeliveryMode,
+ }
+
+ /// Settings shared by the tree. A service tier of `None` restores the default tier.
 diff --git a/codex-rs/core/src/agent/control.rs b/codex-rs/core/src/agent/control.rs
-index 409ef0f1516761fc5c321d8321b0d712d083971c..1d2955857c3bedc80829823a20e511742cd8dae8 100644
+index 5e120cb1e83cf92109cbb0a19f2796a27b88ab35..77a798b8891ebaa9a941cffd16092461a9c31cab 100644
 --- a/codex-rs/core/src/agent/control.rs
 +++ b/codex-rs/core/src/agent/control.rs
-@@ -179,6 +179,29 @@ impl LocalAgentControl {
-         .await
-     }
-
-+    /// Delivers triggering terminal mail and waits until the recipient can act on it.
+@@ -173,6 +173,31 @@ impl LocalAgentControl {
+         self.send_inter_agent_communication_after_capacity_check(
+             agent_id,
+             &state,
++            communication.trigger_turn,
++            communication,
++            agent_communication_context,
++            start_options,
++        )
++        .await
++    }
++
++    /// Delivers terminal mail and waits until the recipient accepts it.
 +    ///
 +    /// This path intentionally skips the ordinary preflight capacity check. A
 +    /// nested parent must be allowed to accept its child's terminal handoff
@@ -177,17 +198,16 @@ index 409ef0f1516761fc5c321d8321b0d712d083971c..1d2955857c3bedc80829823a20e51174
 +        self.send_inter_agent_communication_after_capacity_check(
 +            agent_id,
 +            &state,
-+            communication,
-+            agent_communication_context,
-+            start_options,
-+        )
-+        .await
-+    }
-+
-     pub(crate) async fn emit_sub_agent_activity(
++            /*wait_for_acceptance*/ true,
+             communication,
+             agent_communication_context,
+             start_options,
+@@ -233,18 +258,50 @@ impl LocalAgentControl {
          &self,
-         thread_id: ThreadId,
-@@ -236,14 +259,43 @@ impl LocalAgentControl {
+         agent_id: ThreadId,
+         state: &Arc<ThreadManagerState>,
++        wait_for_acceptance: bool,
+         communication: InterAgentCommunication,
          context: AgentCommunicationContext,
          start_options: TurnStartOptions,
      ) -> CodexResult<String> {
@@ -200,7 +220,9 @@ index 409ef0f1516761fc5c321d8321b0d712d083971c..1d2955857c3bedc80829823a20e51174
 -        )
 -        .await
 +        let trigger_turn = communication.trigger_turn;
-+        let (accepted_tx, accepted_rx) = trigger_turn.then(tokio::sync::oneshot::channel).unzip();
++        let (accepted_tx, accepted_rx) = wait_for_acceptance
++            .then(tokio::sync::oneshot::channel)
++            .unzip();
 +        // Bridge the recipient's ancestry until its submission handler starts
 +        // the turn and installs the task-owned retention guard.
 +        let _recipient_turn_retention_guard = if trigger_turn {
@@ -239,7 +261,7 @@ index 409ef0f1516761fc5c321d8321b0d712d083971c..1d2955857c3bedc80829823a20e51174
      }
 
      async fn submit_inter_agent_communication(
-@@ -253,6 +305,7 @@ impl LocalAgentControl {
+@@ -254,6 +311,7 @@ impl LocalAgentControl {
          communication: InterAgentCommunication,
          context: AgentCommunicationContext,
          start_options: TurnStartOptions,
@@ -247,7 +269,7 @@ index 409ef0f1516761fc5c321d8321b0d712d083971c..1d2955857c3bedc80829823a20e51174
      ) -> CodexResult<String> {
          let communication_for_log =
              crate::agent_communication::logging_enabled().then(|| communication.clone());
-@@ -274,6 +327,7 @@ impl LocalAgentControl {
+@@ -275,6 +333,7 @@ impl LocalAgentControl {
                          Op::InterAgentCommunication {
                              communication,
                              start_options,
@@ -256,10 +278,10 @@ index 409ef0f1516761fc5c321d8321b0d712d083971c..1d2955857c3bedc80829823a20e51174
                          parent_turn_id,
                          root_turn_id,
 diff --git a/codex-rs/core/src/agent/control/completion.rs b/codex-rs/core/src/agent/control/completion.rs
-index 0f09257a978c94f0bdd90e91fe3e4c28d0303afc..8ec3410ce107d2c795ab589fc5880da84645d355 100644
+index 0f09257a978c94f0bdd90e91fe3e4c28d0303afc..d34e35d974512b3c6e75fb1dc307841147dbb594 100644
 --- a/codex-rs/core/src/agent/control/completion.rs
 +++ b/codex-rs/core/src/agent/control/completion.rs
-@@ -1,6 +1,6 @@
+@@ -1,11 +1,12 @@
  //! Delivers terminal child results and completion activity to the agent tree.
  //!
 -//! Sessions capture terminal state; the controller owns routing and queue-only delivery.
@@ -267,12 +289,24 @@ index 0f09257a978c94f0bdd90e91fe3e4c28d0303afc..8ec3410ce107d2c795ab589fc5880da8
  //! Delivery remains best effort, with tracing recorded only after the parent accepts it.
 
  use super::LocalAgentControl;
-@@ -100,12 +100,12 @@ impl LocalAgentControl {
+ use crate::TurnStartOptions;
+ use crate::agent::api::AgentTurnOutcome;
++use crate::agent::types::MessageDeliveryMode;
+ use crate::agent_communication::AgentCommunicationContext;
+ use crate::agent_communication::AgentCommunicationKind;
+ use crate::session_prefix::format_inter_agent_completion_message;
+@@ -95,17 +96,18 @@ impl LocalAgentControl {
+         // `communication` owns the message. Keep a second copy only when the
+         // recorder will actually need it after parent delivery succeeds.
+         let trace_message = trace.is_enabled().then(|| message.clone());
++        let trigger_turn = outcome.completion_delivery_mode == MessageDeliveryMode::TriggerTurn;
+         let communication = InterAgentCommunication::new(
+             child_agent_path.clone(),
              parent_agent_path,
              Vec::new(),
              message,
 -            /*trigger_turn*/ false,
-+            /*trigger_turn*/ true,
++            trigger_turn,
          );
          let context =
              AgentCommunicationContext::new(AgentCommunicationKind::Result, outcome.thread_id);
@@ -424,7 +458,7 @@ index f1041c9c4eea2fe32eac00c6810edd1ebd3e9b64..1424c631d67e42a44b6f2af3bb297775
 
  #[cfg(test)]
 diff --git a/codex-rs/core/src/agent/control/runtime.rs b/codex-rs/core/src/agent/control/runtime.rs
-index 71f8b4f67d1e85f154fa2ef5f78d891ccaa844d4..29312ab752b86edf11874b189204d9f809496c9f 100644
+index 287883785f9165c4a19a660233a4d9ea4f1f354a..c64fb4c071b3caa55cb6429b8eee112aef07cb81 100644
 --- a/codex-rs/core/src/agent/control/runtime.rs
 +++ b/codex-rs/core/src/agent/control/runtime.rs
 @@ -8,6 +8,7 @@ use crate::agent::api::AgentControl;
@@ -452,10 +486,10 @@ index 71f8b4f67d1e85f154fa2ef5f78d891ccaa844d4..29312ab752b86edf11874b189204d9f8
              root_service_tier: Arc::new(ArcSwapOption::from(None)),
              shared_thread_instructions_provider: Arc::default(),
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 654d98112eaca69ef9d73c37df81f7a687bd9226..7cf7ad3044e7d1d71eed318c6427b3cab2516478 100644
+index c0d7115f9af4a15749d762d95c533d40e756a4dd..574178ad3799622de7acd0cd041e271dd6adae29 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
-@@ -770,6 +770,19 @@ impl LocalAgentControl {
+@@ -805,6 +805,19 @@ impl LocalAgentControl {
              reservation.commit_in_place(agent_metadata.clone());
              pending_spawn.track_agent_registration(Arc::clone(&self.runtime.registry));
          }
@@ -475,8 +509,16 @@ index 654d98112eaca69ef9d73c37df81f7a687bd9226..7cf7ad3044e7d1d71eed318c6427b3ca
 
          if !hidden_helper
              && let Some(SessionSource::SubAgent(
+@@ -888,6 +901,7 @@ impl LocalAgentControl {
+                 self.send_inter_agent_communication_after_capacity_check(
+                     new_thread.thread_id,
+                     &state,
++                    communication.trigger_turn,
+                     communication,
+                     context,
+                     start_options,
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2..127a36a2ce5af525c80a114640b162b0f1dd3108 100644
+index 012b1e526205713f47f898f4d799b79f32baab2a..303be211f3002af3f3df26db697be7882dc15325 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
 @@ -26,7 +26,13 @@ use crate::context::SubagentNotification;
@@ -493,7 +535,7 @@ index 9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2..127a36a2ce5af525c80a114640b162b0
  use crate::thread_manager::ForkSnapshot;
  use crate::thread_manager::StartThreadOptions;
  use crate::tools::handlers::multi_agents_common::thread_spawn_source;
-@@ -97,6 +103,7 @@ use core_test_support::responses::strip_response_item_ids;
+@@ -98,6 +104,7 @@ use core_test_support::responses::strip_response_item_ids;
  use pretty_assertions::assert_eq;
  use std::sync::RwLock;
  use tempfile::TempDir;
@@ -501,7 +543,7 @@ index 9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2..127a36a2ce5af525c80a114640b162b0
  use tokio::time::Duration;
  use tokio::time::sleep;
  use tokio::time::timeout;
-@@ -244,6 +251,38 @@ struct AgentControlHarness {
+@@ -245,6 +252,38 @@ struct AgentControlHarness {
      control: LocalAgentControl,
  }
 
@@ -540,7 +582,7 @@ index 9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2..127a36a2ce5af525c80a114640b162b0
  impl AgentControlHarness {
      async fn new() -> Self {
          let (home, config) = test_config().await;
-@@ -811,6 +850,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
+@@ -796,6 +835,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
          Op::InterAgentCommunication {
              communication: communication.clone(),
              start_options: Default::default(),
@@ -548,7 +590,7 @@ index 9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2..127a36a2ce5af525c80a114640b162b0
          },
      );
      let captured = harness
-@@ -843,6 +883,314 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
+@@ -828,6 +868,315 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
      ));
  }
 
@@ -610,6 +652,7 @@ index 9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2..127a36a2ce5af525c80a114640b162b0
 +            .send_inter_agent_communication_after_capacity_check(
 +                worker_thread_id,
 +                &state,
++                /*wait_for_acceptance*/ true,
 +                InterAgentCommunication::new(
 +                    AgentPath::root(),
 +                    worker_path,
@@ -863,7 +906,7 @@ index 9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2..127a36a2ce5af525c80a114640b162b0
  #[tokio::test]
  async fn ensure_v2_agent_loaded_reloads_registered_unloaded_agent() {
      check_v2_agent_reload(V2ReloadRoute::Sender).await;
-@@ -1129,6 +1477,7 @@ async fn check_v2_agent_reload(route: V2ReloadRoute) {
+@@ -1114,6 +1463,7 @@ async fn check_v2_agent_reload(route: V2ReloadRoute) {
          Op::InterAgentCommunication {
              communication,
              start_options: Default::default(),
@@ -871,7 +914,7 @@ index 9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2..127a36a2ce5af525c80a114640b162b0
          },
      );
      let captured = harness
-@@ -4125,6 +4474,358 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
+@@ -4145,6 +4495,446 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
      assert!(!has_subagent_notification(root_history.raw_items()));
  }
 
@@ -960,6 +1003,94 @@ index 9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2..127a36a2ce5af525c80a114640b162b0
 +                    )
 +            })
 +    );
++}
++
++#[tokio::test]
++async fn multi_agent_v2_completion_can_defer_idle_parent_turn() {
++    let harness = AgentControlHarness::new().await;
++    let mut config = harness.config.clone();
++    let _ = config.features.enable(Feature::MultiAgentV2);
++    let root = harness
++        .manager
++        .start_thread(StartThreadOptions::new(config.clone()))
++        .await
++        .expect("root thread should start");
++    let root_thread_id = root.thread_id;
++    let root_thread = root.thread;
++    let worker_path = AgentPath::root().join("worker_a").expect("worker path");
++    let worker_thread_id = harness
++        .control
++        .spawn_agent(
++            config,
++            text_input("hello worker"),
++            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++                parent_thread_id: root_thread_id,
++                depth: 1,
++                agent_path: Some(worker_path.clone()),
++                agent_nickname: None,
++                agent_role: Some("explorer".to_string()),
++            })),
++        )
++        .await
++        .expect("worker spawn should succeed");
++    let worker_thread = harness
++        .manager
++        .get_thread(worker_thread_id)
++        .await
++        .expect("worker thread should exist");
++    worker_thread
++        .session
++        .abort_all_tasks(TurnAbortReason::Interrupted)
++        .await;
++
++    let worker_turn = worker_thread.session.new_default_turn().await;
++    crate::saffron::subagent_completion::set_delivery(
++        &worker_turn.extension_data,
++        crate::saffron::subagent_completion::CompletionDelivery::DeferToParent,
++    );
++    worker_thread
++        .session
++        .send_event(
++            worker_turn.as_ref(),
++            EventMsg::TurnComplete(TurnCompleteEvent {
++                turn_id: worker_turn.sub_id.clone(),
++                started_at: None,
++                last_agent_message: Some("done".to_string()),
++                error: None,
++                completed_at: None,
++                duration_ms: None,
++                time_to_first_token_ms: None,
++            }),
++        )
++        .await;
++
++    timeout(Duration::from_secs(5), async {
++        loop {
++            if harness
++                .manager
++                .captured_ops()
++                .into_iter()
++                .any(|(thread_id, op)| {
++                    thread_id == root_thread_id
++                        && matches!(
++                            op,
++                            Op::InterAgentCommunication { communication, .. }
++                                if communication.author == worker_path
++                                    && communication.recipient == AgentPath::root()
++                                    && communication.content.contains("done")
++                                    && !communication.trigger_turn
++                        )
++                })
++            {
++                break;
++            }
++            sleep(Duration::from_millis(10)).await;
++        }
++    })
++    .await
++    .expect("terminal child mail should reach the parent queue");
++
++    assert!(root_thread.session.active_turn.lock().await.is_none());
 +}
 +
 +#[tokio::test]
@@ -1230,7 +1361,7 @@ index 9e8571e9c2d9fc830ce6a73f3bfaa21d21f788d2..127a36a2ce5af525c80a114640b162b0
  #[tokio::test]
  async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
      let harness = AgentControlHarness::new().await;
-@@ -4191,6 +4892,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
+@@ -4211,6 +5001,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -1311,10 +1442,10 @@ index fb84c33a839e9e9793eba989ccec08235b000756..b644ca996d792e9a7f913cec3295cf5e
  fn reservation_drop_releases_slot() {
      let registry = Arc::new(AgentRegistry::default());
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index e49d46b5aee5526a34422a01c46d7b9162a4503a..57cf97bf994cfa6ee50fea7b1834c0b240612a3a 100644
+index 720d278634ed8629f8f5dcb63606e21f71ab401b..bba95beeec84cfff284ac82a4e871c38374f7fcc 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -260,6 +260,17 @@ impl CodexThread {
+@@ -263,6 +263,17 @@ impl CodexThread {
          self.io.shutdown_and_wait().await
      }
 
@@ -1332,7 +1463,7 @@ index e49d46b5aee5526a34422a01c46d7b9162a4503a..57cf97bf994cfa6ee50fea7b1834c0b2
      /// Wait until the underlying session loop has terminated.
      pub async fn wait_until_terminated(&self) {
          self.io.session_loop_termination.clone().await;
-@@ -339,7 +350,7 @@ impl CodexThread {
+@@ -342,7 +353,7 @@ impl CodexThread {
      /// deferred core task is not discarded before its durable state changes.
      #[doc(hidden)]
      pub async fn should_retain_while_idle(&self) -> bool {
@@ -1342,23 +1473,37 @@ index e49d46b5aee5526a34422a01c46d7b9162a4503a..57cf97bf994cfa6ee50fea7b1834c0b2
 
      /// Returns whether the settled snooze can be reconstructed after unloading.
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
-index 63957c93264bc3f05a964c6af88e8e692b504bef..debe40e34e67ff15df5a91e8fd08005e8e9db89b 100644
+index 63957c93264bc3f05a964c6af88e8e692b504bef..87a8b46b154f162a62d9b9db5a53f007a622a666 100644
 --- a/codex-rs/core/src/saffron/mod.rs
 +++ b/codex-rs/core/src/saffron/mod.rs
-@@ -10,6 +10,7 @@ mod goal_edit;
+@@ -10,6 +10,8 @@ mod goal_edit;
  pub(crate) mod goal_scheduler;
  pub(crate) mod goal_supervisor;
  mod storage;
 +pub(crate) mod subagent_completion;
++mod subagent_completion_tool;
 
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
+@@ -32,5 +34,12 @@ pub(crate) fn register_tools(
+         return;
+     }
+
++    if subagent_completion::can_choose_delivery(
++        turn_context.multi_agent_version,
++        &turn_context.session_source,
++    ) {
++        subagent_completion_tool::register(registry);
++    }
++
+     goal_edit::register_root_if_available(session, turn_context, registry);
+ }
 diff --git a/codex-rs/core/src/saffron/subagent_completion.rs b/codex-rs/core/src/saffron/subagent_completion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..084c38bdcfdb0f2f86dba5889bf152190ceca7fd
+index 0000000000000000000000000000000000000000..6a1dad7b585b2edfbdcbb7c8869b0515b0ce68d6
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/subagent_completion.rs
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,175 @@
 +//! Keeps parent sessions resident while spawned subagents can still hand off results.
 +//!
 +//! A spawned MultiAgentV2 turn finishes by sending terminal mail to its direct
@@ -1368,14 +1513,20 @@ index 0000000000000000000000000000000000000000..084c38bdcfdb0f2f86dba5889bf15219
 +//! on its ancestor chain. A queued handoff transfers its lease to the recipient
 +//! turn before leaving the mailbox, so acceptance cannot open an unload gap.
 +
-+use crate::session::session::Session;
-+use codex_protocol::ThreadId;
-+use codex_protocol::protocol::MultiAgentVersion;
-+use codex_protocol::protocol::SessionSource;
 +use std::collections::HashMap;
 +use std::collections::HashSet;
 +use std::sync::Arc;
 +use std::sync::Mutex;
++
++use codex_extension_api::ExtensionData;
++use codex_protocol::ThreadId;
++use codex_protocol::protocol::AgentStatus;
++use codex_protocol::protocol::MultiAgentVersion;
++use codex_protocol::protocol::SessionSource;
++use codex_protocol::protocol::SubAgentSource;
++
++use crate::agent::types::MessageDeliveryMode;
++use crate::session::session::Session;
 +
 +/// Process-local retention state shared by one multi-agent tree.
 +#[derive(Default)]
@@ -1387,6 +1538,58 @@ index 0000000000000000000000000000000000000000..084c38bdcfdb0f2f86dba5889bf15219
 +pub(crate) struct AncestorTurnRetentionGuard {
 +    retention: Arc<AncestorTurnRetention>,
 +    ancestor_thread_ids: Vec<ThreadId>,
++}
++
++/// Selects whether a successful result should start an idle parent turn.
++///
++/// The value is stored in one turn's [`ExtensionData`], so a follow-up turn
++/// returns to [`CompletionDelivery::WakeParent`] unless it makes another
++/// explicit choice.
++#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
++pub(crate) enum CompletionDelivery {
++    /// Delivers the result and starts an idle parent turn.
++    #[default]
++    WakeParent,
++    /// Delivers the result for the parent's next naturally started turn.
++    DeferToParent,
++}
++
++/// Reports whether one turn can control the V2 terminal handoff.
++pub(crate) fn can_choose_delivery(
++    multi_agent_version: MultiAgentVersion,
++    source: &SessionSource,
++) -> bool {
++    multi_agent_version == MultiAgentVersion::V2
++        && matches!(
++            source,
++            SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++                agent_path: Some(_),
++                ..
++            })
++        )
++}
++
++/// Stores the successful-result delivery choice for one turn.
++pub(crate) fn set_delivery(turn_store: &ExtensionData, delivery: CompletionDelivery) {
++    turn_store.insert(delivery);
++}
++
++/// Resolves terminal delivery while forcing every abnormal outcome to wake.
++pub(crate) fn terminal_delivery_mode(
++    turn_store: &ExtensionData,
++    status: &AgentStatus,
++) -> MessageDeliveryMode {
++    let delivery = turn_store
++        .get::<CompletionDelivery>()
++        .as_deref()
++        .copied()
++        .unwrap_or_default();
++    if matches!(status, AgentStatus::Completed(_)) && delivery == CompletionDelivery::DeferToParent
++    {
++        MessageDeliveryMode::QueueOnly
++    } else {
++        MessageDeliveryMode::TriggerTurn
++    }
 +}
 +
 +/// Retains the local ancestor chain required for a subagent turn's handoff.
@@ -1478,11 +1681,84 @@ index 0000000000000000000000000000000000000000..084c38bdcfdb0f2f86dba5889bf15219
 +mod tests;
 diff --git a/codex-rs/core/src/saffron/subagent_completion_tests.rs b/codex-rs/core/src/saffron/subagent_completion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..78714dcbc49ce7d02522d5489f3eca23b70c0a1c
+index 0000000000000000000000000000000000000000..8e0a700462601f7889835e0e865494a8ac2fb130
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/subagent_completion_tests.rs
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,131 @@
++use codex_extension_api::ExtensionData;
++use codex_protocol::AgentPath;
++use codex_protocol::protocol::AgentStatus;
++use codex_protocol::protocol::MultiAgentVersion;
++use codex_protocol::protocol::SessionSource;
++use codex_protocol::protocol::SubAgentSource;
++
 +use super::*;
++use crate::agent::types::MessageDeliveryMode;
++
++#[test]
++fn completion_delivery_choice_is_limited_to_spawned_v2_subagents() {
++    let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++        parent_thread_id: ThreadId::new(),
++        depth: 1,
++        agent_path: Some(AgentPath::root().join("worker").expect("worker path")),
++        agent_nickname: None,
++        agent_role: None,
++    });
++
++    assert!(can_choose_delivery(MultiAgentVersion::V2, &source));
++    assert!(!can_choose_delivery(MultiAgentVersion::V1, &source));
++    assert!(!can_choose_delivery(
++        MultiAgentVersion::V2,
++        &SessionSource::default()
++    ));
++}
++
++#[test]
++fn deferred_success_queues_the_terminal_result() {
++    let turn_store = ExtensionData::new("turn-1");
++    set_delivery(&turn_store, CompletionDelivery::DeferToParent);
++
++    assert!(matches!(
++        terminal_delivery_mode(
++            &turn_store,
++            &AgentStatus::Completed(Some("done".to_string()))
++        ),
++        MessageDeliveryMode::QueueOnly
++    ));
++}
++
++#[test]
++fn abnormal_outcomes_wake_after_a_defer_request() {
++    let turn_store = ExtensionData::new("turn-1");
++    set_delivery(&turn_store, CompletionDelivery::DeferToParent);
++
++    assert!(matches!(
++        terminal_delivery_mode(&turn_store, &AgentStatus::Errored("failed".to_string())),
++        MessageDeliveryMode::TriggerTurn
++    ));
++}
++
++#[test]
++fn delivery_choice_is_scoped_to_one_turn() {
++    let first_turn_store = ExtensionData::new("turn-1");
++    let next_turn_store = ExtensionData::new("turn-2");
++    set_delivery(&first_turn_store, CompletionDelivery::DeferToParent);
++
++    assert!(matches!(
++        terminal_delivery_mode(
++            &first_turn_store,
++            &AgentStatus::Completed(Some("first".to_string()))
++        ),
++        MessageDeliveryMode::QueueOnly
++    ));
++    assert!(matches!(
++        terminal_delivery_mode(
++            &next_turn_store,
++            &AgentStatus::Completed(Some("second".to_string()))
++        ),
++        MessageDeliveryMode::TriggerTurn
++    ));
++}
 +
 +#[test]
 +fn sibling_turns_retain_shared_ancestors_until_both_finish() {
@@ -1540,11 +1816,222 @@ index 0000000000000000000000000000000000000000..78714dcbc49ce7d02522d5489f3eca23
 +
 +    assert!(!retention.is_retained(root_thread_id));
 +}
+diff --git a/codex-rs/core/src/saffron/subagent_completion_tool.rs b/codex-rs/core/src/saffron/subagent_completion_tool.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ca9ebe77a0837bc180eb6bfc0557af88b62f2953
+--- /dev/null
++++ b/codex-rs/core/src/saffron/subagent_completion_tool.rs
+@@ -0,0 +1,162 @@
++//! Model-facing choice for delivering a successful subagent result.
++//!
++//! Registration limits the tool to spawned collaboration subagents. The tool
++//! writes only to the current turn's extension store; terminal routing later
++//! consumes that state while preserving wake-on-failure behavior.
++
++use std::collections::BTreeMap;
++
++use codex_tools::JsonSchema;
++use codex_tools::JsonToolOutput;
++use codex_tools::ResponsesApiNamespace;
++use codex_tools::ResponsesApiNamespaceTool;
++use codex_tools::ResponsesApiTool;
++use codex_tools::ToolName;
++use codex_tools::ToolOutput;
++use codex_tools::ToolSpec;
++use serde::Deserialize;
++use serde_json::json;
++
++use super::subagent_completion;
++use super::subagent_completion::CompletionDelivery;
++use crate::function_tool::FunctionCallError;
++use crate::tools::context::ToolInvocation;
++use crate::tools::context::ToolPayload;
++use crate::tools::context::boxed_tool_output;
++use crate::tools::handlers::parse_arguments;
++use crate::tools::registry::CoreToolRuntime;
++use crate::tools::registry::ToolExecutor;
++use crate::tools::registry::ToolRegistry;
++
++/// Namespace shared by Saffrodex-owned model tools.
++const NAMESPACE: &str = "saffron";
++/// Tool name within the Saffron namespace.
++const TOOL_NAME: &str = "set_completion_delivery";
++
++/// Registers the completion-delivery choice for a spawned subagent turn.
++pub(super) fn register(registry: &mut ToolRegistry) {
++    registry.add(Handler);
++}
++
++/// Stores one model-selected delivery choice in the current turn.
++struct Handler;
++
++impl Handler {
++    /// Applies a valid subagent choice without changing result contents.
++    async fn handle_call(
++        &self,
++        invocation: ToolInvocation,
++    ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
++        let ToolInvocation { turn, payload, .. } = invocation;
++        if !subagent_completion::can_choose_delivery(turn.multi_agent_version, &turn.session_source)
++        {
++            return Err(FunctionCallError::RespondToModel(
++                "only a spawned subagent may choose completion delivery".to_string(),
++            ));
++        }
++        let ToolPayload::Function { arguments } = payload else {
++            return Err(FunctionCallError::RespondToModel(
++                "completion delivery received an unsupported payload".to_string(),
++            ));
++        };
++        let args: SetCompletionDeliveryArgs = parse_arguments(&arguments)?;
++        let delivery = CompletionDelivery::from(args.delivery);
++        subagent_completion::set_delivery(&turn.extension_data, delivery);
++
++        Ok(boxed_tool_output(JsonToolOutput::new(json!({
++            "delivery": args.delivery,
++        }))))
++    }
++}
++
++impl ToolExecutor<ToolInvocation> for Handler {
++    fn tool_name(&self) -> ToolName {
++        ToolName::namespaced(NAMESPACE, TOOL_NAME)
++    }
++
++    fn spec(&self) -> ToolSpec {
++        ToolSpec::Namespace(ResponsesApiNamespace {
++            name: NAMESPACE.to_string(),
++            description: "Saffron extensions for coordinating long-running work.".to_string(),
++            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
++                name: TOOL_NAME.to_string(),
++                description: "Choose whether your successful terminal result should start a new turn for an idle parent. The result is delivered in either mode. Use wake_parent when the result enables or requires useful action now, changes the parent's next step, unblocks dependent work, needs evaluation, or is time-sensitive. Use defer_to_parent when immediate parent attention adds little value, including unchanged monitoring results, routine status, low-urgency findings, or information that can be consumed alongside other work. Failures and abnormal termination wake the parent automatically. If this tool is not called, completion defaults to wake_parent. Ask whether starting the parent now would improve what happens next."
++                    .to_string(),
++                strict: false,
++                defer_loading: None,
++                parameters: JsonSchema::object(
++                    BTreeMap::from([(
++                        "delivery".to_string(),
++                        JsonSchema::string_enum(
++                            vec![
++                                json!(CompletionDeliveryArg::WakeParent.as_str()),
++                                json!(CompletionDeliveryArg::DeferToParent.as_str()),
++                            ],
++                            Some(
++                                "wake_parent starts an idle parent turn; defer_to_parent queues the result for the parent's next natural turn."
++                                    .to_string(),
++                            ),
++                        ),
++                    )]),
++                    Some(vec!["delivery".to_string()]),
++                    Some(false.into()),
++                ),
++                output_schema: None,
++            })],
++        })
++    }
++
++    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
++    where
++        ToolInvocation: 'a,
++    {
++        Box::pin(self.handle_call(invocation))
++    }
++}
++
++impl CoreToolRuntime for Handler {
++    fn matches_kind(&self, payload: &ToolPayload) -> bool {
++        matches!(payload, ToolPayload::Function { .. })
++    }
++}
++
++/// Arguments accepted by `saffron.set_completion_delivery`.
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct SetCompletionDeliveryArgs {
++    /// Delivery behavior for a successful terminal result.
++    delivery: CompletionDeliveryArg,
++}
++
++/// Model-facing spellings for the two successful-result dispositions.
++#[derive(Clone, Copy, Deserialize, serde::Serialize)]
++#[serde(rename_all = "snake_case")]
++enum CompletionDeliveryArg {
++    /// Starts an idle parent turn after delivering the result.
++    WakeParent,
++    /// Leaves the delivered result queued for a later parent turn.
++    DeferToParent,
++}
++
++impl CompletionDeliveryArg {
++    /// Returns the JSON spelling advertised by the tool schema.
++    const fn as_str(self) -> &'static str {
++        match self {
++            Self::WakeParent => "wake_parent",
++            Self::DeferToParent => "defer_to_parent",
++        }
++    }
++}
++
++impl From<CompletionDeliveryArg> for CompletionDelivery {
++    fn from(value: CompletionDeliveryArg) -> Self {
++        match value {
++            CompletionDeliveryArg::WakeParent => Self::WakeParent,
++            CompletionDeliveryArg::DeferToParent => Self::DeferToParent,
++        }
++    }
++}
++
++#[cfg(test)]
++#[path = "subagent_completion_tool_tests.rs"]
++mod tests;
+diff --git a/codex-rs/core/src/saffron/subagent_completion_tool_tests.rs b/codex-rs/core/src/saffron/subagent_completion_tool_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..9ad5fbd56370940c6667288de7c0219954f9a332
+--- /dev/null
++++ b/codex-rs/core/src/saffron/subagent_completion_tool_tests.rs
+@@ -0,0 +1,37 @@
++use super::*;
++
++#[test]
++fn tool_description_distinguishes_actionable_and_deferrable_results() {
++    let ToolSpec::Namespace(namespace) = Handler.spec() else {
++        panic!("completion delivery should be a namespace tool");
++    };
++    let ResponsesApiNamespaceTool::Function(tool) = &namespace.tools[0] else {
++        panic!("completion delivery should be a function tool");
++    };
++
++    assert!(tool.description.contains("useful action now"));
++    assert!(
++        tool.description
++            .contains("immediate parent attention adds little value")
++    );
++    assert!(tool.description.contains("abnormal termination wake"));
++    assert!(tool.description.contains("defaults to wake_parent"));
++}
++
++#[test]
++fn delivery_argument_accepts_both_supported_choices() {
++    for (arguments, expected) in [
++        (
++            r#"{"delivery":"wake_parent"}"#,
++            CompletionDelivery::WakeParent,
++        ),
++        (
++            r#"{"delivery":"defer_to_parent"}"#,
++            CompletionDelivery::DeferToParent,
++        ),
++    ] {
++        let args: SetCompletionDeliveryArgs =
++            serde_json::from_str(arguments).expect("supported delivery choice");
++        assert_eq!(CompletionDelivery::from(args.delivery), expected);
++    }
++}
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index fa42e084c0a0a68ff776cc850ae93290bee0487c..090bd5826069a88529d432a57eb671cb7c7f3ec8 100644
+index 02cec4e6b773e6440c2c176fe4c63e90381dd0fd..b08267e9840c82898033daa6b8111e871834ed1b 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
-@@ -80,11 +80,37 @@ pub async fn inter_agent_communication(
+@@ -81,11 +81,37 @@ pub async fn inter_agent_communication(
      sub_id: String,
      communication: InterAgentCommunication,
      start_options: codex_protocol::turn_input::TurnStartOptions,
@@ -1585,7 +2072,7 @@ index fa42e084c0a0a68ff776cc850ae93290bee0487c..090bd5826069a88529d432a57eb671cb
      crate::agent_communication::emit_agent_communication_receive(&sub_id);
      if trigger_turn {
          crate::saffron::goal_supervisor::claim_root_continuation(
-@@ -97,6 +123,9 @@ pub async fn inter_agent_communication(
+@@ -98,6 +124,9 @@ pub async fn inter_agent_communication(
          sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
              .await;
      }
@@ -1595,7 +2082,7 @@ index fa42e084c0a0a68ff776cc850ae93290bee0487c..090bd5826069a88529d432a57eb671cb
  }
 
  pub async fn run_user_shell_command(
-@@ -301,7 +330,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
+@@ -302,7 +331,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
          startup_prewarm.abort().await;
      }
      let _ = sess.conversation.shutdown().await;
@@ -1604,7 +2091,7 @@ index fa42e084c0a0a68ff776cc850ae93290bee0487c..090bd5826069a88529d432a57eb671cb
      let shell_snapshot_prewarm = sess.state.lock().await.shell_snapshot_prewarm.take();
      if let Some(shell_snapshot_prewarm) = shell_snapshot_prewarm {
          shell_snapshot_prewarm.abort();
-@@ -539,9 +568,16 @@ pub(super) async fn submission_loop(
+@@ -568,9 +597,16 @@ pub(super) async fn submission_loop(
                  Op::InterAgentCommunication {
                      communication,
                      start_options,
@@ -1623,7 +2110,7 @@ index fa42e084c0a0a68ff776cc850ae93290bee0487c..090bd5826069a88529d432a57eb671cb
                      false
                  }
                  Op::ExecApproval {
-@@ -603,6 +639,19 @@ pub(super) async fn submission_loop(
+@@ -632,6 +668,19 @@ pub(super) async fn submission_loop(
                      false
                  }
                  Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
@@ -1644,7 +2131,7 @@ index fa42e084c0a0a68ff776cc850ae93290bee0487c..090bd5826069a88529d432a57eb671cb
                      review(&sess, &config, sub.id.clone(), review_request).await;
                      false
 diff --git a/codex-rs/core/src/session/input_queue.rs b/codex-rs/core/src/session/input_queue.rs
-index 1284bb267ccb3961a421005d97e33512e9b278d0..ad4d781b21a3442bddeadb9e26a8ab46a9ec4146 100644
+index c70ff7500816c84574d559cd05734e150dca0b55..4c1f1bf3b2bc9924f27f4eedaf0988518d27a779 100644
 --- a/codex-rs/core/src/session/input_queue.rs
 +++ b/codex-rs/core/src/session/input_queue.rs
 @@ -1,3 +1,4 @@
@@ -1652,7 +2139,7 @@ index 1284bb267ccb3961a421005d97e33512e9b278d0..ad4d781b21a3442bddeadb9e26a8ab46
  use crate::state::ActiveTurn;
  use crate::state::MailboxDeliveryPhase;
  use crate::state::TurnState;
-@@ -86,6 +87,7 @@ pub(crate) struct InputQueue {
+@@ -100,6 +101,7 @@ pub(crate) struct InputQueue {
  struct PendingMailboxCommunication {
      communication: InterAgentCommunication,
      start_options: TurnStartOptions,
@@ -1660,7 +2147,7 @@ index 1284bb267ccb3961a421005d97e33512e9b278d0..ad4d781b21a3442bddeadb9e26a8ab46
      _diagnostics_guard: GaugeGuard,
  }
 
-@@ -125,6 +127,32 @@ impl InputQueue {
+@@ -139,6 +141,32 @@ impl InputQueue {
          &self,
          communication: InterAgentCommunication,
          start_options: TurnStartOptions,
@@ -1693,7 +2180,7 @@ index 1284bb267ccb3961a421005d97e33512e9b278d0..ad4d781b21a3442bddeadb9e26a8ab46
      ) {
          self.mailbox_pending_mails
              .lock()
-@@ -132,6 +160,7 @@ impl InputQueue {
+@@ -146,6 +174,7 @@ impl InputQueue {
              .push_back(PendingMailboxCommunication {
                  communication,
                  start_options,
@@ -1701,7 +2188,7 @@ index 1284bb267ccb3961a421005d97e33512e9b278d0..ad4d781b21a3442bddeadb9e26a8ab46
                  _diagnostics_guard: PENDING_MAILBOX_MESSAGES.track(),
              });
          self.activity_tx.send_replace(InputQueueActivity::Mailbox);
-@@ -141,6 +170,11 @@ impl InputQueue {
+@@ -155,6 +184,11 @@ impl InputQueue {
          !self.mailbox_pending_mails.lock().await.is_empty()
      }
 
@@ -1713,9 +2200,29 @@ index 1284bb267ccb3961a421005d97e33512e9b278d0..ad4d781b21a3442bddeadb9e26a8ab46
      pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
          self.mailbox_pending_mails
              .lock()
-@@ -150,12 +184,37 @@ impl InputQueue {
+@@ -163,13 +197,57 @@ impl InputQueue {
+             .any(|mail| mail.communication.trigger_turn)
      }
 
++    /// Drains mail that should wait for a naturally started turn.
++    ///
++    /// Triggering mail remains queued for the pending-work scheduler, including
++    /// its turn-start options and any ancestor-retention lease.
++    pub(crate) async fn drain_queue_only_mailbox_input_items(&self) -> Vec<TurnInput> {
++        let mut pending_mails = self.mailbox_pending_mails.lock().await;
++        let mut queue_only = Vec::new();
++        let mut triggering = VecDeque::new();
++        while let Some(mail) = pending_mails.pop_front() {
++            if mail.communication.trigger_turn {
++                triggering.push_back(mail);
++            } else {
++                queue_only.push(TurnInput::InterAgentCommunication(mail.communication));
++            }
++        }
++        *pending_mails = triggering;
++        queue_only
++    }
++
      pub(crate) async fn drain_mailbox_input_items(&self) -> (Vec<TurnInput>, TurnStartOptions) {
 -        let pending_mails = self
 +        self.drain_mailbox_input_items_inner(None).await
@@ -1752,7 +2259,7 @@ index 1284bb267ccb3961a421005d97e33512e9b278d0..ad4d781b21a3442bddeadb9e26a8ab46
          // A later follow-up supersedes the earlier choice, including an omitted choice.
          let mut start_options = pending_mails
              .iter()
-@@ -208,6 +267,7 @@ impl InputQueue {
+@@ -245,6 +323,7 @@ impl InputQueue {
          let mut turn_state = active_turn.turn_state.lock().await;
          turn_state.clear_pending_waiters();
          turn_state.pending_input.items.clear();
@@ -1760,7 +2267,7 @@ index 1284bb267ccb3961a421005d97e33512e9b278d0..ad4d781b21a3442bddeadb9e26a8ab46
      }
 
      pub(crate) async fn defer_mailbox_delivery_to_next_turn(
-@@ -292,7 +352,7 @@ impl InputQueue {
+@@ -329,7 +408,7 @@ impl InputQueue {
          &self,
          active_turn: &Mutex<Option<ActiveTurn>>,
      ) -> (Vec<TurnInput>, TurnStartOptions) {
@@ -1769,7 +2276,7 @@ index 1284bb267ccb3961a421005d97e33512e9b278d0..ad4d781b21a3442bddeadb9e26a8ab46
              let mut active = active_turn.lock().await;
              match active.as_mut() {
                  Some(active_turn) => {
-@@ -304,15 +364,25 @@ impl InputQueue {
+@@ -341,15 +420,25 @@ impl InputQueue {
                      } else {
                          Vec::new()
                      };
@@ -1798,8 +2305,70 @@ index 1284bb267ccb3961a421005d97e33512e9b278d0..ad4d781b21a3442bddeadb9e26a8ab46
          if pending_input.is_empty() {
              (mailbox_items, start_options)
          } else {
+@@ -610,6 +699,38 @@ mod tests {
+         assert!(!input_queue.has_pending_mailbox_items().await);
+     }
+
++    #[tokio::test]
++    async fn natural_turn_drains_only_queue_only_mail() {
++        let input_queue = InputQueue::new();
++        let queued = make_mail(
++            AgentPath::try_from("/root/worker").expect("agent path"),
++            AgentPath::root(),
++            "routine result",
++            /*trigger_turn*/ false,
++        );
++        let triggering = make_mail(
++            AgentPath::try_from("/root/urgent").expect("agent path"),
++            AgentPath::root(),
++            "urgent result",
++            /*trigger_turn*/ true,
++        );
++        input_queue
++            .enqueue_mailbox_communication(queued.clone(), Default::default())
++            .await;
++        input_queue
++            .enqueue_mailbox_communication(triggering.clone(), Default::default())
++            .await;
++
++        assert_eq!(
++            input_queue.drain_queue_only_mailbox_input_items().await,
++            vec![TurnInput::InterAgentCommunication(queued)]
++        );
++        assert_eq!(
++            input_queue.drain_mailbox_input_items().await.0,
++            vec![TurnInput::InterAgentCommunication(triggering)]
++        );
++    }
++
+     #[tokio::test]
+     async fn input_queue_uses_unambiguous_trigger_parent_and_first_root() {
+         let (parent, peer, root, root2) = (Some("a"), Some("b"), Some("r"), Some("s"));
+diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
+index 2228d48b1ab8947911ebb5f9374c148ace4b12ee..baeebdfd0f49f41e39069d6bfc1f4702b88e17a9 100644
+--- a/codex-rs/core/src/session/mod.rs
++++ b/codex-rs/core/src/session/mod.rs
+@@ -2426,6 +2426,10 @@ impl Session {
+         if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
+             return;
+         }
++        let completion_delivery_mode = crate::saffron::subagent_completion::terminal_delivery_mode(
++            &turn_context.extension_data,
++            &status,
++        );
+
+         self.services
+             .agent_control
+@@ -2440,6 +2444,7 @@ impl Session {
+                         .initiating_agent_path()
+                         .cloned(),
+                     status,
++                    completion_delivery_mode,
+                 },
+                 &self.services.rollout_thread_trace,
+             )
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index aa04cbb324b46cf5c4cef58dabd5ca8ffb7d9db5..f3c9afd8e007c5a4b9e070791f717bd41f530073 100644
+index b6f39ac38a96b42d0753e5fb6885186569f00b88..5b27f308574b91ad2dd233559d1b80a237c2681e 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -649,6 +649,19 @@ impl Session {
@@ -1822,6 +2391,36 @@ index aa04cbb324b46cf5c4cef58dabd5ca8ffb7d9db5..f3c9afd8e007c5a4b9e070791f717bd4
      pub(crate) async fn originator(&self) -> String {
          let state = self.state.lock().await;
          state.session_configuration.originator.clone()
+diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
+index d9a5c6a30abb5a2410828ba89cfacc2bdaa65332..47190e78468b24832fa4c24b45a8a4dc2be5e9fc 100644
+--- a/codex-rs/core/src/session/turn_input.rs
++++ b/codex-rs/core/src/session/turn_input.rs
+@@ -357,6 +357,12 @@ async fn start_or_steer(
+                 turn_context.session_telemetry.user_prompt(content);
+             }
+             let mut task_input = merge_additional_context_input(session, additional_context).await;
++            task_input.extend(
++                session
++                    .input_queue
++                    .drain_queue_only_mailbox_input_items()
++                    .await,
++            );
+             if has_explicit_input {
+                 task_input
+                     .push(pending_turn_input(session, input, &turn_context.sub_id, origin).await);
+@@ -487,6 +493,12 @@ async fn start_if_idle(
+         .await;
+
+     let mut task_input = merge_additional_context_input(session, additional_context).await;
++    task_input.extend(
++        session
++            .input_queue
++            .drain_queue_only_mailbox_input_items()
++            .await,
++    );
+     match kind {
+         TurnStartKind::User => {
+             session.clear_connector_selection().await;
 diff --git a/codex-rs/core/src/state/turn.rs b/codex-rs/core/src/state/turn.rs
 index 334372019fb52e9e8ac22a9fe8622a223149c5d5..b45b12fdcf570d9fa05e124cac18904d04a42181 100644
 --- a/codex-rs/core/src/state/turn.rs
@@ -1855,7 +2454,7 @@ index 334372019fb52e9e8ac22a9fe8622a223149c5d5..b45b12fdcf570d9fa05e124cac18904d
      granted_permissions_by_environment_id: HashMap<String, AdditionalPermissionProfile>,
      strict_auto_review_enabled: bool,
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 366b4cbcecc38ef3fa1c36b89ad25024010c0c6a..8a17e13916563a0526ab16b1115bd30f6b1e1d06 100644
+index 42a8ee81684c316681a62d79f6750fda4a9ef14f..2d21537e8665e62a1fdc4b9caadb97730cdbbb55 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -79,6 +79,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
@@ -1913,7 +2512,7 @@ index 366b4cbcecc38ef3fa1c36b89ad25024010c0c6a..8a17e13916563a0526ab16b1115bd30f
              _diagnostics_guard: ACTIVE_TURNS.track(),
              _timer: timer,
          };
-@@ -544,6 +560,24 @@ impl Session {
+@@ -548,6 +564,24 @@ impl Session {
      }
 
      pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
@@ -1938,7 +2537,7 @@ index 366b4cbcecc38ef3fa1c36b89ad25024010c0c6a..8a17e13916563a0526ab16b1115bd30f
          let mut aborted_turn = false;
          let mut active_turn_to_clear = None;
          let mut turn_context = None;
-@@ -569,8 +603,16 @@ impl Session {
+@@ -573,8 +607,16 @@ impl Session {
              // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
              self.input_queue.clear_pending(&active_turn).await;
          }
@@ -1957,7 +2556,7 @@ index 366b4cbcecc38ef3fa1c36b89ad25024010c0c6a..8a17e13916563a0526ab16b1115bd30f
          }
      }
 
-@@ -659,15 +701,19 @@ impl Session {
+@@ -663,15 +705,19 @@ impl Session {
              .turn_metadata_state
              .cancel_git_enrichment_task();
 
@@ -1981,7 +2580,7 @@ index 366b4cbcecc38ef3fa1c36b89ad25024010c0c6a..8a17e13916563a0526ab16b1115bd30f
              return;
          };
          let pending_input = self
-@@ -874,6 +920,8 @@ impl Session {
+@@ -878,6 +924,8 @@ impl Session {
              // The parent can request another review as soon as it receives this event.
              self.send_event(turn_context.as_ref(), event).await;
          }
@@ -1991,10 +2590,10 @@ index 366b4cbcecc38ef3fa1c36b89ad25024010c0c6a..8a17e13916563a0526ab16b1115bd30f
              self.emit_thread_idle_lifecycle_if_idle(idle_cause).await;
          }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 09ad357867c53bb5f2aff573f3841a9b22ec6902..acc0763ce631247059f770dc124b8899ea655e8d 100644
+index ddaa1f19cb3dcfefe666778840cada942ee4c37e..8f11cc85a84f2f6f85470d89c823d892c274f667 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -130,9 +130,11 @@ fn capture_test_op(op: &Op) -> Option<Op> {
+@@ -136,9 +136,11 @@ fn capture_test_op(op: &Op) -> Option<Op> {
          Op::InterAgentCommunication {
              communication,
              start_options,
@@ -2007,10 +2606,10 @@ index 09ad357867c53bb5f2aff573f3841a9b22ec6902..acc0763ce631247059f770dc124b8899
          Op::Shutdown => Some(Op::Shutdown),
          _ => None,
 diff --git a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
-index 98360657ed84ca4b4baec4c6a3944138570f3542..c0240db6b11b566169ba569aad2295cd170325a5 100644
+index 9c8268c542b681c19840028c19808220494efeef..5434e1e4014b15a5c731a7a2f857c4dc3f633be9 100644
 --- a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
 +++ b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
-@@ -1981,7 +1981,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
+@@ -2056,7 +2056,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
                                  if communication.author == worker_path
                                      && communication.recipient == AgentPath::root()
                                      && communication.other_recipients.is_empty()
@@ -2019,7 +2618,7 @@ index 98360657ed84ca4b4baec4c6a3944138570f3542..c0240db6b11b566169ba569aad2295cd
                              {
                                  Some(communication.content)
                              }
-@@ -2126,8 +2126,7 @@ async fn multi_agent_v2_interrupted_turn_does_not_notify_parent() {
+@@ -2201,8 +2201,7 @@ async fn multi_agent_v2_interrupted_turn_does_not_notify_parent() {
                      Op::InterAgentCommunication { communication, .. }
                          if communication.author.as_str() == "/root/worker"
                              && communication.recipient == AgentPath::root()
@@ -2029,6 +2628,26 @@ index 98360657ed84ca4b4baec4c6a3944138570f3542..c0240db6b11b566169ba569aad2295cd
                      {
                          Some(communication.content)
                      }
+diff --git a/codex-rs/core/tests/suite/agent_control_tests.rs b/codex-rs/core/tests/suite/agent_control_tests.rs
+index 551b2cedb3679e35d355cd1ea507128f9c962c00..808f2cde7e0ad1aecc9df92557e9de6118659132 100644
+--- a/codex-rs/core/tests/suite/agent_control_tests.rs
++++ b/codex-rs/core/tests/suite/agent_control_tests.rs
+@@ -135,6 +135,7 @@ impl AgentControl for TestAgentControl {
+
+     fn check_turn_admission(
+         &self,
++        _thread_id: ThreadId,
+         _version: MultiAgentVersion,
+         _source: &SessionSource,
+     ) -> CodexResult<()> {
+@@ -143,6 +144,7 @@ impl AgentControl for TestAgentControl {
+
+     fn admit_turn(
+         &self,
++        _thread_id: ThreadId,
+         _version: MultiAgentVersion,
+         _source: &SessionSource,
+     ) -> Option<AgentExecutionGuard> {
 diff --git a/codex-rs/core/tests/suite/compact_remote.rs b/codex-rs/core/tests/suite/compact_remote.rs
 index 76032f34efb953dd22c3f47517937743a68173ce..e1f2272c688d0c2c6aea0225fd36f127ab336e2a 100644
 --- a/codex-rs/core/tests/suite/compact_remote.rs
@@ -2086,10 +2705,10 @@ index 4521237045d578a7f69782f009a9320599eaec8b..b74f9bcf5e7c5e100f87b182e27da97b
                  .await?;
          }
 diff --git a/codex-rs/core/tests/suite/pending_input.rs b/codex-rs/core/tests/suite/pending_input.rs
-index ff90e54404767a50d26d848ee31b4ab1b5a1185e..6d61e186f7cc4d5b796c3dbf7b82cde93947ddd2 100644
+index 0df8b4a20b7ab94625f10bb3635ce7e30e96234f..01e290e37e2370839c491a30928d6753b6526525 100644
 --- a/codex-rs/core/tests/suite/pending_input.rs
 +++ b/codex-rs/core/tests/suite/pending_input.rs
-@@ -387,6 +387,7 @@ async fn enqueue_queue_only_agent_mail(codex: &CodexThread, text: &str) {
+@@ -397,6 +397,7 @@ async fn enqueue_queue_only_agent_mail(codex: &CodexThread, text: &str) {
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -2097,7 +2716,7 @@ index ff90e54404767a50d26d848ee31b4ab1b5a1185e..6d61e186f7cc4d5b796c3dbf7b82cde9
          })
          .await
          .expect("submit queue-only agent mail");
-@@ -1421,6 +1422,7 @@ async fn terminal_compaction_error_does_not_retry_pending_input(
+@@ -2138,6 +2139,7 @@ async fn terminal_compaction_error_does_not_retry_pending_input(
                          /*trigger_turn*/ true,
                      ),
                      start_options: Default::default(),
@@ -2117,11 +2736,241 @@ index e94db81946601a546f205dcc243518f3aaf1c55c..e1b7a70208a7795a0a376f09f2b046b7
                  })
                  .await?;
          }
+diff --git a/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs b/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs
+index 3fa281bff9a852f1cf59573b86a5a75cf78beb2e..c4cb89eb55c4166b22102e4237573305a7ffd43b 100644
+--- a/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs
++++ b/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs
+@@ -122,6 +122,7 @@ async fn mailbox_preemption_preserves_response_when_deferred(
+                     /*trigger_turn*/ false,
+                 ),
+                 start_options: Default::default(),
++                accepted: None,
+             })
+             .await?;
+     }
 diff --git a/codex-rs/core/tests/suite/subagent_notifications.rs b/codex-rs/core/tests/suite/subagent_notifications.rs
-index ccd44bb92d83a6b78f3c3a9949cca4eabafab44d..d96f87267153ec24c26617102db60f2b8c2355fa 100644
+index ccd44bb92d83a6b78f3c3a9949cca4eabafab44d..25635fa55e99980c341dcddcf349a5e6c1fbd1df 100644
 --- a/codex-rs/core/tests/suite/subagent_notifications.rs
 +++ b/codex-rs/core/tests/suite/subagent_notifications.rs
-@@ -2797,7 +2797,6 @@ async fn plaintext_multi_agent_v2_completion_sends_agent_message(
+@@ -5,6 +5,7 @@ use codex_core::TurnInputRequest;
+ use codex_core::TurnStartOptions;
+ use codex_core::config::AgentRoleConfig;
+ use codex_core::config::CurrentTimeReminderConfig;
++use codex_extension_api::ExtensionRegistryBuilder;
+ use codex_features::Feature;
+ use codex_history::RolloutItem;
+ use codex_models_manager::bundled_models_response;
+@@ -29,6 +30,7 @@ use codex_protocol::protocol::ThreadHistoryMode;
+ use codex_protocol::protocol::ThreadSettingsOverrides;
+ use codex_protocol::user_input::UserInput;
+ use codex_thread_store::LoadThreadHistoryParams;
++use core_test_support::ThreadIdle;
+ use core_test_support::hooks::trust_discovered_hooks;
+ use core_test_support::responses::ResponsesRequest;
+ use core_test_support::responses::assert_parent_turn;
+@@ -61,6 +63,7 @@ use serde_json::Value;
+ use serde_json::json;
+ use std::fs;
+ use std::path::Path;
++use std::sync::Arc;
+ use std::sync::Mutex;
+ use std::time::Duration;
+ use test_case::test_case;
+@@ -108,6 +111,8 @@ const FULL_HISTORY_PROACTIVE_PROMPT: &str = "switch to proactive delegation";
+ const FULL_HISTORY_EXPLICIT_PROMPT: &str = "restore explicit-only delegation";
+ const FULL_HISTORY_PROACTIVE_POLICY: &str = "Proactive multi-agent delegation is active.";
+ const FULL_HISTORY_EXPLICIT_POLICY: &str = "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask";
++const COMPLETION_DELIVERY_NAMESPACE: &str = "saffron";
++const COMPLETION_DELIVERY_TOOL: &str = "set_completion_delivery";
+
+ fn body_contains(req: &wiremock::Request, text: &str) -> bool {
+     decoded_body(req)
+@@ -390,6 +395,184 @@ async fn wait_for_requests(
+     }
+ }
+
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn spawned_subagent_can_defer_result_until_parent_turn() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++
++    const ROOT_PROMPT: &str = "delegate routine monitoring";
++    const CHILD_TASK: &str = "check the unchanged monitor";
++    const CHILD_RESULT: &str = "monitor remains unchanged";
++    const MANUAL_PROMPT: &str = "consume queued results";
++    const DELIVERY_CALL_ID: &str = "completion-delivery-call";
++
++    let server = start_mock_server().await;
++    let spawn_args = serde_json::to_string(&json!({
++        "message": CHILD_TASK,
++        "task_name": "monitor",
++        "fork_turns": "none",
++    }))?;
++    let root_spawn_request = mount_sse_once_match(
++        &server,
++        |request: &wiremock::Request| body_contains(request, ROOT_PROMPT),
++        sse(vec![
++            ev_response_created("resp-defer-parent-spawn"),
++            ev_function_call_with_namespace(
++                SPAWN_CALL_ID,
++                MULTI_AGENT_V2_NAMESPACE,
++                "spawn_agent",
++                &spawn_args,
++            ),
++            ev_completed("resp-defer-parent-spawn"),
++        ]),
++    )
++    .await;
++    mount_sse_once_match(
++        &server,
++        |request: &wiremock::Request| body_contains(request, SPAWN_CALL_ID),
++        sse(vec![
++            ev_response_created("resp-defer-parent-finished"),
++            ev_assistant_message("msg-defer-parent-finished", "delegation recorded"),
++            ev_completed("resp-defer-parent-finished"),
++        ]),
++    )
++    .await;
++
++    let delivery_args = serde_json::to_string(&json!({
++        "delivery": "defer_to_parent",
++    }))?;
++    let child_choice_request = mount_response_once_match(
++        &server,
++        |request: &wiremock::Request| {
++            body_contains(request, CHILD_TASK) && !body_contains(request, DELIVERY_CALL_ID)
++        },
++        sse_response(sse(vec![
++            ev_response_created("resp-defer-child-choice"),
++            ev_function_call_with_namespace(
++                DELIVERY_CALL_ID,
++                COMPLETION_DELIVERY_NAMESPACE,
++                COMPLETION_DELIVERY_TOOL,
++                &delivery_args,
++            ),
++            ev_completed("resp-defer-child-choice"),
++        ]))
++        .set_delay(Duration::from_millis(200)),
++    )
++    .await;
++    mount_sse_once_match(
++        &server,
++        |request: &wiremock::Request| body_contains(request, DELIVERY_CALL_ID),
++        sse(vec![
++            ev_response_created("resp-defer-child-result"),
++            ev_assistant_message("msg-defer-child-result", CHILD_RESULT),
++            ev_completed("resp-defer-child-result"),
++        ]),
++    )
++    .await;
++
++    let mut extensions = ExtensionRegistryBuilder::new();
++    extensions.thread_lifecycle_contributor(Arc::new(ThreadIdle));
++    let mut builder = test_codex()
++        .with_extensions(Arc::new(extensions.build()))
++        .with_config(|config| {
++            for feature in [Feature::Collab, Feature::MultiAgentV2] {
++                config
++                    .features
++                    .enable(feature)
++                    .expect("enable collaboration feature");
++            }
++        });
++    let test = builder.build_with_auto_env(&server).await?;
++    let root_thread_id = test.session_configured.thread_id;
++    let mut created_threads = test.thread_manager.subscribe_thread_created();
++
++    test.codex
++        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
++            text: ROOT_PROMPT.to_string(),
++            text_elements: Vec::new(),
++        }]))
++        .await?;
++    let child_thread_id = created_threads.recv().await?;
++    wait_for_event(&test.codex, |event| {
++        matches!(event, EventMsg::TurnComplete(_))
++    })
++    .await;
++    let child_thread = test.thread_manager.get_thread(child_thread_id).await?;
++    wait_for_event(child_thread.as_ref(), |event| {
++        matches!(event, EventMsg::TurnComplete(_))
++    })
++    .await;
++    ThreadIdle::wait(child_thread.as_ref()).await;
++    assert_eq!(
++        child_thread.agent_status().await,
++        AgentStatus::Completed(Some(CHILD_RESULT.to_string()))
++    );
++
++    assert!(
++        namespace_child_tool(
++            &root_spawn_request.single_request().body_json(),
++            COMPLETION_DELIVERY_NAMESPACE,
++            COMPLETION_DELIVERY_TOOL,
++        )
++        .is_none()
++    );
++    assert!(
++        namespace_child_tool(
++            &child_choice_request.single_request().body_json(),
++            COMPLETION_DELIVERY_NAMESPACE,
++            COMPLETION_DELIVERY_TOOL,
++        )
++        .is_some()
++    );
++
++    let premature_parent_requests = server
++        .received_requests()
++        .await
++        .unwrap_or_default()
++        .into_iter()
++        .filter(|request| {
++            decoded_body(request)
++                .and_then(|body| serde_json::from_slice::<Value>(&body).ok())
++                .is_some_and(|body| {
++                    body.to_string().contains(CHILD_RESULT)
++                        && body["client_metadata"]["thread_id"] == json!(root_thread_id)
++                })
++        })
++        .count();
++    assert_eq!(premature_parent_requests, 0);
++
++    let natural_parent_turn = mount_sse_once_match(
++        &server,
++        |request: &wiremock::Request| {
++            body_contains(request, MANUAL_PROMPT) && body_contains(request, CHILD_RESULT)
++        },
++        sse(vec![
++            ev_response_created("resp-defer-parent-natural-turn"),
++            ev_assistant_message("msg-defer-parent-natural-turn", "queued result consumed"),
++            ev_completed("resp-defer-parent-natural-turn"),
++        ]),
++    )
++    .await;
++    test.codex
++        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
++            text: MANUAL_PROMPT.to_string(),
++            text_elements: Vec::new(),
++        }]))
++        .await?;
++    wait_for_event(&test.codex, |event| {
++        matches!(event, EventMsg::TurnComplete(_))
++    })
++    .await;
++
++    assert!(
++        natural_parent_turn.requests().into_iter().any(|request| {
++            let body = request.body_json().to_string();
++            body.contains(MANUAL_PROMPT) && body.contains(CHILD_RESULT)
++        }),
++        "the next natural parent turn should include the queued child result"
++    );
++    Ok(())
++}
++
+ async fn wait_for_request_with_model(
+     mock: &core_test_support::responses::ResponseMock,
+     model: &str,
+@@ -2797,7 +2980,6 @@ async fn plaintext_multi_agent_v2_completion_sends_agent_message(
  async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> Result<()> {
      const SPAWN_WORKER_PROMPT: &str = "spawn the completion-routing worker";
      const SPAWN_REQUESTER_PROMPT: &str = "spawn the completion-routing requester";
@@ -2129,7 +2978,7 @@ index ccd44bb92d83a6b78f3c3a9949cca4eabafab44d..d96f87267153ec24c26617102db60f2b
      const WORKER_INITIAL_TASK: &str = "finish the worker initial task";
      const REQUESTER_TASK: &str = "ask the sibling worker to do more";
      const WORKER_FOLLOWUP_TASK: &str = "finish the peer-requested worker task";
-@@ -2873,6 +2872,19 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
+@@ -2873,6 +3055,19 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
          ]),
      )
      .await;
@@ -2149,7 +2998,7 @@ index ccd44bb92d83a6b78f3c3a9949cca4eabafab44d..d96f87267153ec24c26617102db60f2b
 
      submit_turn_with_trigger(&test, SPAWN_WORKER_PROMPT, "automation_cron_scheduled").await?;
      let worker_thread_id = created_threads.recv().await?;
-@@ -2881,6 +2893,23 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
+@@ -2881,6 +3076,23 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
          matches!(event, EventMsg::TurnComplete(_))
      })
      .await;
@@ -2173,7 +3022,7 @@ index ccd44bb92d83a6b78f3c3a9949cca4eabafab44d..d96f87267153ec24c26617102db60f2b
 
      let requester_spawn_args = serde_json::to_string(&json!({
          "message": REQUESTER_TASK,
-@@ -2972,6 +3001,21 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
+@@ -2972,6 +3184,21 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
              .await,
          );
      }
@@ -2195,7 +3044,7 @@ index ccd44bb92d83a6b78f3c3a9949cca4eabafab44d..d96f87267153ec24c26617102db60f2b
 
      submit_turn_with_trigger(&test, SPAWN_REQUESTER_PROMPT, "composer").await?;
      let requester_thread_id = created_threads.recv().await?;
-@@ -3052,51 +3096,7 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
+@@ -3052,51 +3279,7 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn() -> R
          )
      );
 
@@ -2261,10 +3110,10 @@ index 393cf8a536ab3ec878fb4510050d4be03189eaf8..9eb0aefcc09fbc6bbf62bcab62b45e0a
          .await?;
      wait_for_event(&test.codex, |event| {
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index a025b0bd2903604c4771c85baa4b811fcf62c25b..abbb70701e9057d7311a41d2ab1137c3be841311 100644
+index da9ba1ad095735af49a533fc5b421ffdf43ee4d7..cb591fa457ffd4261356bd1bf1f94b46a18f2fd7 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
-@@ -662,6 +662,9 @@ pub enum Op {
+@@ -665,6 +665,9 @@ pub enum Op {
      InterAgentCommunication {
          communication: InterAgentCommunication,
          start_options: TurnStartOptions,
@@ -2274,7 +3123,7 @@ index a025b0bd2903604c4771c85baa4b811fcf62c25b..abbb70701e9057d7311a41d2ab1137c3
      },
 
      /// Approve a command execution
-@@ -749,6 +752,15 @@ pub enum Op {
+@@ -752,6 +755,15 @@ pub enum Op {
      /// Request to shut down codex instance.
      Shutdown,
 
@@ -2290,7 +3139,7 @@ index a025b0bd2903604c4771c85baa4b811fcf62c25b..abbb70701e9057d7311a41d2ab1137c3
      /// Execute a user-initiated one-off shell command (triggered by "!cmd").
      ///
      /// The command string is executed using the user's default shell and may
-@@ -957,6 +969,7 @@ impl Op {
+@@ -960,6 +972,7 @@ impl Op {
              Self::Review { .. } => "review",
              Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
              Self::Shutdown => "shutdown",
