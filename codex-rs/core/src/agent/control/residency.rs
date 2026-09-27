@@ -181,11 +181,19 @@ impl V2Residency {
             let eviction = tokio::spawn(async move {
                 let _residency_guard = residency_guard;
                 candidate_thread.ensure_rollout_materialized().await;
-                if let Err(err) = candidate_thread.shutdown_and_wait().await {
-                    warn!(
-                        "failed to shut down v2 resident thread before unloading {candidate_thread_id}: {err}"
-                    );
-                    return false;
+                match candidate_thread.request_shutdown_if_idle().await {
+                    Ok(true) => candidate_thread.wait_until_terminated().await,
+                    Ok(false) => {
+                        residency.touch(candidate_thread_id);
+                        return false;
+                    }
+                    Err(err) => {
+                        warn!(
+                            "failed to shut down v2 resident thread before unloading {candidate_thread_id}: {err}"
+                        );
+                        residency.touch(candidate_thread_id);
+                        return false;
+                    }
                 }
                 let environments = candidate_thread.environment_selections().await;
                 let mut threads = manager.threads.write().await;
@@ -269,6 +277,7 @@ async fn is_unloadable(thread: &CodexThread) -> bool {
         AgentStatus::Completed(_) | AgentStatus::Errored(_) | AgentStatus::Interrupted
     ) && thread.session.active_turn.lock().await.is_none()
         && !thread.session.input_queue.has_pending_mailbox_items().await
+        && !thread.should_retain_while_idle().await
 }
 
 #[cfg(test)]
