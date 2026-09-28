@@ -227,6 +227,8 @@ pub struct AgentTurnOutcome {
     pub parent_turn_id: Option<String>,
     pub initiating_agent_path: Option<AgentPath>,
     pub status: AgentStatus,
+    /// Controls whether a successful terminal result starts an idle parent turn.
+    pub completion_delivery_mode: MessageDeliveryMode,
 }
 
 /// Settings shared by the tree. A service tier of `None` restores the default tier.
