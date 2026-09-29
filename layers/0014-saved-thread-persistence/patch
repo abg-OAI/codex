@@ -538,7 +538,7 @@ index 1424c631d67e42a44b6f2af3bb297775e1daeb61..72739007ecee4158a1063e6076c23415
                  threads.remove(&candidate_thread_id);
                  residency.remove(candidate_thread_id);
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 574178ad3799622de7acd0cd041e271dd6adae29..372b8275dbb77c4ac302b6c6bfeef85a3aa75b3e 100644
+index 3958bb63ab8f11513e706242034622962544b0cb..de411771f70ac1645aeb15efc2b2c997d73f3ad7 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -383,6 +383,13 @@ impl LocalAgentControl {
@@ -586,10 +586,10 @@ index 574178ad3799622de7acd0cd041e271dd6adae29..372b8275dbb77c4ac302b6c6bfeef85a
                      self.touch_loaded_v2_residency(&state, thread_id).await;
                      return Ok(());
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 3328c9adc0223d283fdec4e496c47185a537226a..ccc84a23a954fa90e8b50935d634d438958f955a 100644
+index eaac694d643ad172e1010998c70aad7d800c6b29..64d30e9c289c4517c99413f16b2160b1f00bf46a 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -1943,6 +1943,122 @@ async fn v2_sibling_reload_preserves_shared_instructions_after_root_unloads(shar
+@@ -1944,6 +1944,122 @@ async fn v2_sibling_reload_preserves_shared_instructions_after_root_unloads(shar
      );
  }
 
@@ -1473,7 +1473,7 @@ index 0000000000000000000000000000000000000000..f725a74656f51b34a04c0103a9d9776d
 +    }))
 +}
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 8b2bcb8e7f1582e7c45274b7aa7ee18b557a685a..82ce0c76e14de2d4059d6d6d30de453cb307707b 100644
+index 89c98e8754cffa8ed2a63a1d5947be40c984c9d4..a54a201d9dc45808ecfbbdb0ae641380515f3960 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -90,6 +90,9 @@ pub(crate) struct Session {
@@ -1486,7 +1486,7 @@ index 8b2bcb8e7f1582e7c45274b7aa7ee18b557a685a..82ce0c76e14de2d4059d6d6d30de453c
      pub(crate) input_queue: InputQueue,
      pub(crate) services: SessionServices,
      pub(super) git_enrichment_policy: GitEnrichmentPolicy,
-@@ -1803,6 +1806,7 @@ impl Session {
+@@ -1804,6 +1807,7 @@ impl Session {
                  .then(|| Mutex::new(Default::default())),
                  active_turn: Mutex::new(None),
                  async_hook_results,
@@ -1515,7 +1515,7 @@ index 156225736fb3991b674fa031deb07c4b16b224a9..aae36641176e51adf6915ed56468f893
          services,
          git_enrichment_policy: GitEnrichmentPolicy::Fresh,
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 36dbc2009d2bfeb0abffca2c734f783f217675b7..d167cc7b8d1134223599d1808cfddf3c4becb680 100644
+index 51c451328fa63fced0b7805c3dc61c9948ebe70c..94629979c6c892e1ec336602a8c3ef7142f8bd68 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
 @@ -404,6 +404,9 @@ pub(crate) struct ResumeThreadWithHistoryOptions {
@@ -1575,7 +1575,7 @@ index 36dbc2009d2bfeb0abffca2c734f783f217675b7..d167cc7b8d1134223599d1808cfddf3c
      pub(crate) fn shared_thread_instructions_provider(
          &self,
          root_thread_id: ThreadId,
-@@ -2364,6 +2384,7 @@ impl ThreadManagerState {
+@@ -2378,6 +2398,7 @@ impl ThreadManagerState {
          initial_host_config: Option<AgentConfigUpdate>,
      ) -> CodexResult<NewThread> {
          let thread_id = session.thread_id();
@@ -1583,7 +1583,7 @@ index 36dbc2009d2bfeb0abffca2c734f783f217675b7..d167cc7b8d1134223599d1808cfddf3c
          let event = io.next_event().await?;
          let session_configured = match event {
              Event {
-@@ -2378,6 +2399,11 @@ impl ThreadManagerState {
+@@ -2392,6 +2413,11 @@ impl ThreadManagerState {
          {
              let mut threads = self.threads.write().await;
              if let std::collections::hash_map::Entry::Vacant(e) = threads.entry(thread_id) {
@@ -1596,10 +1596,10 @@ index 36dbc2009d2bfeb0abffca2c734f783f217675b7..d167cc7b8d1134223599d1808cfddf3c
                      session
                          .services
 diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
-index 24f1e54990d8a5dbf5007f2700eb87651f97e4b4..e219895d0b5ff7bc6e24db89a176ab2e8c346e67 100644
+index 05f2d9061da5bc92c217f5b33911e5660cdf3523..392c536f2bda005f7e99cd7eee9d0168d99f2cf4 100644
 --- a/codex-rs/thread-store/src/local/mod.rs
 +++ b/codex-rs/thread-store/src/local/mod.rs
-@@ -46,6 +46,7 @@ use codex_rollout::StateDbHandle;
+@@ -49,6 +49,7 @@ use codex_rollout::StateDbHandle;
  use codex_rollout::WriterLockCoordinator;
  use codex_state::SqliteConfig;
  use std::collections::HashMap;
@@ -1607,7 +1607,7 @@ index 24f1e54990d8a5dbf5007f2700eb87651f97e4b4..e219895d0b5ff7bc6e24db89a176ab2e
  use std::collections::hash_map::Entry;
  use std::path::PathBuf;
  use std::sync::Arc;
-@@ -283,6 +284,28 @@ impl LocalThreadStore {
+@@ -286,6 +287,28 @@ impl LocalThreadStore {
          self.state_db.clone()
      }
 

@@ -1,8 +1,8 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 24722f640b509b0ecdcde48bf876a2daabf19a2c..ca5d2c74cf4f844c276d1cfbd9b450ef6093638f 100644
+index 01a121bf78335f0c344af1beddfc6f634464f391..fbbffdaeb25efe2f43c31e2f8e44642c652ff5f7 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -2976,6 +2976,7 @@ dependencies = [
+@@ -2999,6 +2999,7 @@ dependencies = [
   "sha1 0.10.6",
   "shlex",
   "similar",

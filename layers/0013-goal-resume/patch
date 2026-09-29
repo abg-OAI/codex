@@ -393,7 +393,7 @@ index 0000000000000000000000000000000000000000..ed5a437be1d8965e5fa0e9f079389227
 +#[serde(deny_unknown_fields)]
 +struct ResumeGoalArgs {}
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
-index debe40e34e67ff15df5a91e8fd08005e8e9db89b..ee348ea2843a974bd8bfa9c4f12940603213a540 100644
+index 87a8b46b154f162a62d9b9db5a53f007a622a666..bb75b5ef21638ffaec0e460cbbfb670324a5858a 100644
 --- a/codex-rs/core/src/saffron/mod.rs
 +++ b/codex-rs/core/src/saffron/mod.rs
 @@ -7,6 +7,7 @@
@@ -404,7 +404,7 @@ index debe40e34e67ff15df5a91e8fd08005e8e9db89b..ee348ea2843a974bd8bfa9c4f1294060
  pub(crate) mod goal_scheduler;
  pub(crate) mod goal_supervisor;
  mod storage;
-@@ -34,4 +35,5 @@ pub(crate) fn register_tools(
+@@ -42,4 +43,5 @@ pub(crate) fn register_tools(
      }
 
      goal_edit::register_root_if_available(session, turn_context, registry);
