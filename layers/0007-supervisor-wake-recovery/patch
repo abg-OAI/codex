@@ -123,10 +123,10 @@ index 0000000000000000000000000000000000000000..934f511d414d2f698f028b926fb1c147
 +    assert!(unloading_state.should_unload_now());
 +}
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 57c10fe833cb800440e48c3cfaad1246d1d91a97..ff152318a5768a128874024f97b07f8815b4343f 100644
+index 289cb63953662eb5fba00222ec49432dd976b944..9563f03f2b7803564ea9224da2c13ebb2ba1e391 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -280,6 +280,15 @@ fn has_model_resume_override(
+@@ -282,6 +282,15 @@ fn has_model_resume_override(
              .is_some_and(|overrides| overrides.contains_key("model_reasoning_effort"))
  }
 
@@ -142,7 +142,7 @@ index 57c10fe833cb800440e48c3cfaad1246d1d91a97..ff152318a5768a128874024f97b07f88
  fn has_permission_override(
      request_overrides: Option<&HashMap<String, serde_json::Value>>,
      typesafe_overrides: &ConfigOverrides,
-@@ -6309,6 +6318,8 @@ fn build_thread_from_loaded_snapshot(
+@@ -6354,6 +6363,8 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -756,10 +756,10 @@ index dd1527cb8a4d3859624e0e2eb548afee9406733f..a71e13266cb5b01a64786548aeb62206
 +        .collect()
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index d74cc61e48dd15e3cef587e274fa41988580d5dc..3189510f96b7dbcf82130a74f3037ed2f023687a 100644
+index c9b08df3057867fb49b4e97cd8b529ee52ac9ffd..58f2a31928457ffeb2bf7ca3593809d64feda701 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -331,6 +331,21 @@ impl CodexThread {
+@@ -348,6 +348,21 @@ impl CodexThread {
      pub async fn stop_saffron_goal_supervisor(&self) {
          crate::saffron::goal_supervisor::stop(&self.session).await;
      }

@@ -181,10 +181,10 @@ index 16c4ceec61d3e1eede9cffbd1296a6e3711c84fc..dd1527cb8a4d3859624e0e2eb548afee
 
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 2b4368d6b6ff39da0ca5e5272d38c280470da506..d74cc61e48dd15e3cef587e274fa41988580d5dc 100644
+index 9f024d7c2476af198154faf8cb3f0a914d9fc90b..c9b08df3057867fb49b4e97cd8b529ee52ac9ffd 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -322,10 +322,9 @@ impl CodexThread {
+@@ -339,10 +339,9 @@ impl CodexThread {
      /// goal extension can retain its ordinary continuation behavior.
      pub async fn start_saffron_goal_supervisor_checkin(
          &self,
@@ -774,7 +774,7 @@ index efe282cc73938c574f582581c96958754e24a75d..3106cd654889423169397d98f01639fc
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index f9b045762d1fe7c7d1f848d58ef8067961abe8b6..9f076a6b2d02b754edf34540ddb6c050e667aafa 100644
+index 91bcb39621ab4ebaed6f6a57890ad82043669ba8..5544fdcfff5602906d53b92f3f84e3df65cff597 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -150,9 +150,7 @@ pub(crate) fn build_tool_router(
@@ -815,10 +815,10 @@ index c40cad928f6aa1777b70b341836323c0bbeac47a..48515f0e45992c555e89b76f4b238e5b
              .thread_extension_data()
              .get::<TurnStartOptions>()
 diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
-index 6d88091b2fe7f9127e18b830ead6998c8799c739..024191c66ea1218b5880342eb25e2950b08bb3ed 100644
+index be969b08cdad261dd4990193c2277bdb68fdae4e..3c9de1e8e6d426bd20c30d4a6becd1e533eb0595 100644
 --- a/codex-rs/state/src/lib.rs
 +++ b/codex-rs/state/src/lib.rs
-@@ -85,6 +85,7 @@ pub use runtime::RuntimeDbBackup;
+@@ -85,6 +85,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
  pub use runtime::SqliteIntegrityCheck;
  pub use runtime::SqliteQueueStore;
  pub use runtime::ThreadFilterOptions;
@@ -827,17 +827,17 @@ index 6d88091b2fe7f9127e18b830ead6998c8799c739..024191c66ea1218b5880342eb25e2950
  pub use runtime::is_sqlite_corruption_error;
  pub use runtime::open_thread_history_db;
 diff --git a/codex-rs/state/src/runtime.rs b/codex-rs/state/src/runtime.rs
-index 376ad682ed10c22f489b793c7db220784d7f9628..4f4dd680c77b327f951eb83e9ddb059fe49df948 100644
+index 14fcd2d1678de5237d85b3ae009733514de1126d..9bc890152097e258efda2835c3d0f568c048323f 100644
 --- a/codex-rs/state/src/runtime.rs
 +++ b/codex-rs/state/src/runtime.rs
-@@ -65,6 +65,7 @@ pub use goals::GoalAccountingMode;
+@@ -66,6 +66,7 @@ pub use goals::GoalAccountingMode;
  pub use goals::GoalAccountingOutcome;
  pub use goals::GoalStore;
  pub use goals::GoalUpdate;
 +pub use goals::ThreadGoalRevision;
  pub use memories::MemoryStore;
  pub use queued_items::SqliteQueueStore;
- pub use recovery::RuntimeDbBackup;
+ pub use recovery::backup_runtime_db_for_fresh_start;
 diff --git a/codex-rs/state/src/runtime/goals.rs b/codex-rs/state/src/runtime/goals.rs
 index ed616e16b7c81d06bcf02302912e16f71ad936f3..c731fd81e25e340eaa3c5e6b4bf49f3a88568f50 100644
 --- a/codex-rs/state/src/runtime/goals.rs

@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 8d6050f8d47142dd7be69de976822b04bf59a289..720d278634ed8629f8f5dcb63606e21f71ab401b 100644
+index 58f2a31928457ffeb2bf7ca3593809d64feda701..5db5707f82e62754ceec9cab2d3c77b461766622 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -327,7 +327,9 @@ impl CodexThread {
+@@ -341,7 +341,9 @@ impl CodexThread {
          &self,
          goal: &codex_state::ThreadGoal,
      ) -> Result<bool, String> {
@@ -1050,7 +1050,7 @@ index a837292c27b734a7fed4e901b3385b4383c31005..ebf1a93cf71e2d11271b6361bac361d9
  fn failure_retry_is_exponential_and_capped() {
      assert_eq!(failure_retry_delay(1), Duration::from_secs(60));
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index cc8413a65361a9f32d71759f4c0c5f9d4d9a0b3e..02cec4e6b773e6440c2c176fe4c63e90381dd0fd 100644
+index 94c47023ead7ab1100ade55d75bb26f30d3c0c05..6e810496274e5540260bf83a4fce33b43ea728d1 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
 @@ -87,6 +87,13 @@ pub async fn inter_agent_communication(
@@ -1068,10 +1068,10 @@ index cc8413a65361a9f32d71759f4c0c5f9d4d9a0b3e..02cec4e6b773e6440c2c176fe4c63e90
          sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
              .await;
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index cd18d647d62c826575ef597b931385970b5cfb36..42a8ee81684c316681a62d79f6750fda4a9ef14f 100644
+index 2eba53c2c6df439fe34e1c8cb334f96367938acb..6481020ce493240380fc2372985b96ef1c0a2394 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -273,6 +273,11 @@ impl Session {
+@@ -274,6 +274,11 @@ impl Session {
          input: Vec<TurnInput>,
          task: T,
      ) {
@@ -1083,7 +1083,7 @@ index cd18d647d62c826575ef597b931385970b5cfb36..42a8ee81684c316681a62d79f6750fda
          self.abort_all_tasks(TurnAbortReason::Replaced).await;
          self.clear_connector_selection().await;
          self.start_task(turn_context, input, task).await;
-@@ -467,6 +472,11 @@ impl Session {
+@@ -468,6 +473,11 @@ impl Session {
              let active_turn = active_turn.get_or_insert_with(ActiveTurn::default);
              Arc::clone(&active_turn.turn_state)
          };
@@ -1095,7 +1095,7 @@ index cd18d647d62c826575ef597b931385970b5cfb36..42a8ee81684c316681a62d79f6750fda
 
          self.services
              .models_manager
-@@ -484,6 +494,10 @@ impl Session {
+@@ -485,6 +495,10 @@ impl Session {
          }
          let (input, mut start_options) =
              self.input_queue.get_pending_input(&self.active_turn).await;
