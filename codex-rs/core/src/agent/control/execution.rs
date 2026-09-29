@@ -3,6 +3,7 @@
 
 use super::LocalAgentControl;
 use crate::agent::types::AgentExecutionGuard;
+use crate::saffron::subagent_completion::AncestorTurnRetentionGuard;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::error::Result as CodexResult;
@@ -67,6 +68,32 @@ impl LocalAgentControl {
             return None;
         }
         self.execution_guard(multi_agent_version, session_source)
+    }
+
+    /// Retains the ancestor chain required for a spawned V2 turn's terminal handoff.
+    pub(crate) fn ancestor_turn_retention_guard(
+        &self,
+        multi_agent_version: MultiAgentVersion,
+        session_source: &SessionSource,
+        thread_id: codex_protocol::ThreadId,
+    ) -> Option<AncestorTurnRetentionGuard> {
+        if multi_agent_version != MultiAgentVersion::V2
+            || self.runtime.registry.is_hidden_thread(thread_id)
+        {
+            return None;
+        }
+        let agent_path = session_source.get_agent_path()?;
+        self.runtime
+            .ancestor_turn_retention
+            .retain(self.runtime.registry.ancestor_thread_ids(&agent_path))
+    }
+
+    /// Reports whether a descendant lifecycle still needs `thread_id` for handoff.
+    pub(crate) fn is_retained_for_descendant_completion(
+        &self,
+        thread_id: codex_protocol::ThreadId,
+    ) -> bool {
+        self.runtime.ancestor_turn_retention.is_retained(thread_id)
     }
 }
 
