@@ -282,10 +282,10 @@ index 34171cee0b634db21fe29330b8c0cdc7082157d8..35d4df7843b0d1df0dd3d7b00896c598
              format!("helper ended as {terminal_status:?} without selecting an action");
          defer_failure(parent, &runtime, goal_id, description).await;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index c435ce8baf7fc4ea3117a3467951255c751b13b5..a3e929931b5babb2ba21790eb9880f1b8b9128e8 100644
+index 537ca0840f679579308bcd9742a41d9e30265e43..3a013fabf7e8e73458504b591c6c8f92def48667 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2278,6 +2278,7 @@ impl Session {
+@@ -2193,6 +2193,7 @@ impl Session {
 
      /// Record a terminal CodexErr before the app-server completion notification is reduced.
      pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {

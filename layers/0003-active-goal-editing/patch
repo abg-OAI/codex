@@ -181,10 +181,10 @@ index 16c4ceec61d3e1eede9cffbd1296a6e3711c84fc..dd1527cb8a4d3859624e0e2eb548afee
 
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 9f024d7c2476af198154faf8cb3f0a914d9fc90b..c9b08df3057867fb49b4e97cd8b529ee52ac9ffd 100644
+index 76a49e8e0df5b341763c624641b7ace6c1cf4f3e..cfd8c791bcb2decba1e8f9c9b59baebcbbaf7145 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -339,10 +339,9 @@ impl CodexThread {
+@@ -351,10 +351,9 @@ impl CodexThread {
      /// goal extension can retain its ordinary continuation behavior.
      pub async fn start_saffron_goal_supervisor_checkin(
          &self,
@@ -827,10 +827,10 @@ index be969b08cdad261dd4990193c2277bdb68fdae4e..3c9de1e8e6d426bd20c30d4a6becd1e5
  pub use runtime::is_sqlite_corruption_error;
  pub use runtime::open_thread_history_db;
 diff --git a/codex-rs/state/src/runtime.rs b/codex-rs/state/src/runtime.rs
-index 14fcd2d1678de5237d85b3ae009733514de1126d..9bc890152097e258efda2835c3d0f568c048323f 100644
+index 2adc20c5b4917f178012dd4f7cbc04e27807bc96..33686dc73818e624c78e709547da5ba5e2772477 100644
 --- a/codex-rs/state/src/runtime.rs
 +++ b/codex-rs/state/src/runtime.rs
-@@ -66,6 +66,7 @@ pub use goals::GoalAccountingMode;
+@@ -67,6 +67,7 @@ pub use goals::GoalAccountingMode;
  pub use goals::GoalAccountingOutcome;
  pub use goals::GoalStore;
  pub use goals::GoalUpdate;
