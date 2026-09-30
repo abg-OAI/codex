@@ -49,6 +49,7 @@ use codex_rollout::StateDbHandle;
 use codex_rollout::WriterLockCoordinator;
 use codex_state::SqliteConfig;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -284,6 +285,28 @@ impl LocalThreadStore {
     /// Return the state DB handle used by local rollout writers.
     pub async fn state_db(&self) -> Option<StateDbHandle> {
         self.state_db.clone()
+    }
+
+    /// Finds candidate turns already present in a paginated thread's visible history.
+    pub async fn existing_history_turns(
+        &self,
+        thread_id: ThreadId,
+        turn_ids: &HashSet<String>,
+    ) -> ThreadStoreResult<HashSet<String>> {
+        let lineage = self.resolve_rollout_lineage(thread_id).await?;
+        let pool = self.thread_history_db().await?;
+        let mut existing = HashSet::new();
+        for turn_id in turn_ids {
+            match thread_history::find_visible_turn(pool, &lineage, turn_id).await {
+                Ok(_) => {
+                    existing.insert(turn_id.clone());
+                }
+                Err(ThreadStoreError::InvalidRequest { message })
+                    if message == format!("turn not found: {turn_id}") => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(existing)
     }
 
     async fn thread_history_db(&self) -> ThreadStoreResult<&sqlx::SqlitePool> {
