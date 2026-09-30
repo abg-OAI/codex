@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 9e9a90437b3fddde282a0d05216907d77fa5a745..13f2578764597a3183efd33acf0e3078a2d2a878 100644
+index f5a9a65425ae5f14a03b4c3855d75dc5f77f19bc..15b61bfee96c08442a0faaeadb14b92cbb40851e 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -74,6 +74,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
@@ -11,7 +11,7 @@ index 9e9a90437b3fddde282a0d05216907d77fa5a745..13f2578764597a3183efd33acf0e3078
  use codex_core::ThreadManager;
  use codex_core::config::Config;
  use codex_core::config::ThreadStoreConfig;
-@@ -162,6 +164,7 @@ pub(crate) struct MessageProcessor {
+@@ -163,6 +165,7 @@ pub(crate) struct MessageProcessor {
      project_processor: ProjectRequestProcessor,
      remote_control_processor: RemoteControlRequestProcessor,
      search_processor: SearchRequestProcessor,
@@ -19,7 +19,7 @@ index 9e9a90437b3fddde282a0d05216907d77fa5a745..13f2578764597a3183efd33acf0e3078
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -524,6 +527,24 @@ impl MessageProcessor {
+@@ -527,6 +530,24 @@ impl MessageProcessor {
              turn_cost_worker.as_ref().map(TurnCostWorker::handle),
              config_warnings,
          );
@@ -44,7 +44,7 @@ index 9e9a90437b3fddde282a0d05216907d77fa5a745..13f2578764597a3183efd33acf0e3078
          let turn_processor = TurnRequestProcessor::new(
              auth_manager,
              Arc::clone(&thread_manager),
-@@ -606,6 +627,7 @@ impl MessageProcessor {
+@@ -609,6 +630,7 @@ impl MessageProcessor {
              project_processor,
              remote_control_processor,
              search_processor,
@@ -52,7 +52,7 @@ index 9e9a90437b3fddde282a0d05216907d77fa5a745..13f2578764597a3183efd33acf0e3078
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -620,6 +642,9 @@ impl MessageProcessor {
+@@ -623,6 +645,9 @@ impl MessageProcessor {
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
          self.skills_watcher.shutdown();
@@ -756,10 +756,10 @@ index dd1527cb8a4d3859624e0e2eb548afee9406733f..a71e13266cb5b01a64786548aeb62206
 +        .collect()
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index c9b08df3057867fb49b4e97cd8b529ee52ac9ffd..58f2a31928457ffeb2bf7ca3593809d64feda701 100644
+index cfd8c791bcb2decba1e8f9c9b59baebcbbaf7145..74e640cd347e9335cb07b34442f0d8e4cc8fc374 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -348,6 +348,21 @@ impl CodexThread {
+@@ -360,6 +360,21 @@ impl CodexThread {
      pub async fn stop_saffron_goal_supervisor(&self) {
          crate::saffron::goal_supervisor::stop(&self.session).await;
      }
@@ -782,10 +782,10 @@ index c9b08df3057867fb49b4e97cd8b529ee52ac9ffd..58f2a31928457ffeb2bf7ca3593809d6
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 2a1f3cd34789baf6956359fb8090930b6a0df167..e7273e079c7f80cab67e6db1b4e2826bcd3f96d0 100644
+index 033219a361f9bed5de6286b1780a65d023ba8071..2a4f17f34f0faa7a8293735d43ede5ad1bd41890 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -153,6 +153,9 @@ pub use codex_prompts as review_prompts;
+@@ -154,6 +154,9 @@ pub use codex_prompts as review_prompts;
  mod thread_manager;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
