@@ -1946,6 +1946,122 @@ async fn v2_sibling_reload_preserves_shared_instructions_after_root_unloads(shar
 }
 
 #[tokio::test]
+async fn ephemeral_sender_does_not_strip_saved_target_persistence() {
+    let (home, mut config) = test_config().await;
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("enable multi-agent v2");
+    config
+        .features
+        .enable(Feature::Sqlite)
+        .expect("enable SQLite");
+    let harness = AgentControlHarness::new_with_config(home, config).await;
+    let root = harness
+        .manager
+        .start_thread(StartThreadOptions::new(harness.config.clone()))
+        .await
+        .expect("start root");
+    let control = root
+        .thread
+        .session
+        .services
+        .local_agent_runtime
+        .control(root.thread.session.session_id());
+
+    let mut ephemeral_config = harness.config.clone();
+    ephemeral_config.ephemeral = true;
+    let sender =
+        spawn_v2_reload_test_child(&control, ephemeral_config, &root.thread, "ephemeral_sender")
+            .await;
+    let target = spawn_v2_reload_test_child(
+        &control,
+        harness.config.clone(),
+        &root.thread,
+        "saved_target",
+    )
+    .await;
+    let sender = harness
+        .manager
+        .get_thread(sender.thread_id)
+        .await
+        .expect("loaded sender");
+    let target = harness
+        .manager
+        .get_thread(target.thread_id)
+        .await
+        .expect("loaded target");
+    let target_id = target.session.thread_id;
+
+    assert!(sender.config_snapshot().await.ephemeral);
+    assert!(!target.config_snapshot().await.ephemeral);
+    persist_thread_for_tree_resume(&target, "target persisted").await;
+    target.shutdown_and_wait().await.expect("shut down target");
+    assert!(harness.manager.remove_thread(&target_id).await.is_some());
+
+    let sender_turn = sender.session.new_default_turn().await;
+    sender
+        .session
+        .services
+        .agent_control
+        .send(crate::SendRequest {
+            caller: sender.session.thread_id,
+            target: crate::AgentTarget::Id(target_id),
+            resume_config: crate::agent::child_config::build_agent_resume_config(&sender_turn)
+                .expect("capture sender config"),
+            input: crate::AgentInput::Message {
+                message: AgentMessage::Plaintext("wake the saved target".to_string()),
+                mode: MessageDeliveryMode::QueueOnly,
+            },
+            start_options: TurnStartOptions {
+                root_turn_id: sender_turn.turn_metadata_state.root_turn_id(),
+                turn_trigger: sender_turn.turn_metadata_state.current_turn_trigger(),
+                cyber_access_program: sender_turn.cyber_access_program,
+                ..Default::default()
+            },
+        })
+        .await
+        .expect("deliver to saved target");
+
+    let reloaded = harness
+        .manager
+        .get_thread(target_id)
+        .await
+        .expect("reloaded target");
+    assert!(!reloaded.config_snapshot().await.ephemeral);
+    assert!(reloaded.session.live_thread().is_some());
+    assert!(reloaded.session.state_db().is_some());
+    reloaded
+        .inject_response_items(vec![assistant_message(
+            "survives target reopen",
+            Some(MessagePhase::FinalAnswer),
+        )])
+        .await
+        .expect("inject marker");
+    reloaded.flush_rollout().await.expect("flush marker");
+    reloaded
+        .shutdown_and_wait()
+        .await
+        .expect("shut down reloaded target");
+    assert!(harness.manager.remove_thread(&target_id).await.is_some());
+
+    harness
+        .manager
+        .ensure_multi_agent_v2_child_loaded(target_id)
+        .await
+        .expect("reopen saved target");
+    let reopened = harness
+        .manager
+        .get_thread(target_id)
+        .await
+        .expect("reopened target");
+    assert!(history_contains_text(
+        reopened.session.clone_history().await.raw_items(),
+        "survives target reopen"
+    ));
+}
+
+#[tokio::test]
 async fn resumed_root_reuses_or_freezes_surviving_shared_instructions() {
     let harness = AgentControlHarness::new().await;
     let id = ThreadId::new();
