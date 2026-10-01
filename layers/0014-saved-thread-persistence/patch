@@ -1,9 +1,9 @@
 diff --git a/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs b/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..76714d1ff2b2280894cf3d9b83122d4346d0c739
+index 0000000000000000000000000000000000000000..5b9c1524f85b37291a3434fa4befe6f0ef8e8afe
 --- /dev/null
 +++ b/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,280 @@
 +use super::*;
 +use codex_app_server_protocol::ThreadItem;
 +use codex_app_server_protocol::ThreadReadParams;
@@ -137,7 +137,7 @@ index 0000000000000000000000000000000000000000..76714d1ff2b2280894cf3d9b83122d43
 +        RolloutItem::ResponseItem(response) if response.item.id() == live_marker.id()
 +    )));
 +
-+    let blocker = LiveThread::resume(
++    let (blocker, _history) = LiveThread::resume(
 +        Arc::clone(&store),
 +        history_mode,
 +        ResumeThreadParams {
@@ -145,6 +145,7 @@ index 0000000000000000000000000000000000000000..76714d1ff2b2280894cf3d9b83122d43
 +            rollout_path: Some(rollout_path.clone()),
 +            history: (history_mode == ThreadHistoryMode::Paginated)
 +                .then(|| Arc::new(stored_before.clone())),
++            history_revision: None,
 +            include_archived: true,
 +            metadata: ThreadPersistenceMetadata {
 +                cwd: Some(config.cwd.to_path_buf()),
@@ -406,7 +407,7 @@ index 38110ec11554de76c9fa494285d2b56b4c6921e5..4d801a54b572bf12387503f82cd2f4fb
      thread: &mut Thread,
      config_snapshot: &ThreadConfigSnapshot,
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 9563f03f2b7803564ea9224da2c13ebb2ba1e391..1f3742afefb639a767a112d6e8da799cc95e289c 100644
+index 790b4461e3cffac0916b2dd2da99adc2a453546d..598f652bba80eaf51ad951b78d03f872bf51aace 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
 @@ -2866,7 +2866,9 @@ impl ThreadRequestProcessor {
@@ -420,7 +421,7 @@ index 9563f03f2b7803564ea9224da2c13ebb2ba1e391..1f3742afefb639a767a112d6e8da799c
          let mut thread = if include_turns {
              if let Some(loaded_thread) = loaded_thread.as_ref() {
                  // Loaded thread with turns: use persisted metadata when it exists,
-@@ -4285,11 +4287,9 @@ impl ThreadRequestProcessor {
+@@ -4297,11 +4299,9 @@ impl ThreadRequestProcessor {
      ) -> Result<RunningThreadResumeResult, JSONRPCErrorError> {
          let running_thread = if params.history.is_some() {
              if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
@@ -435,7 +436,7 @@ index 9563f03f2b7803564ea9224da2c13ebb2ba1e391..1f3742afefb639a767a112d6e8da799c
              {
                  return Err(invalid_request(format!(
                      "cannot resume thread {existing_thread_id} with history while it is already running"
-@@ -4297,7 +4297,8 @@ impl ThreadRequestProcessor {
+@@ -4309,7 +4309,8 @@ impl ThreadRequestProcessor {
              }
              None
          } else if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
@@ -445,7 +446,7 @@ index 9563f03f2b7803564ea9224da2c13ebb2ba1e391..1f3742afefb639a767a112d6e8da799c
          {
              let source_thread = self
                  .read_stored_thread_for_resume(
-@@ -4316,9 +4317,11 @@ impl ThreadRequestProcessor {
+@@ -4328,9 +4329,11 @@ impl ThreadRequestProcessor {
                  )
                  .await?;
              let existing_thread_id = source_thread.thread_id;
@@ -517,10 +518,10 @@ index 237c58e031f11059f445c82acfda6b780d607777..b32fd8f5179b17b467c763b35b30e49e
      use super::super::normalize_thread_list_cwd_filters;
      use codex_app_server_protocol::ThreadListCwdFilter;
 diff --git a/codex-rs/core/src/agent/control/residency.rs b/codex-rs/core/src/agent/control/residency.rs
-index 1424c631d67e42a44b6f2af3bb297775e1daeb61..72739007ecee4158a1063e6076c234156b106f12 100644
+index f7a6acdca1bff8f2e030abd85779e1dcf93b0456..76939ca43be33334ae49f57e4a3d93de15cee345 100644
 --- a/codex-rs/core/src/agent/control/residency.rs
 +++ b/codex-rs/core/src/agent/control/residency.rs
-@@ -196,6 +196,7 @@ impl V2Residency {
+@@ -203,6 +203,7 @@ impl V2Residency {
                      }
                  }
                  let environments = candidate_thread.environment_selections().await;
@@ -528,7 +529,7 @@ index 1424c631d67e42a44b6f2af3bb297775e1daeb61..72739007ecee4158a1063e6076c23415
                  let mut threads = manager.threads.write().await;
                  if threads
                      .get(&candidate_thread_id)
-@@ -208,7 +209,7 @@ impl V2Residency {
+@@ -216,7 +217,7 @@ impl V2Residency {
                      .services
                      .local_agent_runtime
                      .registry
@@ -538,10 +539,10 @@ index 1424c631d67e42a44b6f2af3bb297775e1daeb61..72739007ecee4158a1063e6076c23415
                  threads.remove(&candidate_thread_id);
                  residency.remove(candidate_thread_id);
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 3958bb63ab8f11513e706242034622962544b0cb..de411771f70ac1645aeb15efc2b2c997d73f3ad7 100644
+index 1c4ceb971aaf803dbb26ce0a2c2d873935451806..c9c43e7141c3fc4edd985ebf090d03c15ecde5e1 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
-@@ -383,6 +383,13 @@ impl LocalAgentControl {
+@@ -387,6 +387,13 @@ impl LocalAgentControl {
          let stored_reasoning_effort = stored_thread.reasoning_effort.clone();
          let stored_source = stored_thread.source.clone();
          let stored_parent_thread_id = stored_thread.parent_thread_id;
@@ -555,7 +556,7 @@ index 3958bb63ab8f11513e706242034622962544b0cb..de411771f70ac1645aeb15efc2b2c997
          let history = load_agent_model_context(&state, thread_id, stored_thread.history_mode)
              .await?
              .ok_or(CodexErr::ThreadNotFound(thread_id))?;
-@@ -430,6 +437,7 @@ impl LocalAgentControl {
+@@ -435,6 +442,7 @@ impl LocalAgentControl {
              None
          };
          config.model_reasoning_effort = stored_reasoning_effort;
@@ -563,7 +564,7 @@ index 3958bb63ab8f11513e706242034622962544b0cb..de411771f70ac1645aeb15efc2b2c997
          if let Some(role_name) = session_source.get_agent_role() {
              let runtime_approval_policy = config.permissions.approval_policy.value();
              let runtime_approvals_reviewer = config.approvals_reviewer;
-@@ -629,7 +637,9 @@ impl LocalAgentControl {
+@@ -634,7 +642,9 @@ impl LocalAgentControl {
                  if let Some(parent_thread_id) = owner_thread_id {
                      self.validate_loaded_v2_child(&reloaded_thread.thread, parent_thread_id)?;
                  }
@@ -574,7 +575,7 @@ index 3958bb63ab8f11513e706242034622962544b0cb..de411771f70ac1645aeb15efc2b2c997
                  residency_slot.commit(reloaded_thread.thread_id);
                  state.notify_thread_created(reloaded_thread.thread_id);
                  Ok(())
-@@ -639,7 +649,9 @@ impl LocalAgentControl {
+@@ -644,7 +654,9 @@ impl LocalAgentControl {
                      if let Some(parent_thread_id) = owner_thread_id {
                          self.validate_loaded_v2_child(&thread, parent_thread_id)?;
                      }
@@ -586,10 +587,10 @@ index 3958bb63ab8f11513e706242034622962544b0cb..de411771f70ac1645aeb15efc2b2c997
                      self.touch_loaded_v2_residency(&state, thread_id).await;
                      return Ok(());
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index eaac694d643ad172e1010998c70aad7d800c6b29..64d30e9c289c4517c99413f16b2160b1f00bf46a 100644
+index d5c14b66aac71f1fcfd10428d72f7bbce4825958..22603e67cb3b0bf6814945164425a4d44da84581 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -1944,6 +1944,122 @@ async fn v2_sibling_reload_preserves_shared_instructions_after_root_unloads(shar
+@@ -1945,6 +1945,122 @@ async fn v2_sibling_reload_preserves_shared_instructions_after_root_unloads(shar
      );
  }
 
@@ -782,10 +783,10 @@ index a17080bc7639e08d234a957a636ad6b9550b6065..0e0068ddf7a0218011011425d5c819a6
      }
 
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 2872aef63e88ef95eca051e2b78600e9fffd909a..584e055ccd91d60758dfdd023526dbfbab1dac75 100644
+index 2934c3a0d2004dd154cb7f30bf757fff0efdf323..f44fb292d59f8ed0b4b603bebeca905c3eab19f7 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -853,7 +853,26 @@ impl CodexThread {
+@@ -852,7 +852,26 @@ impl CodexThread {
      }
 
      pub fn rollout_path(&self) -> Option<PathBuf> {
@@ -857,7 +858,7 @@ index 0000000000000000000000000000000000000000..11ea280fbb434b84f579eac05f3d15c0
 +        || matches!(thread_source, Some(ThreadSource::Feature(feature)) if feature == "system")
 +}
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index f1ae1bdb370e5fe728c3d6e52efc26bc2359767f..b91861f9a6f6b492be9ceafe644d4d362f423044 100644
+index 1fe42a4ae26d3f32579927747cd2d5e9bd8985be..098bd27bfba684518f7475a63a64f79b9a00355b 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
 @@ -327,6 +327,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
@@ -869,7 +870,7 @@ index f1ae1bdb370e5fe728c3d6e52efc26bc2359767f..b91861f9a6f6b492be9ceafe644d4d36
          startup_prewarm.abort().await;
      }
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf097b8a30 100644
+index 17601428272c4aa69dfc778ec69c36a20e00fda9..650751fbdd3327f3c52178711c46a56f98c295e4 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -247,6 +247,7 @@ mod mcp_prewarm;
@@ -880,7 +881,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
  mod plugin_selection;
  mod realtime_history;
  mod retained_context;
-@@ -1380,7 +1381,12 @@ impl Session {
+@@ -1392,7 +1393,12 @@ impl Session {
      }
 
      pub(crate) fn state_db(&self) -> Option<state_db::StateDbHandle> {
@@ -894,7 +895,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
      }
 
      pub(crate) fn live_thread_for_persistence(
-@@ -1392,7 +1398,12 @@ impl Session {
+@@ -1404,7 +1410,12 @@ impl Session {
      }
 
      pub(crate) fn live_thread(&self) -> Option<&LiveThread> {
@@ -908,7 +909,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
      }
 
      pub(crate) async fn set_thread_memory_mode(
-@@ -3543,8 +3554,9 @@ impl Session {
+@@ -3555,8 +3566,9 @@ impl Session {
              .iter()
              .map(|envelope| envelope.item.clone())
              .collect::<Vec<_>>();
@@ -919,7 +920,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
              state
                  .current_time_reminder
                  .note_recorded_items(&response_items);
-@@ -3584,7 +3596,8 @@ impl Session {
+@@ -3596,7 +3608,8 @@ impl Session {
              state
                  .history
                  .record_annotated_items(&mut items, model_info.truncation_policy.into());
@@ -929,7 +930,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
          for image in image_preparations {
              self.services
                  .analytics_events_client
-@@ -3595,13 +3608,14 @@ impl Session {
+@@ -3607,13 +3620,14 @@ impl Session {
          }
          let rollout_items: Vec<RolloutItem> =
              items.into_iter().map(RolloutItem::ResponseItem).collect();
@@ -945,7 +946,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
          if turn_context.config.memories.disable_on_external_context
              && let Some(item) = response_items
                  .iter()
-@@ -3943,21 +3957,24 @@ impl Session {
+@@ -3955,21 +3969,24 @@ impl Session {
          for mut recording in pending {
              let _ = recording.changed().await;
          }
@@ -973,7 +974,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
          drop(boundary);
          self.send_raw_response_items(turn_context, items).await;
      }
-@@ -4071,8 +4088,9 @@ impl Session {
+@@ -4082,8 +4099,9 @@ impl Session {
          // A new history window needs a full checkpoint, even when it contains only
          // extension metadata and model-visible context will be rebuilt on the next turn.
          let mut world_state_item = None;
@@ -984,7 +985,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
              let snapshot = world_state_baseline
                  .map(|world_state| world_state.snapshot())
                  .or_else(|| {
-@@ -4097,7 +4115,7 @@ impl Session {
+@@ -4128,7 +4146,7 @@ impl Session {
                  world_state_item = Some(WorldStateItem::full(snapshot.clone().into_object()));
                  state.history.set_world_state_baseline(snapshot);
              }
@@ -993,7 +994,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
                  message: metadata.message,
                  replacement_history: Some(replacement_history),
                  guardian_history: state.history.guardian_history_checkpoint(),
-@@ -4117,7 +4135,8 @@ impl Session {
+@@ -4148,7 +4166,8 @@ impl Session {
                      last_started_turn_id: state.last_started_turn_id.clone(),
                      previous_turn_settings: state.previous_turn_settings(),
                  }),
@@ -1003,7 +1004,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
          };
 
          let mut rollout_items = vec![RolloutItem::Compacted(compacted_item)];
-@@ -4132,13 +4151,14 @@ impl Session {
+@@ -4163,13 +4182,14 @@ impl Session {
          rollout_items.push(RolloutItem::EventMsg(
              thread_settings::applied_event(self).await,
          ));
@@ -1019,7 +1020,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
          {
              let mut state = self.state.lock().await;
              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
-@@ -4472,6 +4492,11 @@ impl Session {
+@@ -4503,6 +4523,11 @@ impl Session {
 
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
@@ -1031,7 +1032,7 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
          if let Some(live_thread) = self.live_thread()
              && let Err(e) = live_thread.append_items(items).await
          {
-@@ -4676,12 +4701,13 @@ impl Session {
+@@ -4709,12 +4734,13 @@ impl Session {
          }
          // Persist one `TurnContextItem` per real user turn so resume/lazy replay can recover the
          // latest durable baseline even when this turn emitted no model-visible context diffs.
@@ -1049,10 +1050,10 @@ index f9ca4ef212ac14412b7943a7859c63e80a66ccba..defad57922e379c5476fd01715b5cbcf
      }
 diff --git a/codex-rs/core/src/session/persistence_repair.rs b/codex-rs/core/src/session/persistence_repair.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f725a74656f51b34a04c0103a9d9776d0c4a3a46
+index 0000000000000000000000000000000000000000..88f1efcc36ce11a81321f9479dfe91b4167f4012
 --- /dev/null
 +++ b/codex-rs/core/src/session/persistence_repair.rs
-@@ -0,0 +1,419 @@
+@@ -0,0 +1,422 @@
 +use super::*;
 +use codex_protocol::items::FunctionCallOutputItem;
 +use codex_thread_store::LoadThreadHistoryParams;
@@ -1145,22 +1146,23 @@ index 0000000000000000000000000000000000000000..f725a74656f51b34a04c0103a9d9776d
 +        // the unsupported full-history read. Recovery reloads the context
 +        // after acquiring the writer, so this preliminary snapshot cannot
 +        // make the comparison stale.
-+        let resume_history = match stored.history_mode {
-+            ThreadHistoryMode::Paginated => Some(Arc::new(
-+                store
++        let (resume_history, history_revision) = match stored.history_mode {
++            ThreadHistoryMode::Paginated => {
++                let context = store
 +                    .load_latest_model_context(LoadThreadHistoryParams {
 +                        thread_id: self.thread_id,
 +                        include_archived: true,
 +                    })
-+                    .await?
-+                    .items,
-+            )),
-+            ThreadHistoryMode::Legacy => None,
++                    .await?;
++                (Some(Arc::new(context.items)), context.revision)
++            }
++            ThreadHistoryMode::Legacy => (None, None),
 +        };
 +        let params = ResumeThreadParams {
 +            thread_id: self.thread_id,
 +            rollout_path: stored.rollout_path,
 +            history: resume_history,
++            history_revision,
 +            include_archived: true,
 +            metadata: ThreadPersistenceMetadata {
 +                cwd: Some(state.session_configuration.cwd().to_path_buf()),
@@ -1173,12 +1175,14 @@ index 0000000000000000000000000000000000000000..f725a74656f51b34a04c0103a9d9776d
 +            },
 +        };
 +        let mut guard = LiveThreadInitGuard::default();
++        let resume_store = Arc::clone(store);
++        let history_mode = stored.history_mode;
 +        let live_thread = guard
-+            .acquire(LiveThread::resume(
-+                Arc::clone(store),
-+                stored.history_mode,
-+                params,
-+            ))
++            .acquire(async move {
++                let (live_thread, _history) =
++                    LiveThread::resume(resume_store, history_mode, params).await?;
++                Ok(live_thread)
++            })
 +            .await?;
 +
 +        let result: anyhow::Result<RepairedPersistence> = async {
@@ -1473,7 +1477,7 @@ index 0000000000000000000000000000000000000000..f725a74656f51b34a04c0103a9d9776d
 +    }))
 +}
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 7af152cc0e6b0befb74b51cb80734d666d66cbee..d5c2a886fbce132bd5d5695355c0a6acbbdf4d91 100644
+index 1f178e56187f5659bd3068549590d887d06fb919..8cdc84a7ba802e889ec1dfa54422d1816c7f4ab0 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -91,6 +91,9 @@ pub(crate) struct Session {
@@ -1486,7 +1490,7 @@ index 7af152cc0e6b0befb74b51cb80734d666d66cbee..d5c2a886fbce132bd5d5695355c0a6ac
      pub(crate) input_queue: InputQueue,
      pub(crate) services: SessionServices,
      pub(super) git_enrichment_policy: GitEnrichmentPolicy,
-@@ -1816,6 +1819,7 @@ impl Session {
+@@ -1840,6 +1843,7 @@ impl Session {
                  .then(|| Mutex::new(Default::default())),
                  active_turn: Mutex::new(None),
                  async_hook_results,
@@ -1495,10 +1499,10 @@ index 7af152cc0e6b0befb74b51cb80734d666d66cbee..d5c2a886fbce132bd5d5695355c0a6ac
                  services,
                  git_enrichment_policy,
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 8221619a21c518f1c78abf9151b6e317e91975a4..d6b53f9d3270242f22a7574f898a050cbc1584ff 100644
+index 62c16bec9ee3d1ede172b6c8ee459766a99ceed6..05a06d4291ffb0a77d2862031eed5dde9c6f5803 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -6915,6 +6915,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
+@@ -6973,6 +6973,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
          realtime_history: None,
          active_turn: Mutex::new(None),
          async_hook_results,
@@ -1506,7 +1510,7 @@ index 8221619a21c518f1c78abf9151b6e317e91975a4..d6b53f9d3270242f22a7574f898a050c
          input_queue: super::input_queue::InputQueue::new(),
          services,
          git_enrichment_policy: GitEnrichmentPolicy::Fresh,
-@@ -9191,6 +9192,7 @@ where
+@@ -9252,6 +9253,7 @@ where
          realtime_history: None,
          active_turn: Mutex::new(None),
          async_hook_results,
@@ -1515,10 +1519,10 @@ index 8221619a21c518f1c78abf9151b6e317e91975a4..d6b53f9d3270242f22a7574f898a050c
          services,
          git_enrichment_policy: GitEnrichmentPolicy::Fresh,
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 51c451328fa63fced0b7805c3dc61c9948ebe70c..94629979c6c892e1ec336602a8c3ef7142f8bd68 100644
+index 475f07063c35526ea8ddb555957d350b2ae2c64f..1561e4bbd91bb50af0d8b418572603ee4a7069a8 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -404,6 +404,9 @@ pub(crate) struct ResumeThreadWithHistoryOptions {
+@@ -409,6 +409,9 @@ pub(crate) struct ResumeThreadWithHistoryOptions {
  pub(crate) struct ThreadManagerState {
      // Eviction updates this registry and residency together, locking the registry first.
      pub(crate) threads: Arc<RwLock<HashMap<ThreadId, Arc<CodexThread>>>>,
@@ -1528,7 +1532,7 @@ index 51c451328fa63fced0b7805c3dc61c9948ebe70c..94629979c6c892e1ec336602a8c3ef71
      shared_thread_instructions: shared_instructions::SharedThreadInstructionsProviders,
      thread_created_tx: broadcast::Sender<ThreadId>,
      thread_id_generator: ThreadIdGenerator,
-@@ -567,6 +570,7 @@ impl ThreadManager {
+@@ -572,6 +575,7 @@ impl ThreadManager {
          Self {
              state: Arc::new(ThreadManagerState {
                  threads: Arc::new(RwLock::new(HashMap::new())),
@@ -1536,7 +1540,7 @@ index 51c451328fa63fced0b7805c3dc61c9948ebe70c..94629979c6c892e1ec336602a8c3ef71
                  shared_thread_instructions: Default::default(),
                  thread_created_tx,
                  thread_id_generator: default_thread_id_generator(),
-@@ -739,6 +743,7 @@ impl ThreadManager {
+@@ -744,6 +748,7 @@ impl ThreadManager {
          Self {
              state: Arc::new(ThreadManagerState {
                  threads: Arc::new(RwLock::new(HashMap::new())),
@@ -1544,7 +1548,7 @@ index 51c451328fa63fced0b7805c3dc61c9948ebe70c..94629979c6c892e1ec336602a8c3ef71
                  shared_thread_instructions: Default::default(),
                  thread_created_tx,
                  thread_id_generator: default_thread_id_generator(),
-@@ -912,7 +917,14 @@ impl ThreadManager {
+@@ -917,7 +922,14 @@ impl ThreadManager {
      }
 
      pub async fn get_thread(&self, thread_id: ThreadId) -> CodexResult<Arc<CodexThread>> {
@@ -1560,7 +1564,7 @@ index 51c451328fa63fced0b7805c3dc61c9948ebe70c..94629979c6c892e1ec336602a8c3ef71
      }
 
      /// Updates metadata for loaded and cold threads through one entrypoint.
-@@ -1606,6 +1618,14 @@ impl ThreadManager {
+@@ -1612,6 +1624,14 @@ impl ThreadManager {
  }
 
  impl ThreadManagerState {
@@ -1575,7 +1579,7 @@ index 51c451328fa63fced0b7805c3dc61c9948ebe70c..94629979c6c892e1ec336602a8c3ef71
      pub(crate) fn shared_thread_instructions_provider(
          &self,
          root_thread_id: ThreadId,
-@@ -2378,6 +2398,7 @@ impl ThreadManagerState {
+@@ -2420,6 +2440,7 @@ impl ThreadManagerState {
          initial_host_config: Option<AgentConfigUpdate>,
      ) -> CodexResult<NewThread> {
          let thread_id = session.thread_id();
@@ -1583,7 +1587,7 @@ index 51c451328fa63fced0b7805c3dc61c9948ebe70c..94629979c6c892e1ec336602a8c3ef71
          let event = io.next_event().await?;
          let session_configured = match event {
              Event {
-@@ -2392,6 +2413,11 @@ impl ThreadManagerState {
+@@ -2434,6 +2455,11 @@ impl ThreadManagerState {
          {
              let mut threads = self.threads.write().await;
              if let std::collections::hash_map::Entry::Vacant(e) = threads.entry(thread_id) {
@@ -1596,10 +1600,10 @@ index 51c451328fa63fced0b7805c3dc61c9948ebe70c..94629979c6c892e1ec336602a8c3ef71
                      session
                          .services
 diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
-index 05f2d9061da5bc92c217f5b33911e5660cdf3523..392c536f2bda005f7e99cd7eee9d0168d99f2cf4 100644
+index e492b9ab664bfa87605c4fbf62bc54edd1e6e2a1..595df7e4c0fc8a2b426b9266a527c3d91b8db912 100644
 --- a/codex-rs/thread-store/src/local/mod.rs
 +++ b/codex-rs/thread-store/src/local/mod.rs
-@@ -49,6 +49,7 @@ use codex_rollout::StateDbHandle;
+@@ -51,6 +51,7 @@ use codex_rollout::StateDbHandle;
  use codex_rollout::WriterLockCoordinator;
  use codex_state::SqliteConfig;
  use std::collections::HashMap;
@@ -1607,7 +1611,7 @@ index 05f2d9061da5bc92c217f5b33911e5660cdf3523..392c536f2bda005f7e99cd7eee9d0168
  use std::collections::hash_map::Entry;
  use std::path::PathBuf;
  use std::sync::Arc;
-@@ -286,6 +287,28 @@ impl LocalThreadStore {
+@@ -288,6 +289,30 @@ impl LocalThreadStore {
          self.state_db.clone()
      }
 
@@ -1617,7 +1621,9 @@ index 05f2d9061da5bc92c217f5b33911e5660cdf3523..392c536f2bda005f7e99cd7eee9d0168
 +        thread_id: ThreadId,
 +        turn_ids: &HashSet<String>,
 +    ) -> ThreadStoreResult<HashSet<String>> {
-+        let lineage = self.resolve_rollout_lineage(thread_id).await?;
++        let lineage = self
++            .resolve_rollout_lineage(thread_id, /*initial_path*/ None)
++            .await?;
 +        let pool = self.thread_history_db().await?;
 +        let mut existing = HashSet::new();
 +        for turn_id in turn_ids {

@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/BUILD.bazel b/codex-rs/core/BUILD.bazel
-index cb35952df0f8ffea93caab6fa0dc00bc6ec46fa3..b63e3c5f6aae7521561b6ab933edfc9d5dcf909a 100644
+index 662d643ba03952a0203730aeeef279d19bc36e10..f8375b30cc3f34c7869c75512953a6cead5bb85d 100644
 --- a/codex-rs/core/BUILD.bazel
 +++ b/codex-rs/core/BUILD.bazel
 @@ -2,7 +2,10 @@ load("//:defs.bzl", "codex_rust_crate")
@@ -15,7 +15,7 @@ index cb35952df0f8ffea93caab6fa0dc00bc6ec46fa3..b63e3c5f6aae7521561b6ab933edfc9d
      crate_srcs = glob(["src/**/*.rs"]) + [
          "//codex-rs/ext/guardian-v2:src/sync_reviewer/reviewer_config.rs",
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 8c4d08a0ab35c43205c3ab6c1c89e7d6dc696323..2872aef63e88ef95eca051e2b78600e9fffd909a 100644
+index ce9aaee9f3da5517de6e3a680e655f7425889418..2934c3a0d2004dd154cb7f30bf757fff0efdf323 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -369,7 +369,7 @@ impl CodexThread {

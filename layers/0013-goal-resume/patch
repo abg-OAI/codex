@@ -159,7 +159,7 @@ index 3627f608e70e9f237757bd1ebecaff540647df33..6adfc5d5a60edb1276f2c4c793cfb3a6
  async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
      let server = responses::start_mock_server().await;
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 2a4f17f34f0faa7a8293735d43ede5ad1bd41890..b4ed1d50ac499e111a7b8f2151f7b67490e238e9 100644
+index df67c4ebbe22ebd31184efc837bb56999971693f..14b37e5f01b1f6c57f8ddba9d0de93ff7975f297 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -154,6 +154,14 @@ pub use codex_prompts as review_prompts;
