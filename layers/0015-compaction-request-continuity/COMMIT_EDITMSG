@@ -1,0 +1,16 @@
+Preserve task requests through compaction
+
+Host-delivered assignments use standalone tool-output envelopes.
+Compaction previously discarded them while retaining older user text,
+so a completed or superseded request could remain the visible task.
+
+Retain admitted deliveries and instructions from the receiving agent's
+ancestors alongside ordinary user inputs in source order.
+Preserve their protocol identities and admission metadata across
+checkpoints and rollout replay, and exempt admitted input from generic
+tool-output trimming before remote compaction.
+Admission evidence identifies the input; it does not confer authority.
+
+All inputs share the existing chronological retention budgets.
+Newer user instructions take priority over older deliveries, boundary
+text can be shortened, and opaque boundary content can be omitted.
