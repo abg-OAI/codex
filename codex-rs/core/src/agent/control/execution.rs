@@ -56,6 +56,18 @@ impl LocalAgentControl {
         is_execution_limited(multi_agent_version, session_source)
             .then(|| Arc::clone(&self.runtime.agent_execution_limiter).guard())
     }
+
+    pub(crate) fn execution_guard_for_thread(
+        &self,
+        multi_agent_version: MultiAgentVersion,
+        session_source: &SessionSource,
+        thread_id: codex_protocol::ThreadId,
+    ) -> Option<AgentExecutionGuard> {
+        if self.runtime.registry.is_hidden_thread(thread_id) {
+            return None;
+        }
+        self.execution_guard(multi_agent_version, session_source)
+    }
 }
 
 impl AgentExecutionLimiter {

@@ -6,3 +6,4 @@
 //! only the integration points that upstream registration needs.
 
 pub(crate) mod await_exec;
+pub(crate) mod goal_supervisor;
