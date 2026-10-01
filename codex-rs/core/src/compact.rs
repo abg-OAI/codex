@@ -372,6 +372,18 @@ async fn run_compact_task_inner_impl(
         // belongs to this compaction turn.
         summary_item.set_turn_id_if_missing(&turn_context.sub_id);
     }
+    let account_evidence =
+        crate::saffron::request_account::model_items(history_snapshot.annotated_items())
+            .cloned()
+            .collect::<Vec<_>>();
+    new_history = crate::saffron::request_account::contextualize(
+        &sess,
+        &turn_context,
+        compaction_metadata,
+        new_history,
+        &account_evidence,
+    )
+    .await;
     let (window_number, window_ids) = sess.advance_auto_compact_window().await;
 
     let (initial_context, world_state_baseline) =
