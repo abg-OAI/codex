@@ -1,0 +1,1113 @@
+diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
+index 6de37b1e0ae40b3efb0788ceecfdd407cb082294..292482ec8289d7ecf7c136aa4626017053297f2d 100644
+--- a/codex-rs/core/src/compact.rs
++++ b/codex-rs/core/src/compact.rs
+@@ -15,6 +15,7 @@ use crate::hook_runtime::run_post_compact_hooks;
+ use crate::hook_runtime::run_pre_compact_hooks;
+ use crate::responses_metadata::CodexResponsesMetadata;
+ use crate::responses_metadata::CompactionTurnMetadata;
++use crate::saffron::compaction_requests::CompactedInput;
+ use crate::session::RequestEffortUsage;
+ use crate::session::session::Session;
+ use crate::session::step_context::StepContext;
+@@ -359,7 +360,11 @@ async fn run_compact_task_inner_impl(
+         get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default()
+     };
+     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
+-    let user_messages = collect_annotated_user_messages(history_items);
++    let agent_path = turn_context
++        .session_source
++        .get_agent_path()
++        .unwrap_or_else(codex_protocol::AgentPath::root);
++    let user_messages = collect_annotated_user_messages(history_items, &agent_path);
+
+     let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
+     if let Some(summary_item) = new_history.last_mut() {
+@@ -546,19 +551,39 @@ pub(crate) struct CompactedUserMessage<'a> {
+ }
+
+ #[cfg(test)]
+-pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<CompactedUserMessage<'_>> {
++/// Collects ordinary user input for compaction tests.
++pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<CompactedInput<'_>> {
+     items
+         .iter()
+-        .filter_map(|item| compacted_user_message(item, /*harness_metadata*/ None))
++        .filter_map(|item| {
++            compacted_user_message(item, /*harness_metadata*/ None).map(CompactedInput::User)
++        })
+         .collect()
+ }
+
+-pub(crate) fn collect_annotated_user_messages(
+-    items: &[ResponseItemEnvelope],
+-) -> Vec<CompactedUserMessage<'_>> {
++/// Collects ordinary user input and admitted requests in source history order.
++/// Parent instructions must address the supplied agent, including on rollout replay.
++pub(crate) fn collect_annotated_user_messages<'a>(
++    items: &'a [ResponseItemEnvelope],
++    agent_path: &codex_protocol::AgentPath,
++) -> Vec<CompactedInput<'a>> {
+     items
+         .iter()
+-        .filter_map(|envelope| compacted_user_message(&envelope.item, envelope.metadata.as_ref()))
++        .filter_map(|envelope| {
++            if crate::saffron::compaction_requests::is_request(
++                &envelope.item,
++                envelope.metadata.as_ref(),
++                agent_path,
++            ) {
++                Some(CompactedInput::Request {
++                    item: &envelope.item,
++                    metadata: envelope.metadata.as_ref(),
++                })
++            } else {
++                compacted_user_message(&envelope.item, envelope.metadata.as_ref())
++                    .map(CompactedInput::User)
++            }
++        })
+         .collect()
+ }
+
+@@ -652,9 +677,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
+     compacted_history
+ }
+
++/// Retains recent input under the local token budget and appends the summary last.
+ pub(crate) fn build_compacted_history(
+     initial_context: Vec<ResponseItemEnvelope>,
+-    user_messages: &[CompactedUserMessage<'_>],
++    user_messages: &[CompactedInput<'_>],
+     summary_text: &str,
+ ) -> Vec<ResponseItemEnvelope> {
+     build_compacted_history_with_limit(
+@@ -665,9 +691,10 @@ pub(crate) fn build_compacted_history(
+     )
+ }
+
++/// Shares one chronological budget across ordinary user input and admitted requests.
+ fn build_compacted_history_with_limit(
+     mut history: Vec<ResponseItemEnvelope>,
+-    user_messages: &[CompactedUserMessage<'_>],
++    user_messages: &[CompactedInput<'_>],
+     summary_text: &str,
+     max_tokens: usize,
+ ) -> Vec<ResponseItemEnvelope> {
+@@ -678,6 +705,26 @@ fn build_compacted_history_with_limit(
+             if remaining == 0 {
+                 break;
+             }
++            let message = match message {
++                CompactedInput::User(message) => message,
++                CompactedInput::Request { item, metadata } => {
++                    let tokens =
++                        usize::try_from(crate::context_manager::estimate_item_token_count(item))
++                            .unwrap_or(usize::MAX)
++                            .max(1);
++                    let envelope = ResponseItemEnvelope {
++                        item: (*item).clone(),
++                        metadata: metadata.cloned(),
++                    };
++                    if let Some(retained) =
++                        crate::saffron::compaction_requests::retain(envelope, remaining)
++                    {
++                        selected_messages.push(retained);
++                    }
++                    remaining = remaining.saturating_sub(tokens);
++                    continue;
++                }
++            };
+             let tokens = approx_token_count(&message.message);
+             let ResponseItem::Message {
+                 id,
+diff --git a/codex-rs/core/src/compact_remote_history.rs b/codex-rs/core/src/compact_remote_history.rs
+index aa7cd7607eeebef75a295a4409aa8f25dc2b2d6d..65171ba215942ac7983be7b430da75c41a251060 100644
+--- a/codex-rs/core/src/compact_remote_history.rs
++++ b/codex-rs/core/src/compact_remote_history.rs
+@@ -126,6 +126,10 @@ pub(crate) fn trim_function_call_history_to_fit_context_window(
+ fn rewritten_output_for_context_window(
+     envelope: &ResponseItemEnvelope,
+ ) -> Option<ResponseItemEnvelope> {
++    if crate::saffron::compaction_requests::is_delivery(&envelope.item, envelope.metadata.as_ref())
++    {
++        return None;
++    }
+     let item = match &envelope.item {
+         ResponseItem::FunctionCallOutput {
+             id,
+diff --git a/codex-rs/core/src/compact_remote_history_tests.rs b/codex-rs/core/src/compact_remote_history_tests.rs
+index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62b00de7ce 100644
+--- a/codex-rs/core/src/compact_remote_history_tests.rs
++++ b/codex-rs/core/src/compact_remote_history_tests.rs
+@@ -1,6 +1,20 @@
+ use super::*;
+ use codex_history::CodexHarnessMetadata;
+
++/// Tool-output pretrimming must not erase an admitted request before compaction.
++#[test]
++fn rewritten_output_excludes_admitted_delivery() {
++    let delivery = crate::saffron::compaction_requests::tests::admitted_delivery(
++        "Investigate the orchard export.",
++        2,
++    );
++    assert!(rewritten_output_for_context_window(&delivery).is_none());
++
++    let mut ordinary_output = delivery;
++    ordinary_output.metadata = None;
++    assert!(rewritten_output_for_context_window(&ordinary_output).is_some());
++}
++
+ #[test]
+ fn rewritten_output_preserves_harness_metadata() {
+     let envelope = ResponseItemEnvelope {
+diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
+index 56e4aace1b83a128e49418300c85e44b1ba31e64..a6291c2236e6b42200bd3698146ffcb9c43c6814 100644
+--- a/codex-rs/core/src/compact_remote_v2.rs
++++ b/codex-rs/core/src/compact_remote_v2.rs
+@@ -319,6 +319,10 @@ async fn run_remote_compact_task_inner_impl(
+         } else {
+             RetainedImageBudget::Disabled
+         },
++        &compaction_turn_context
++            .session_source
++            .get_agent_path()
++            .unwrap_or_else(codex_protocol::AgentPath::root),
+     );
+     analytics_details.retained_image_count = Some(retained_images);
+     let (new_window_number, new_window_ids) = sess.advance_auto_compact_window().await;
+@@ -503,12 +507,14 @@ async fn collect_compaction_output(
+     })
+ }
+
++/// Keeps eligible inputs in source order before the terminal remote checkpoint.
+ fn build_v2_compacted_history(
+     prompt_input: Vec<ResponseItem>,
+     prompt_input_metadata: Vec<Option<CodexHarnessMetadata>>,
+     compaction_output: ResponseItem,
+     retain_client_developer_messages: bool,
+     image_budget: RetainedImageBudget,
++    agent_path: &codex_protocol::AgentPath,
+ ) -> (Vec<ResponseItemEnvelope>, usize) {
+     debug_assert_eq!(prompt_input.len(), prompt_input_metadata.len());
+     let prompt_input = prompt_input
+@@ -518,12 +524,23 @@ fn build_v2_compacted_history(
+         .collect::<Vec<_>>();
+     let retained = v2_history_item_groups(prompt_input)
+         .filter(|group| {
+-            is_retained_for_remote_compaction_v2(&group.source, retain_client_developer_messages)
++            crate::saffron::compaction_requests::is_request(
++                &group.source.item,
++                group.source.metadata.as_ref(),
++                agent_path,
++            ) || is_retained_for_remote_compaction_v2(
++                &group.source,
++                retain_client_developer_messages,
++            )
+         })
+         .flat_map(HistoryItemGroup::into_items)
+         .collect::<Vec<_>>();
+-    let mut retained =
+-        truncate_retained_messages(retained, RETAINED_MESSAGE_TOKEN_BUDGET, image_budget);
++    let mut retained = truncate_retained_messages(
++        retained,
++        RETAINED_MESSAGE_TOKEN_BUDGET,
++        image_budget,
++        Some(agent_path),
++    );
+     let retained_image_count = retained
+         .iter()
+         .map(|envelope| retained_input_image_count(&envelope.item))
+@@ -616,13 +633,16 @@ pub(crate) fn truncate_retained_messages_for_remote_compaction(
+     items: Vec<ResponseItemEnvelope>,
+     max_tokens: usize,
+ ) -> Vec<ResponseItemEnvelope> {
+-    truncate_retained_messages(items, max_tokens, RetainedImageBudget::Disabled)
++    truncate_retained_messages(items, max_tokens, RetainedImageBudget::Disabled, None)
+ }
+
++/// Applies the remote window budget, optionally including this agent's requests.
++/// Generic callers without an agent path retain the upstream boundary behavior.
+ fn truncate_retained_messages(
+     items: Vec<ResponseItemEnvelope>,
+     max_tokens: usize,
+     image_budget: RetainedImageBudget,
++    agent_path: Option<&codex_protocol::AgentPath>,
+ ) -> Vec<ResponseItemEnvelope> {
+     let mut remaining = max_tokens;
+     let mut truncated_reversed = Vec::with_capacity(items.len());
+@@ -635,6 +655,13 @@ fn truncate_retained_messages(
+             continue;
+         }
+
++        let request = agent_path.is_some_and(|agent_path| {
++            crate::saffron::compaction_requests::is_request(
++                &group.source.item,
++                group.source.metadata.as_ref(),
++                agent_path,
++            )
++        });
+         let client_developer = is_client_authored_developer_message(&group.source);
+         let charge_images = image_budget == RetainedImageBudget::Enabled && !client_developer;
+         let notice_tokens = group
+@@ -673,12 +700,19 @@ fn truncate_retained_messages(
+                 // the remaining budget with older messages in that case.
+                 remaining = 0;
+             }
+-            let truncated_item = if charge_images && image_count > 0 {
++            let truncated_item = if request {
++                crate::saffron::compaction_requests::retain(group.source, content_budget)
++            } else if charge_images && image_count > 0 {
+                 images::truncate_message_to_token_budget(group.source, content_budget)
+             } else {
+                 truncate_message_text_to_token_budget(group.source, content_budget)
+             };
+             let Some(mut truncated_item) = truncated_item else {
++                // An opaque request cannot be shortened. Older inputs must not
++                // displace the instruction at the budget boundary.
++                if request {
++                    remaining = 0;
++                }
+                 continue;
+             };
+             if client_developer {
+@@ -707,7 +741,7 @@ fn truncate_retained_messages(
+             }
+             truncated_reversed.push(truncated_item);
+             remaining = 0;
+-        } else if charge_images && retained_input_image_count(&group.source.item) > 0 {
++        } else if request || (charge_images && retained_input_image_count(&group.source.item) > 0) {
+             remaining = 0;
+         }
+     }
+@@ -816,6 +850,7 @@ mod tests {
+             output,
+             /*retain_client_developer_messages*/ false,
+             RetainedImageBudget::Disabled,
++            &codex_protocol::AgentPath::root(),
+         )
+     }
+
+@@ -894,6 +929,57 @@ mod tests {
+         );
+     }
+
++    #[test]
++    /// A delivered replacement assignment remains after the older user request.
++    fn build_v2_compacted_history_preserves_delivered_assignment() {
++        let assignment = ResponseItemEnvelope {
++            item: ResponseItem::FunctionCallOutput {
++                id: Some(codex_protocol::ResponseItemId::with_suffix(
++                    "fco",
++                    "assignment",
++                )),
++                call_id: None,
++                name: Some("send_message_to_thread".to_owned()),
++                namespace: Some("codex_app".to_owned()),
++                output: codex_protocol::models::FunctionCallOutputPayload::from_text(
++                    "Stop cataloguing fixtures. Investigate the failing orchard export.".to_owned(),
++                ),
++                internal_chat_message_metadata_passthrough: None,
++            },
++            metadata: Some(CodexHarnessMetadata {
++                user_input_order: Some(2),
++                sender_user_messages: Some(Box::new(codex_history::SenderUserMessages {
++                    receiver_turn_id: "turn_assignment".to_owned(),
++                    receiver_message_id: "fco_assignment".to_owned(),
++                    text: "Host: Sender asked for the orchard export investigation.".to_owned(),
++                })),
++                ..Default::default()
++            }),
++        };
++        let older_request = message("user", "Catalogue the garden fixtures.", None);
++        let checkpoint = ResponseItem::Compaction {
++            id: None,
++            encrypted_content: "checkpoint".to_owned(),
++            internal_chat_message_metadata_passthrough: None,
++        };
++        let (history, _) = build_v2_compacted_history(
++            vec![
++                older_request.clone(),
++                assignment.item.clone(),
++                message("assistant", "Investigating the orchard export.", None),
++            ],
++            vec![None, assignment.metadata.clone(), None],
++            checkpoint.clone(),
++            false,
++            RetainedImageBudget::Disabled,
++            &codex_protocol::AgentPath::root(),
++        );
++        assert_eq!(
++            history,
++            vec![older_request.into(), assignment, checkpoint.into()]
++        );
++    }
++
+     #[test]
+     fn build_v2_compacted_history_preserves_retained_metadata_sidecar() {
+         let retained = message("user", "keep", /*phase*/ None);
+@@ -934,6 +1020,7 @@ mod tests {
+                 output.clone(),
+                 enabled,
+                 RetainedImageBudget::Disabled,
++                &codex_protocol::AgentPath::root(),
+             );
+             let mut expected = vec![
+                 ResponseItemEnvelope {
+@@ -959,6 +1046,126 @@ mod tests {
+         }
+     }
+
++    /// Request chains within the token budget survive repeated checkpoints.
++    #[test]
++    fn build_v2_compacted_history_preserves_order_without_duplication() {
++        let mut expected = vec![ResponseItemEnvelope::new(message(
++            "user",
++            "Original request.",
++            None,
++        ))];
++        for order in 2..=20 {
++            expected.push(
++                crate::saffron::compaction_requests::tests::admitted_delivery(
++                    &format!("For the orchard export, also inspect batch {order}."),
++                    order,
++                ),
++            );
++        }
++        let mut history = expected.clone();
++        for cycle in 0..3 {
++            let checkpoint = ResponseItem::Compaction {
++                id: None,
++                encrypted_content: format!("checkpoint_{cycle}"),
++                internal_chat_message_metadata_passthrough: None,
++            };
++            let (items, metadata) = history
++                .into_iter()
++                .map(|item| (item.item, item.metadata))
++                .unzip();
++            (history, _) = build_v2_compacted_history(
++                items,
++                metadata,
++                checkpoint.clone(),
++                false,
++                RetainedImageBudget::Disabled,
++                &codex_protocol::AgentPath::root(),
++            );
++            assert_eq!(&history[..history.len() - 1], &expected);
++            assert_eq!(history.last().unwrap().item, checkpoint);
++
++            let mut normalized = crate::context_manager::ContextManager::new();
++            normalized.replace_annotated(history.clone());
++            let prompt = normalized
++                .for_prompt_annotated(&[codex_protocol::openai_models::InputModality::Text]);
++            assert_eq!(prompt.len(), history.len());
++            assert_eq!(
++                prompt[1..],
++                history[1..],
++                "standalone outputs need no fabricated tool calls"
++            );
++        }
++    }
++
++    /// The remote budget gives a newer user steer priority over an older delivery.
++    #[test]
++    fn request_budget_prefers_newer_user_over_delivery() {
++        let user = ResponseItemEnvelope::new(message("user", "New task.", None));
++        let delivery =
++            crate::saffron::compaction_requests::tests::admitted_delivery("Old task.", 2);
++        let retained = truncate_retained_messages(
++            vec![delivery, user.clone()],
++            approx_token_count("New task."),
++            RetainedImageBudget::Disabled,
++            Some(&codex_protocol::AgentPath::root()),
++        );
++        assert_eq!(retained, vec![user]);
++    }
++
++    /// Peer reports keep the existing omission behavior at the token boundary.
++    #[test]
++    fn request_retention_preserves_peer_boundary_policy() {
++        let user = ResponseItemEnvelope::new(message("user", "New task.", None));
++        let peer = ResponseItemEnvelope::new(ResponseItem::AgentMessage {
++            id: None,
++            author: "/root/vegetables".to_owned(),
++            recipient: "/root/fruit".to_owned(),
++            content: vec![AgentMessageInputContent::InputText {
++                text: format!("Message Type: MESSAGE\n{}", "peer findings ".repeat(100)),
++            }],
++            internal_chat_message_metadata_passthrough: None,
++        });
++        let retained = truncate_retained_messages(
++            vec![user.clone(), peer],
++            20,
++            RetainedImageBudget::Disabled,
++            Some(&codex_protocol::AgentPath::try_from("/root/fruit").unwrap()),
++        );
++        assert_eq!(retained, vec![user]);
++    }
++
++    /// Parent assignments use the shared window rather than the smaller report cutoff.
++    #[test]
++    fn build_v2_compacted_history_preserves_large_parent_assignment() {
++        let assignment = ResponseItem::AgentMessage {
++            id: None,
++            author: "/root".to_owned(),
++            recipient: "/root/fruit".to_owned(),
++            content: vec![AgentMessageInputContent::InputText {
++                text: format!(
++                    "Message Type: NEW_TASK\n{}",
++                    "Inspect this batch. ".repeat(3000)
++                ),
++            }],
++            internal_chat_message_metadata_passthrough: None,
++        };
++        assert!(estimate_item_token_count(&assignment) > MAX_RETAINED_AGENT_MESSAGE_TOKENS);
++        let checkpoint = ResponseItem::Compaction {
++            id: None,
++            encrypted_content: "checkpoint".to_owned(),
++            internal_chat_message_metadata_passthrough: None,
++        };
++        let (history, _) = build_v2_compacted_history(
++            vec![assignment.clone()],
++            vec![None],
++            checkpoint.clone(),
++            false,
++            RetainedImageBudget::Disabled,
++            &codex_protocol::AgentPath::try_from("/root/fruit").unwrap(),
++        );
++        assert_eq!(raw(history), vec![assignment, checkpoint]);
++    }
++
+     #[test]
+     fn retained_history_truncation_preserves_metadata() {
+         let item = ResponseItemEnvelope {
+diff --git a/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs b/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs
+index ea37694606b2c07d3ebbdee70da7c3467fc0b529..b60647c99b418b07cacae08e7f7069b62d5a4f46 100644
+--- a/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs
++++ b/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs
+@@ -45,6 +45,7 @@ fn trim(items: Vec<ResponseItem>, max_tokens: usize) -> Vec<ResponseItem> {
+         items.into_iter().map(ResponseItemEnvelope::new).collect(),
+         max_tokens,
+         RetainedImageBudget::Enabled,
++        None,
+     )
+     .into_iter()
+     .map(ResponseItemEnvelope::into_item)
+@@ -144,6 +145,7 @@ fn image_treatment_preserves_text_only_boundary_behavior() {
+                 vec![source.clone()],
+                 max_tokens,
+                 RetainedImageBudget::Enabled,
++                None,
+             ),
+             truncate_retained_messages_for_remote_compaction(vec![source.clone()], max_tokens),
+         );
+@@ -169,7 +171,8 @@ fn image_treatment_preserves_client_developer_boundary_behavior() {
+             truncate_retained_messages(
+                 vec![source.clone()],
+                 max_tokens,
+-                RetainedImageBudget::Enabled
++                RetainedImageBudget::Enabled,
++                None,
+             ),
+             truncate_retained_messages_for_remote_compaction(vec![source.clone()], max_tokens),
+         );
+diff --git a/codex-rs/core/src/compact_tests.rs b/codex-rs/core/src/compact_tests.rs
+index 19d6ed2e5defa42cc8de43916581a00ebd96aecb..a447705d5bebc0a5f0f2d45da980734949c37cb5 100644
+--- a/codex-rs/core/src/compact_tests.rs
++++ b/codex-rs/core/src/compact_tests.rs
+@@ -204,6 +204,114 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
+     items.into_iter().map(ResponseItemEnvelope::new).collect()
+ }
+
++/// Local compaction keeps a parent assignment after the inherited user request.
++#[test]
++fn local_compaction_preserves_parent_assignment() {
++    let assignment = ResponseItem::AgentMessage {
++        id: Some(ResponseItemId::with_suffix("amsg", "assignment")),
++        author: "/root".to_owned(),
++        recipient: "/root/orchard".to_owned(),
++        content: vec![AgentMessageInputContent::InputText {
++            text: "Message Type: NEW_TASK\nInvestigate the orchard export.".to_owned(),
++        }],
++        internal_chat_message_metadata_passthrough: None,
++    };
++    let history = annotated(vec![
++        user_message("Catalogue the garden fixtures."),
++        assignment.clone(),
++    ]);
++    let inputs = collect_annotated_user_messages(
++        &history,
++        &codex_protocol::AgentPath::try_from("/root/orchard").unwrap(),
++    );
++    let compacted = build_compacted_history(Vec::new(), &inputs, "summary");
++    assert_eq!(compacted[0], history[0]);
++    assert_eq!(compacted[1].item, assignment);
++    assert_eq!(compacted.len(), 3);
++}
++
++/// Dependent steers keep their position through successive local compactions.
++#[test]
++fn local_compaction_preserves_delivery_chain_without_duplicate_summaries() {
++    use crate::saffron::compaction_requests::tests::admitted_delivery;
++
++    let first = ResponseItemEnvelope::new(user_message("Catalogue the garden fixtures."));
++    let assignment = admitted_delivery("Investigate the orchard export instead.", 2);
++    let steer = admitted_delivery("For that export, check the midnight batch first.", 3);
++    let user = ResponseItemEnvelope::new(user_message("Report findings; do not change files."));
++    let ordinary_output: ResponseItem = serde_json::from_value(json!({
++        "type": "function_call_output", "call_id": "inspection",
++        "output": "Ordinary tool output must not become an instruction."
++    }))
++    .unwrap();
++    let mut history = vec![
++        first.clone(),
++        assignment.clone(),
++        ordinary_output.into(),
++        steer.clone(),
++        user.clone(),
++    ];
++    let expected = vec![first, assignment, steer, user];
++    for _ in 0..3 {
++        history = build_compacted_history(
++            Vec::new(),
++            &collect_annotated_user_messages(&history, &codex_protocol::AgentPath::root()),
++            &format!("{SUMMARY_PREFIX}\nThe orchard investigation is active."),
++        );
++        assert_eq!(&history[..history.len() - 1], &expected);
++        assert!(matches!(&history.last().unwrap().item,
++            ResponseItem::Message { content, .. }
++            if content_items_to_text(content).is_some_and(|text| is_summary_message(&text))));
++    }
++}
++
++/// A newer user correction gets the shared budget before an older handoff.
++#[test]
++fn local_compaction_budget_prefers_newer_user_over_delivery() {
++    let history = vec![
++        crate::saffron::compaction_requests::tests::admitted_delivery("Old task.", 2),
++        ResponseItemEnvelope::new(user_message("New task.")),
++    ];
++    let compacted = build_compacted_history_with_limit(
++        Vec::new(),
++        &collect_annotated_user_messages(&history, &codex_protocol::AgentPath::root()),
++        "summary",
++        approx_token_count("New task."),
++    );
++    assert_eq!(compacted.len(), 2);
++    assert_eq!(compacted[0], history[1]);
++}
++
++/// Copied instructions to a sibling and child reports are not this agent's task.
++#[test]
++fn local_compaction_omits_other_agents_requests_and_reports() {
++    let history = annotated(vec![
++        ResponseItem::AgentMessage {
++            id: None,
++            author: "/root".to_owned(),
++            recipient: "/root/vegetables".to_owned(),
++            content: vec![AgentMessageInputContent::InputText {
++                text: "Message Type: NEW_TASK\nInspect the vegetable export.".to_owned(),
++            }],
++            internal_chat_message_metadata_passthrough: None,
++        },
++        ResponseItem::AgentMessage {
++            id: None,
++            author: "/root/fruit/child".to_owned(),
++            recipient: "/root/fruit".to_owned(),
++            content: vec![AgentMessageInputContent::InputText {
++                text: "Message Type: FINAL_ANSWER\nInspection complete.".to_owned(),
++            }],
++            internal_chat_message_metadata_passthrough: None,
++        },
++    ]);
++    let inputs = collect_annotated_user_messages(
++        &history,
++        &codex_protocol::AgentPath::try_from("/root/fruit").unwrap(),
++    );
++    assert!(inputs.is_empty());
++}
++
+ fn raw(items: Vec<ResponseItemEnvelope>) -> Vec<ResponseItem> {
+     items
+         .into_iter()
+@@ -223,12 +331,12 @@ fn user_message(text: &str) -> ResponseItem {
+     }
+ }
+
+-fn compacted_user_message<'a>(text: &str, original: &'a ResponseItem) -> CompactedUserMessage<'a> {
+-    CompactedUserMessage {
++fn compacted_user_message<'a>(text: &str, original: &'a ResponseItem) -> CompactedInput<'a> {
++    CompactedInput::User(CompactedUserMessage {
+         message: text.to_string(),
+         original,
+         harness_metadata: None,
+-    }
++    })
+ }
+
+ #[test]
+@@ -329,7 +437,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+         ResponseItemEnvelope::new(ResponseItem::Other),
+     ];
+
+-    let collected = collect_annotated_user_messages(&items);
++    let collected = collect_annotated_user_messages(&items, &codex_protocol::AgentPath::root());
+
+     if !preserve_content {
+         item = user_message(expected_text);
+@@ -340,11 +448,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+     };
+     assert_eq!(
+         collected,
+-        vec![CompactedUserMessage {
++        vec![CompactedInput::User(CompactedUserMessage {
+             message: expected_text.to_owned(),
+             original: &items[0].item,
+             harness_metadata: items[0].metadata.as_ref(),
+-        }]
++        })]
+     );
+     assert_eq!(
+         build_compacted_history(Vec::new(), &collected, "summary"),
+@@ -438,7 +546,10 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages() {
+     original.metadata = Some(CodexHarnessMetadata::default());
+     let history = super::build_compacted_history_with_limit(
+         Vec::new(),
+-        &collect_annotated_user_messages(std::slice::from_ref(&original)),
++        &collect_annotated_user_messages(
++            std::slice::from_ref(&original),
++            &codex_protocol::AgentPath::root(),
++        ),
+         "SUMMARY",
+         max_tokens,
+     );
+@@ -520,7 +631,10 @@ fn build_compacted_history_preserves_user_message_passthrough_metadata() {
+     };
+     let history = build_compacted_history(
+         Vec::new(),
+-        &collect_annotated_user_messages(std::slice::from_ref(&original)),
++        &collect_annotated_user_messages(
++            std::slice::from_ref(&original),
++            &codex_protocol::AgentPath::root(),
++        ),
+         "summary text",
+     );
+
+diff --git a/codex-rs/core/src/saffron/compaction_requests.rs b/codex-rs/core/src/saffron/compaction_requests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..93d73e39f69196c35d2ee8d2fe7e94a462284c5f
+--- /dev/null
++++ b/codex-rs/core/src/saffron/compaction_requests.rs
+@@ -0,0 +1,311 @@
++//! Keeps admitted task inputs eligible for local and remote compaction.
++//!
++//! Delivery metadata identifies input accepted by the host, not permission to
++//! carry out its contents. Parent instructions also belong to the receiving
++//! agent, so copied assignments to another recipient are not selected here.
++//! Callers retain source order and use their existing user-message token budget:
++//! older inputs can fall outside that window, and boundary text can be shortened.
++//! Complete envelopes preserve their identities and metadata for rollout replay;
++//! opaque or media content is retained whole only when it fits.
++
++use codex_history::CodexHarnessMetadata;
++use codex_history::ResponseItemEnvelope;
++use codex_protocol::AgentPath;
++use codex_protocol::models::AgentMessageInputContent;
++use codex_protocol::models::FunctionCallOutputBody;
++use codex_protocol::models::FunctionCallOutputContentItem;
++use codex_protocol::models::ResponseItem;
++use codex_protocol::protocol::TruncationPolicy;
++use codex_utils_output_truncation::approx_token_count;
++use codex_utils_output_truncation::truncate_text;
++
++use crate::context_manager::estimate_item_token_count;
++
++/// Input candidates sharing the local compaction budget in history order.
++#[derive(Clone, Debug, PartialEq)]
++pub(crate) enum CompactedInput<'a> {
++    /// Ordinary user text follows the established text and media fallback policy.
++    User(crate::compact::CompactedUserMessage<'a>),
++    /// An admitted delivery or a parent instruction keeps its protocol envelope.
++    Request {
++        /// Original model-visible request.
++        item: &'a ResponseItem,
++        /// Persisted host evidence associated with the request.
++        metadata: Option<&'a CodexHarnessMetadata>,
++    },
++}
++
++/// Selects delivered requests and instructions from this agent's ancestors.
++pub(crate) fn is_request(
++    item: &ResponseItem,
++    metadata: Option<&CodexHarnessMetadata>,
++    agent_path: &AgentPath,
++) -> bool {
++    if is_delivery(item, metadata) {
++        return true;
++    }
++    let ResponseItem::AgentMessage {
++        author,
++        recipient,
++        content,
++        ..
++    } = item
++    else {
++        return false;
++    };
++    recipient == agent_path.as_str()
++        && recipient
++            .strip_prefix(author)
++            .is_some_and(|suffix| suffix.starts_with('/'))
++        && matches!(content.first(), Some(AgentMessageInputContent::InputText { text })
++            if text.starts_with("Message Type: NEW_TASK\n")
++                || text.starts_with("Message Type: MESSAGE\n"))
++}
++
++/// Recognizes standalone messaging input by its persisted host admission record.
++///
++/// Paired tool results, quoted delivery text, and inherited sender snapshots do
++/// not establish this identity. No lookup of the current turn is needed on resume.
++pub(crate) fn is_delivery(item: &ResponseItem, metadata: Option<&CodexHarnessMetadata>) -> bool {
++    let ResponseItem::FunctionCallOutput {
++        id: Some(id),
++        call_id: None,
++        name: Some(name),
++        namespace: Some(namespace),
++        ..
++    } = item
++    else {
++        return false;
++    };
++    name == "send_message_to_thread"
++        && matches!(namespace.as_str(), "codex_app" | "codex_tui")
++        && metadata
++            .and_then(|metadata| metadata.sender_user_messages.as_deref())
++            .is_some_and(|sender| sender.receiver_message_id == id.as_str())
++}
++
++/// Retains a selected request under the caller's remaining token allowance.
++///
++/// Text uses the existing middle-truncation marker. Structured text retains its
++/// content boundaries; media and encrypted content cannot be shortened safely.
++/// An omitted boundary request must still consume the caller's remaining budget
++/// so older instructions do not displace it.
++pub(crate) fn retain(
++    mut envelope: ResponseItemEnvelope,
++    max_tokens: usize,
++) -> Option<ResponseItemEnvelope> {
++    if max_tokens == 0 {
++        return None;
++    }
++    if usize::try_from(estimate_item_token_count(&envelope.item)).unwrap_or(usize::MAX)
++        <= max_tokens
++    {
++        return Some(envelope);
++    }
++
++    match &mut envelope.item {
++        ResponseItem::FunctionCallOutput {
++            name,
++            namespace,
++            output,
++            ..
++        } => {
++            let overhead = approx_token_count(name.as_deref().unwrap_or_default())
++                + approx_token_count(namespace.as_deref().unwrap_or_default());
++            let mut remaining = max_tokens.checked_sub(overhead)?;
++            if remaining == 0 {
++                return None;
++            }
++            match &mut output.body {
++                FunctionCallOutputBody::Text(text) => shorten_text(text, &mut remaining),
++                FunctionCallOutputBody::ContentItems(content) => {
++                    if !content
++                        .iter()
++                        .all(|part| matches!(part, FunctionCallOutputContentItem::InputText { .. }))
++                    {
++                        return None;
++                    }
++                    for part in content.iter_mut() {
++                        if let FunctionCallOutputContentItem::InputText { text } = part {
++                            shorten_text(text, &mut remaining);
++                        }
++                    }
++                    content.retain(|part| {
++                        matches!(part,
++                        FunctionCallOutputContentItem::InputText { text } if !text.is_empty())
++                    });
++                }
++            }
++        }
++        ResponseItem::AgentMessage {
++            author,
++            recipient,
++            content,
++            ..
++        } => {
++            if !content
++                .iter()
++                .all(|part| matches!(part, AgentMessageInputContent::InputText { .. }))
++            {
++                return None;
++            }
++            let overhead = approx_token_count(author) + approx_token_count(recipient);
++            let mut remaining = max_tokens.checked_sub(overhead)?;
++            if remaining == 0 {
++                return None;
++            }
++            for part in content.iter_mut() {
++                if let AgentMessageInputContent::InputText { text } = part {
++                    shorten_text(text, &mut remaining);
++                }
++            }
++            content.retain(|part| {
++                matches!(part,
++                AgentMessageInputContent::InputText { text } if !text.is_empty())
++            });
++        }
++        _ => return None,
++    }
++    if let Some(metadata) = &mut envelope.metadata {
++        metadata.mark_retained_sources_incomplete();
++    }
++    Some(envelope)
++}
++
++/// Spends the remaining text allowance without flattening content parts.
++fn shorten_text(text: &mut String, remaining: &mut usize) {
++    if *remaining == 0 {
++        text.clear();
++        return;
++    }
++    let tokens = approx_token_count(text);
++    if tokens > *remaining {
++        *text = truncate_text(text, TruncationPolicy::Tokens(*remaining));
++    }
++    *remaining = remaining.saturating_sub(tokens);
++}
++
++#[cfg(test)]
++pub(crate) mod tests {
++    //! Synthetic delivery fixtures and request eligibility regressions.
++
++    use super::*;
++    use codex_history::SenderUserMessages;
++    use codex_protocol::ResponseItemId;
++    use codex_protocol::models::FunctionCallOutputPayload;
++    use codex_protocol::models::InternalChatMessageMetadataPassthrough;
++    use pretty_assertions::assert_eq;
++    use test_case::test_case;
++
++    /// Models a standalone request and the host evidence recorded on admission.
++    pub(crate) fn admitted_delivery(text: &str, order: u64) -> ResponseItemEnvelope {
++        let id = ResponseItemId::with_suffix("fco", format!("delivery_{order}"));
++        let turn_id = format!("delivery_turn_{order}");
++        ResponseItemEnvelope {
++            metadata: Some(CodexHarnessMetadata {
++                user_input_order: Some(order),
++                sender_user_messages: Some(Box::new(SenderUserMessages {
++                    receiver_turn_id: turn_id.clone(),
++                    receiver_message_id: id.to_string(),
++                    text: "Host: Sender context is unavailable.".to_owned(),
++                })),
++                ..Default::default()
++            }),
++            item: ResponseItem::FunctionCallOutput {
++                id: Some(id),
++                call_id: None,
++                name: Some("send_message_to_thread".to_owned()),
++                namespace: Some("codex_app".to_owned()),
++                output: FunctionCallOutputPayload::from_text(text.to_owned()),
++                internal_chat_message_metadata_passthrough: Some(
++                    InternalChatMessageMetadataPassthrough {
++                        turn_id: Some(turn_id),
++                        ..Default::default()
++                    },
++                ),
++            },
++        }
++    }
++
++    /// Admission evidence must name this delivery, even after a turn changes.
++    #[test]
++    fn delivery_identity_excludes_ordinary_tool_output_and_quoted_requests() {
++        let mut delivery = admitted_delivery("Investigate the orchard export.", 2);
++        assert!(is_delivery(&delivery.item, delivery.metadata.as_ref()));
++        assert!(!is_delivery(&delivery.item, None));
++
++        let metadata = delivery.metadata.as_mut().unwrap();
++        metadata
++            .sender_user_messages
++            .as_mut()
++            .unwrap()
++            .receiver_message_id = "fco_another_delivery".to_owned();
++        assert!(!is_delivery(&delivery.item, delivery.metadata.as_ref()));
++
++        let mut paired_output = admitted_delivery("Investigate the orchard export.", 2);
++        if let ResponseItem::FunctionCallOutput { call_id, .. } = &mut paired_output.item {
++            *call_id = Some("tool_call".to_owned());
++        }
++        assert!(!is_delivery(
++            &paired_output.item,
++            paired_output.metadata.as_ref()
++        ));
++    }
++
++    /// Parent instructions are addressed to this agent; reports are not requests.
++    #[test_case("/root", "/root/fruit", "NEW_TASK", true; "opening assignment")]
++    #[test_case("/root", "/root/fruit", "MESSAGE", true; "parent steer")]
++    #[test_case("/root", "/root/vegetables", "NEW_TASK", false; "sibling assignment")]
++    #[test_case("/root/fruit/child", "/root/fruit", "MESSAGE", false; "child report")]
++    #[test_case("/root/vegetables", "/root/fruit", "MESSAGE", false; "peer report")]
++    #[test_case("/root", "/root/fruit", "FINAL_ANSWER", false; "completion report")]
++    fn parent_request_scope(author: &str, recipient: &str, kind: &str, expected: bool) {
++        let item = ResponseItem::AgentMessage {
++            id: None,
++            author: author.to_owned(),
++            recipient: recipient.to_owned(),
++            content: vec![AgentMessageInputContent::InputText {
++                text: format!("Message Type: {kind}\nPayload:\nInspect the orchard."),
++            }],
++            internal_chat_message_metadata_passthrough: None,
++        };
++        let agent_path = AgentPath::try_from("/root/fruit").unwrap();
++        assert_eq!(is_request(&item, None, &agent_path), expected);
++    }
++
++    /// Boundary text keeps its delivery identity and a visible truncation marker.
++    #[test]
++    fn boundary_delivery_keeps_identity_after_shortening() {
++        let original = admitted_delivery(&"inspect the orchard ".repeat(200), 2);
++        let retained = retain(original.clone(), 100).unwrap();
++        assert_ne!(retained.item, original.item);
++        assert_eq!(retained.item.id(), original.item.id());
++        assert_eq!(retained.metadata, original.metadata);
++        assert!(is_delivery(&retained.item, retained.metadata.as_ref()));
++        let ResponseItem::FunctionCallOutput { output, .. } = retained.item else {
++            panic!("delivery remains a standalone output");
++        };
++        assert!(output.body.to_text().unwrap().contains("truncated"));
++    }
++
++    /// Encrypted assignments survive whole, or consume the boundary without corruption.
++    #[test]
++    fn encrypted_assignment_is_never_partially_rewritten() {
++        let assignment = ResponseItemEnvelope::new(ResponseItem::AgentMessage {
++            id: None,
++            author: "/root".to_owned(),
++            recipient: "/root/fruit".to_owned(),
++            content: vec![
++                AgentMessageInputContent::InputText {
++                    text: "Message Type: NEW_TASK\nPayload:\n".to_owned(),
++                },
++                AgentMessageInputContent::EncryptedContent {
++                    encrypted_content: "opaque".repeat(1000),
++                },
++            ],
++            internal_chat_message_metadata_passthrough: None,
++        });
++        assert_eq!(retain(assignment.clone(), 10_000), Some(assignment.clone()));
++        assert_eq!(retain(assignment, 100), None);
++    }
++}
+diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
+index ce13be03f1986a62708aa751fef7e5d35d633a67..0e5b94605cafe76a6c7fe66b8627aa905dd16dd4 100644
+--- a/codex-rs/core/src/saffron/mod.rs
++++ b/codex-rs/core/src/saffron/mod.rs
+@@ -6,6 +6,7 @@
+ //! only the integration points that upstream registration needs.
+
+ pub(crate) mod await_exec;
++pub(crate) mod compaction_requests;
+ mod goal_edit;
+ pub(crate) mod goal_resume;
+ pub(crate) mod goal_scheduler;
+diff --git a/codex-rs/core/src/session/rollout_reconstruction.rs b/codex-rs/core/src/session/rollout_reconstruction.rs
+index ab20e5b30ef4a363d12d12ee9d5c1375b985a825..fe017f0d7be8b3ee85cc9cb072bfc411650ddd12 100644
+--- a/codex-rs/core/src/session/rollout_reconstruction.rs
++++ b/codex-rs/core/src/session/rollout_reconstruction.rs
+@@ -445,8 +445,13 @@ impl Session {
+                         // prompt shape.
+                         // TODO(ccunningham): if we drop support for None replacement_history compaction items,
+                         // we can get rid of this second loop entirely and just build `history` directly in the first loop.
+-                        let user_messages =
+-                            compact::collect_annotated_user_messages(history.annotated_items());
++                        let user_messages = compact::collect_annotated_user_messages(
++                            history.annotated_items(),
++                            &turn_context
++                                .session_source
++                                .get_agent_path()
++                                .unwrap_or_else(codex_protocol::AgentPath::root),
++                        );
+                         let rebuilt = compact::build_compacted_history(
+                             Vec::new(),
+                             &user_messages,
+diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
+index 05a7d37f91702f24d7e7409cd42cd2f8b201f377..a3870873f90576e17d1ce3dfa1e0726c58b6603a 100644
+--- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
++++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
+@@ -1421,6 +1421,65 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
+     assert_eq!(reconstructed.window_id, Some(initial_window_id));
+ }
+
++/// Persisted replacement history keeps delivery bodies and identity on cold replay.
++#[tokio::test]
++async fn compaction_delivery_survives_rollout_replay_and_next_compaction() {
++    let (session, turn_context) = make_session_and_context().await;
++    let assignment = crate::saffron::compaction_requests::tests::admitted_delivery(
++        "Investigate the orchard export instead.",
++        2,
++    );
++    let steer = crate::saffron::compaction_requests::tests::admitted_delivery(
++        "Inspect its midnight batch first.",
++        3,
++    );
++    let history = vec![
++        ResponseItemEnvelope::new(user_message("Catalogue garden fixtures.")),
++        assignment.clone(),
++        steer.clone(),
++    ];
++    let compacted = crate::compact::build_compacted_history(
++        Vec::new(),
++        &crate::compact::collect_annotated_user_messages(&history, &AgentPath::root()),
++        &format!(
++            "{}\nThe orchard investigation is active.",
++            crate::compact::SUMMARY_PREFIX
++        ),
++    );
++    let checkpoint = RolloutItem::Compacted(CompactedItem {
++        message: String::new(),
++        replacement_history: Some(compacted),
++        guardian_history: None,
++        retained_context: None,
++        mcp_resource_origins: None,
++        window_number: Some(1),
++        first_window_id: None,
++        previous_window_id: None,
++        window_id: None,
++        compaction_response_id: None,
++        latest_token_usage_record: None,
++        resume_metadata: None,
++    });
++    let encoded = serde_json::to_vec(&checkpoint).unwrap();
++    let restored: RolloutItem = serde_json::from_slice(&encoded).unwrap();
++    let replayed = session
++        .reconstruct_history_from_rollout(&turn_context, &[restored])
++        .await;
++    assert_eq!(replayed.history[1], assignment);
++    assert_eq!(replayed.history[2], steer);
++    let next = crate::compact::build_compacted_history(
++        Vec::new(),
++        &crate::compact::collect_annotated_user_messages(&replayed.history, &AgentPath::root()),
++        &format!(
++            "{}\nStill investigating the orchard.",
++            crate::compact::SUMMARY_PREFIX
++        ),
++    );
++    assert_eq!(next.len(), 4);
++    assert_eq!(next[1], assignment);
++    assert_eq!(next[2], steer);
++}
++
+ #[tokio::test]
+ async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
+     let (session, turn_context) = make_session_and_context().await;
