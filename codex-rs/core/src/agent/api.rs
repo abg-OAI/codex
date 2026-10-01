@@ -230,6 +230,8 @@ pub struct AgentTurnOutcome {
     pub status: AgentStatus,
     /// Typed reason used to choose guidance in the parent notification.
     pub error_info: Option<CodexErrorInfo>,
+    /// Controls whether a successful terminal result starts an idle parent turn.
+    pub completion_delivery_mode: MessageDeliveryMode,
 }
 
 /// Settings shared by the tree. A service tier of `None` restores the default tier.
