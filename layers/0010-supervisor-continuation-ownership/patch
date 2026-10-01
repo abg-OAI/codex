@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 74e640cd347e9335cb07b34442f0d8e4cc8fc374..6fb554f8a7d91b6da787454f64b367fd49959aed 100644
+index b7038d8c4178286fdb35baf0e39928e7bec7205e..edcfeedba3a435cca6d1cc8ad5aacdd28e8577a5 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -353,7 +353,9 @@ impl CodexThread {
@@ -1050,7 +1050,7 @@ index a837292c27b734a7fed4e901b3385b4383c31005..ebf1a93cf71e2d11271b6361bac361d9
  fn failure_retry_is_exponential_and_capped() {
      assert_eq!(failure_retry_delay(1), Duration::from_secs(60));
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index 5114a80b24a2a47912976fc51de7b9093f3910e5..bca0dbdd78b8e139fed1848de8b3be3084dd7605 100644
+index a30c1954271a6556a7478c7a489a73294b050ff6..07d1d6c644358aefc777afef805dfdec3986f04e 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
 @@ -87,6 +87,13 @@ pub async fn inter_agent_communication(
@@ -1068,7 +1068,7 @@ index 5114a80b24a2a47912976fc51de7b9093f3910e5..bca0dbdd78b8e139fed1848de8b3be30
          sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
              .await;
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 65156842be35b49073532a4c7f013e4c096b73a8..e179a55658b60787c049249e57800dc9a231aaf0 100644
+index d0b70e511df323df4731aafd384785d2dbaaa4ab..8eee2e54ad49706718c3fe29cadcf7196c03a0d1 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -275,6 +275,11 @@ impl Session {
