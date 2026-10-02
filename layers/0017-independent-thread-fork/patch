@@ -25,10 +25,10 @@ index 14b37e5f01b1f6c57f8ddba9d0de93ff7975f297..a79a5b6af5ddfe43741389553e8b550c
      builder: &mut codex_extension_api::ExtensionRegistryBuilder<config::Config>,
 diff --git a/codex-rs/core/src/saffron/fork_thread.rs b/codex-rs/core/src/saffron/fork_thread.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..55c894c263f246630a78565776cf1cd08d39018a
+index 0000000000000000000000000000000000000000..b62b0447f2cfff3b7188ab9e9e14f0dc5cccdebb
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/fork_thread.rs
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,346 @@
 +//! Independent persistent forks initiated by the model in a root thread.
 +//!
 +//! The process ThreadManager owns execution after creation; the caller owns only
@@ -137,6 +137,8 @@ index 0000000000000000000000000000000000000000..55c894c263f246630a78565776cf1cd0
 +    /// Inherit Desktop placement when advertised capabilities permit it.
 +    #[serde(default = "inherit_section_by_default")]
 +    inherit_section: bool,
++    /// Named Desktop destination, created if absent; overrides inheritance.
++    section: Option<String>,
 +}
 +
 +/// Omission requests the caller's section, without requiring Desktop.
@@ -184,6 +186,10 @@ index 0000000000000000000000000000000000000000..55c894c263f246630a78565776cf1cd0
 +        let args: Args = parse_arguments(arguments)?;
 +        if args.prompt.trim().is_empty() {
 +            return Err(invalid("prompt must not be empty"));
++        }
++        let section_name = args.section.as_deref().map(str::trim);
++        if section_name == Some("") {
++            return Err(invalid("section must not be empty"));
 +        }
 +        let title = args
 +            .title
@@ -308,7 +314,13 @@ index 0000000000000000000000000000000000000000..55c894c263f246630a78565776cf1cd0
 +            Ok(turn_id) => Execution::Started { turn_id },
 +            Err(error) => Execution::CreatedNotStarted { error },
 +        };
-+        let section = section::inherit(&invocation, fork.thread_id, args.inherit_section).await;
++        let section = section::place(
++            &invocation,
++            fork.thread_id,
++            args.inherit_section,
++            section_name,
++        )
++        .await;
 +        let outcome = Outcome {
 +            thread_id: fork.thread_id,
 +            execution,
@@ -331,13 +343,14 @@ index 0000000000000000000000000000000000000000..55c894c263f246630a78565776cf1cd0
 +            description: "Saffron extensions for independent thread and task coordination.".to_string(),
 +            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
 +                name: "fork_thread".to_string(),
-+                description: "Start an independent persistent root thread with this thread's completed history, excluding the current turn. Supply its assignment in prompt. The fork inherits model, working directory and permissions, but no goal. It runs independently without a completion notification to this thread. Desktop section inheritance is best effort and defaults to true. If status is created_not_started, recover using the returned thread_id instead of forking again.".to_string(),
++                description: "Start an independent persistent root thread with this thread's completed history, excluding the current turn. Supply its assignment in prompt. The fork inherits model, working directory and permissions, but no goal. It runs independently without a completion notification to this thread. Desktop placement is best effort: section overrides inherit_section and creates the named section if absent; otherwise inheritance defaults to true. Placement failure never undoes the fork. If status is created_not_started, recover using the returned thread_id instead of forking again.".to_string(),
 +                strict: false,
 +                defer_loading: None,
 +                parameters: JsonSchema::object(BTreeMap::from([
 +                    ("prompt".to_string(), JsonSchema::string(Some("The new thread's assignment.".to_string()))),
 +                    ("title".to_string(), JsonSchema::string(Some("Optional persistent thread title.".to_string()))),
 +                    ("inherit_section".to_string(), JsonSchema::boolean(Some("Inherit the caller's Desktop sidebar section when available; defaults to true.".to_string()))),
++                    ("section".to_string(), JsonSchema::string(Some("Desktop section name, matched case-sensitively after trimming surrounding whitespace. Overrides inherit_section, reuses a unique matching section or creates one when absent. Duplicate names leave placement unconfirmed.".to_string()))),
 +                ]), Some(vec!["prompt".to_string()]), Some(false.into())),
 +                output_schema: None,
 +            })],
@@ -364,10 +377,10 @@ index 0000000000000000000000000000000000000000..55c894c263f246630a78565776cf1cd0
 +mod tests;
 diff --git a/codex-rs/core/src/saffron/fork_thread/section.rs b/codex-rs/core/src/saffron/fork_thread/section.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8bed743d395
+index 0000000000000000000000000000000000000000..e3d989f551c7acf3bc0dc53388e0f4507d8a823c
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/fork_thread/section.rs
-@@ -0,0 +1,528 @@
+@@ -0,0 +1,857 @@
 +//! Optional Desktop sidebar placement through tools advertised by the client.
 +//!
 +//! Desktop owns section membership and host routing. Native thread-store sections
@@ -403,6 +416,13 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +        /// Section identifier returned by Desktop.
 +        section_id: String,
 +    },
++    /// Desktop confirmed the move to the explicitly named destination.
++    Placed {
++        /// Destination identifier returned by Desktop.
++        section_id: String,
++        /// Whether this invocation created the destination before moving.
++        created: bool,
++    },
 +    /// Placement was not requested or required capabilities were absent.
 +    Skipped {
 +        /// Why no move was attempted.
@@ -415,9 +435,18 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +    },
 +}
 +
-+/// Starts only after fork submission and never changes its execution outcome.
-+pub(super) async fn inherit(invocation: &ToolInvocation, fork: ThreadId, enabled: bool) -> Outcome {
-+    if !enabled {
++/// Places a saved fork without changing its execution outcome.
++///
++/// An explicit name overrides inheritance, including opt-out. Creation and move
++/// are separate effects: an unsuccessful move can leave a newly created section.
++/// Requests are never retried because a missing receipt can hide a completed effect.
++pub(super) async fn place(
++    invocation: &ToolInvocation,
++    fork: ThreadId,
++    inherit: bool,
++    name: Option<&str>,
++) -> Outcome {
++    if name.is_none() && !inherit {
 +        return Outcome::Skipped {
 +            reason: "inherit_section is false".to_string(),
 +        };
@@ -451,14 +480,21 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +            reason: "Desktop did not return the caller's host information".to_string(),
 +        };
 +    };
-+    let section = match listing.source_section(&source_id) {
-+        Ok(Some(section)) => section,
-+        Ok(None) => {
-+            return Outcome::Skipped {
-+                reason: "caller has no Desktop sidebar section".to_string(),
-+            };
++    let (section_id, created) = if let Some(name) = name {
++        match named_destination(invocation, &listing, name).await {
++            Ok(destination) => destination,
++            Err(reason) => return Outcome::Failed { reason },
 +        }
-+        Err(reason) => return Outcome::Failed { reason },
++    } else {
++        match listing.source_section(&source_id) {
++            Ok(Some(section)) => (section.section_id.clone(), false),
++            Ok(None) => {
++                return Outcome::Skipped {
++                    reason: "caller has no Desktop sidebar section".to_string(),
++                };
++            }
++            Err(reason) => return Outcome::Failed { reason },
++        }
 +    };
 +    let fork_id = fork.to_string();
 +    let receipt: MoveReceipt = match request(
@@ -467,26 +503,67 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +        json!({
 +            "threadId": fork_id,
 +            "hostId": host_id,
-+            "sectionId": section.section_id,
++            "sectionId": section_id,
 +        }),
 +        "move",
 +    )
 +    .await
 +    {
 +        Ok(receipt) => receipt,
-+        Err(reason) => return Outcome::Failed { reason },
++        Err(reason) => {
++            return Outcome::Failed {
++                reason: format!("{reason}; destination section {section_id} (created: {created})"),
++            };
++        }
 +    };
 +    if receipt.thread_id != fork_id
-+        || receipt.section_id != section.section_id
++        || receipt.section_id != section_id
 +        || receipt.host_id != *host_id
 +    {
 +        return Outcome::Failed {
-+            reason: "Desktop did not confirm the requested fork placement".to_string(),
++            reason: format!(
++                "Desktop did not confirm the requested fork placement; destination section {section_id} (created: {created})"
++            ),
 +        };
 +    }
-+    Outcome::Inherited {
-+        section_id: receipt.section_id,
++    if name.is_some() {
++        Outcome::Placed {
++            section_id: receipt.section_id,
++            created,
++        }
++    } else {
++        Outcome::Inherited {
++            section_id: receipt.section_id,
++        }
 +    }
++}
++
++/// Resolves a unique displayed name, creating only when the listing has no match.
++async fn named_destination(
++    invocation: &ToolInvocation,
++    listing: &Listing,
++    name: &str,
++) -> Result<(String, bool), String> {
++    let mut matches = listing
++        .sections
++        .iter()
++        .filter(|section| section.name == name);
++    let found = matches.next();
++    if matches.next().is_some() {
++        return Err(format!(
++            "Desktop returned multiple sections named {name:?}; no destination selected"
++        ));
++    }
++    if let Some(section) = found {
++        return Ok((section.section_id.clone(), false));
++    }
++    let create = advertised_tool(&invocation.turn.dynamic_tools, "create_sidebar_section")
++        .ok_or_else(|| "Desktop section creation capability is not available".to_string())?;
++    let section: Section = request(invocation, create, json!({"name": name}), "create").await?;
++    if section.name != name || section.section_id.is_empty() {
++        return Err("Desktop did not confirm the requested section creation; inspect sections before retrying".to_string());
++    }
++    Ok((section.section_id, true))
 +}
 +
 +/// Resolves only the supported app tool names in the advertised dynamic catalog.
@@ -607,6 +684,8 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +struct Section {
 +    /// Stable section identifier accepted by the move tool.
 +    section_id: String,
++    /// Displayed section name used for explicit destination selection.
++    name: String,
 +    /// Desktop's opaque sidebar identities, including the saved thread suffix.
 +    item_keys: Vec<String>,
 +}
@@ -646,7 +725,7 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +        let listing: Listing = serde_json::from_value(json!({
 +            "threads": [{"id": "chatgpt", "kind": "chatgpt"}],
 +            "pinnedThreads": [{"id": "parent", "kind": "codex", "hostId": "remote-ssh-discovered:abg-c"}],
-+            "sections": [{"sectionId": "section", "itemKeys": ["codex:thread:local:parent"]}]
++            "sections": [{"sectionId": "section", "name": "Source", "itemKeys": ["codex:thread:local:parent"]}]
 +        })).unwrap();
 +        assert_eq!(
 +            listing
@@ -734,7 +813,7 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +                        json!({
 +                            "threads": [{"id": "chatgpt", "kind": "chatgpt"}],
 +                            "pinnedThreads": [{"id": session.thread_id(), "kind": "codex", "hostId": "remote-ssh-discovered:abg-c"}],
-+                            "sections": [{"sectionId": "source-section", "itemKeys": [format!("codex:thread:local:{}", session.thread_id())]}],
++                            "sections": [{"sectionId": "source-section", "name": "Source", "itemKeys": [format!("codex:thread:local:{}", session.thread_id())]}],
 +                        }),
 +                        true,
 +                    )
@@ -761,7 +840,7 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +            }
 +        };
 +        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(5), async {
-+            tokio::join!(inherit(&invocation, fork, true), client)
++            tokio::join!(place(&invocation, fork, true, None), client)
 +        })
 +        .await
 +        .unwrap();
@@ -769,6 +848,269 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +            serde_json::to_value(outcome).unwrap()["status"],
 +            expected_status
 +        );
++    }
++
++    /// An explicit name wins over both inherited membership and opting out.
++    #[test_case::test_case(true; "inherit_enabled")]
++    #[test_case::test_case(false; "inherit_disabled")]
++    #[tokio::test]
++    async fn explicit_existing_section_overrides_inheritance(inherit: bool) {
++        let (invocation, events) =
++            desktop_session(&["list_threads", "move_thread_to_sidebar_section"]).await;
++        let fork = ThreadId::new();
++        let client = async {
++            reply_to_desktop(&invocation, &events, "list_threads", json!({"limit": 50}), json!({
++                "threads": [{"id": invocation.session.thread_id(), "kind": "codex", "hostId": "remote"}],
++                "sections": [
++                    {"sectionId": "source", "name": "Source", "itemKeys": [format!("codex:thread:local:{}", invocation.session.thread_id())]},
++                    {"sectionId": "destination", "name": "Research", "itemKeys": []},
++                ],
++            }), true).await;
++            let placement =
++                json!({"threadId": fork, "hostId": "remote", "sectionId": "destination"});
++            reply_to_desktop(
++                &invocation,
++                &events,
++                "move_thread_to_sidebar_section",
++                placement.clone(),
++                placement,
++                true,
++            )
++            .await;
++        };
++        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(5), async {
++            tokio::join!(place(&invocation, fork, inherit, Some("Research")), client)
++        })
++        .await
++        .unwrap();
++        assert_eq!(
++            outcome,
++            Outcome::Placed {
++                section_id: "destination".to_string(),
++                created: false
++            }
++        );
++    }
++
++    /// A missing name creates a destination even when the caller has no section.
++    #[test_case::test_case(true; "move_confirmed")]
++    #[test_case::test_case(false; "move_rejected_after_creation")]
++    #[tokio::test]
++    async fn explicit_missing_section_is_created_before_placement(move_succeeds: bool) {
++        let (invocation, events) = desktop_session(&[
++            "list_threads",
++            "create_sidebar_section",
++            "move_thread_to_sidebar_section",
++        ])
++        .await;
++        let fork = ThreadId::new();
++        let client = async {
++            reply_to_desktop(&invocation, &events, "list_threads", json!({"limit": 50}), json!({
++                "threads": [{"id": invocation.session.thread_id(), "kind": "codex", "hostId": "remote"}],
++                "sections": [],
++            }), true).await;
++            reply_to_desktop(
++                &invocation,
++                &events,
++                "create_sidebar_section",
++                json!({"name": "Research"}),
++                json!({
++                    "sectionId": "created-section", "name": "Research", "itemKeys": [],
++                }),
++                true,
++            )
++            .await;
++            let placement =
++                json!({"threadId": fork, "hostId": "remote", "sectionId": "created-section"});
++            reply_to_desktop(
++                &invocation,
++                &events,
++                "move_thread_to_sidebar_section",
++                placement.clone(),
++                placement,
++                move_succeeds,
++            )
++            .await;
++        };
++        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(5), async {
++            tokio::join!(place(&invocation, fork, false, Some("Research")), client)
++        })
++        .await
++        .unwrap();
++        if move_succeeds {
++            assert_eq!(
++                outcome,
++                Outcome::Placed {
++                    section_id: "created-section".to_string(),
++                    created: true
++                }
++            );
++        } else {
++            let Outcome::Failed { reason } = outcome else {
++                panic!("unconfirmed placement must not report success")
++            };
++            assert!(reason.contains("created-section"));
++            assert!(reason.contains("created: true"));
++        }
++    }
++
++    /// A rejected or mismatched creation receipt cannot authorize a move.
++    #[test_case::test_case(false, "Research"; "creation_rejected")]
++    #[test_case::test_case(true, "Different"; "creation_mismatch")]
++    #[tokio::test]
++    async fn unconfirmed_creation_does_not_move(success: bool, returned_name: &str) {
++        let (invocation, events) = desktop_session(&[
++            "list_threads",
++            "create_sidebar_section",
++            "move_thread_to_sidebar_section",
++        ])
++        .await;
++        let fork = ThreadId::new();
++        let client = async {
++            reply_to_desktop(&invocation, &events, "list_threads", json!({"limit": 50}), json!({
++                "threads": [{"id": invocation.session.thread_id(), "kind": "codex", "hostId": "remote"}],
++                "sections": [],
++            }), true).await;
++            reply_to_desktop(
++                &invocation,
++                &events,
++                "create_sidebar_section",
++                json!({"name": "Research"}),
++                json!({"sectionId": "created", "name": returned_name, "itemKeys": []}),
++                success,
++            )
++            .await;
++        };
++        let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
++            tokio::join!(place(&invocation, fork, false, Some("Research")), client)
++        })
++        .await
++        .unwrap();
++        assert!(matches!(result, Outcome::Failed { .. }));
++    }
++
++    /// Ambiguous names must not select or create another section.
++    #[tokio::test]
++    async fn duplicate_names_are_reported_without_mutation() {
++        let (invocation, events) = desktop_session(&["create_sidebar_section"]).await;
++        let listing: Listing = serde_json::from_value(json!({"threads": [], "sections": [
++            {"sectionId": "one", "name": "Research", "itemKeys": []},
++            {"sectionId": "two", "name": "Research", "itemKeys": []},
++        ]}))
++        .unwrap();
++        let error = named_destination(&invocation, &listing, "Research")
++            .await
++            .unwrap_err();
++        assert!(error.contains("multiple sections"));
++        while let Ok(event) = events.try_recv() {
++            assert!(
++                !matches!(event.msg, EventMsg::ItemStarted(event) if matches!(event.item, TurnItem::DynamicToolCall(_)))
++            );
++        }
++    }
++
++    /// Missing creation support does not turn an explicit destination into inheritance.
++    #[tokio::test]
++    async fn missing_creation_capability_reports_failure() {
++        let (invocation, events) =
++            desktop_session(&["list_threads", "move_thread_to_sidebar_section"]).await;
++        let fork = ThreadId::new();
++        let client = reply_to_desktop(
++            &invocation,
++            &events,
++            "list_threads",
++            json!({"limit": 50}),
++            json!({
++                "threads": [{"id": invocation.session.thread_id(), "kind": "codex", "hostId": "remote"}],
++                "sections": [{"sectionId": "source", "name": "Source", "itemKeys": [format!("codex:thread:local:{}", invocation.session.thread_id())]}],
++            }),
++            true,
++        );
++        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(5), async {
++            tokio::join!(place(&invocation, fork, true, Some("Research")), client)
++        })
++        .await
++        .unwrap();
++        assert_eq!(
++            outcome,
++            Outcome::Failed {
++                reason: "Desktop section creation capability is not available".to_string()
++            }
++        );
++    }
++
++    /// Opens an active source turn with the supplied Desktop capabilities.
++    async fn desktop_session(
++        names: &[&str],
++    ) -> (
++        ToolInvocation,
++        async_channel::Receiver<codex_protocol::protocol::Event>,
++    ) {
++        let tools = names
++            .iter()
++            .map(|name| {
++                DynamicToolSpec::Function(DynamicToolFunctionSpec {
++                    name: format!("codex_app__{name}"),
++                    description: name.to_string(),
++                    input_schema: json!({"type": "object"}),
++                    defer_loading: false,
++                })
++            })
++            .collect();
++        let (session, turn, events) =
++            make_session_and_context_with_dynamic_tools_and_rx(tools).await;
++        *session.active_turn.lock().await = Some(ActiveTurn::default());
++        (
++            ToolInvocation {
++                session,
++                step_context: StepContext::for_test(Arc::clone(&turn)),
++                turn,
++                cancellation_token: CancellationToken::new(),
++                tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
++                call_id: "explicit-section-test".to_string(),
++                tool_name: ToolName::namespaced("saffron", "fork_thread"),
++                source: ToolCallSource::Direct,
++                payload: ToolPayload::Function {
++                    arguments: "{}".to_string(),
++                },
++            },
++            events,
++        )
++    }
++
++    /// Checks the next Desktop request and answers through the client transport.
++    async fn reply_to_desktop(
++        invocation: &ToolInvocation,
++        events: &async_channel::Receiver<codex_protocol::protocol::Event>,
++        tool: &str,
++        arguments: Value,
++        response: Value,
++        success: bool,
++    ) {
++        loop {
++            let event = events.recv().await.unwrap();
++            let EventMsg::ItemStarted(event) = event.msg else {
++                continue;
++            };
++            let TurnItem::DynamicToolCall(call) = event.item else {
++                continue;
++            };
++            assert_eq!(call.tool, format!("codex_app__{tool}"));
++            assert_eq!(call.arguments, arguments);
++            invocation
++                .session
++                .notify_dynamic_tool_response(
++                    &call.id,
++                    DynamicToolResponse {
++                        content_items: vec![DynamicToolCallOutputContentItem::InputText {
++                            text: response.to_string(),
++                        }],
++                        success,
++                    },
++                )
++                .await;
++            return;
++        }
 +    }
 +
 +    /// A stalled Desktop request ends at its deadline and records a terminal item.
@@ -842,7 +1184,7 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +            },
 +        };
 +        assert_eq!(
-+            inherit(&invocation, ThreadId::new(), false).await,
++            place(&invocation, ThreadId::new(), false, None).await,
 +            Outcome::Skipped {
 +                reason: "inherit_section is false".to_string(),
 +            }
@@ -898,10 +1240,10 @@ index 0000000000000000000000000000000000000000..a0ee85cedc7edaff581567caa832b8be
 +}
 diff --git a/codex-rs/core/src/saffron/fork_thread/tests.rs b/codex-rs/core/src/saffron/fork_thread/tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ff051cd589c42377bd2d65bfe5537f0c5c9801aa
+index 0000000000000000000000000000000000000000..9b539a7625efcc9e71e5beddc73c0f9eac0d0d71
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/fork_thread/tests.rs
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,404 @@
 +//! Deterministic tests of the tool's persisted history and independent lifecycle.
 +
 +use super::*;
@@ -948,13 +1290,48 @@ index 0000000000000000000000000000000000000000..ff051cd589c42377bd2d65bfe5537f0c
 +    let args: Args = serde_json::from_value(json!({"prompt": "inspect"})).unwrap();
 +    assert!(args.inherit_section);
 +    assert!(args.title.is_none());
++    assert!(args.section.is_none());
 +    let args: Args =
 +        serde_json::from_value(json!({"prompt": "inspect", "inherit_section": false})).unwrap();
 +    assert!(!args.inherit_section);
++    let args: Args = serde_json::from_value(
++        json!({"prompt": "inspect", "inherit_section": false, "section": "Research"}),
++    )
++    .unwrap();
++    assert_eq!(args.section.as_deref(), Some("Research"));
 +    assert!(serde_json::from_value::<Args>(json!({"title": "missing assignment"})).is_err());
 +    assert!(
 +        serde_json::from_value::<Args>(json!({"prompt": "inspect", "thread_id": "other"})).is_err()
 +    );
++}
++
++/// Blank destinations are rejected before the fork host can create a thread.
++#[tokio::test]
++async fn blank_section_is_rejected_before_creation() {
++    let (session, turn) = make_session_and_context().await;
++    let turn = Arc::new(turn);
++    let invocation = ToolInvocation {
++        session: Arc::new(session),
++        step_context: StepContext::for_test(Arc::clone(&turn)),
++        turn,
++        cancellation_token: CancellationToken::new(),
++        tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
++        call_id: "blank-section".to_string(),
++        tool_name: ToolName::namespaced("saffron", "fork_thread"),
++        source: ToolCallSource::Direct,
++        payload: ToolPayload::Function {
++            arguments: json!({"prompt": "inspect", "section": " \t\n"}).to_string(),
++        },
++    };
++    let handler = Handler {
++        host: Arc::new(ForkHost {
++            manager: Weak::new(),
++        }),
++    };
++    let Err(error) = handler.handle_call(invocation).await else {
++        panic!("blank section must be rejected");
++    };
++    assert!(error.to_string().contains("section must not be empty"));
 +}
 +
 +/// Both persistence formats must exclude the unfinished turn and keep root identity.
@@ -1042,11 +1419,12 @@ index 0000000000000000000000000000000000000000..ff051cd589c42377bd2d65bfe5537f0c
 +            )
 +            .await?;
 +        let mut created = manager.subscribe_thread_created();
-+        let invocation = tool_invocation(
-+            &source,
-+            turn,
-+            json!({"prompt": "new-assignment-marker", "title": "Independent test"}),
-+        );
++        let mut arguments = json!({"prompt": "new-assignment-marker", "title": "Independent test"});
++        if placement_fails {
++            arguments["section"] = json!("Research");
++            arguments["inherit_section"] = json!(false);
++        }
++        let invocation = tool_invocation(&source, turn, arguments);
 +        let expected_model = invocation.step_context.settings.model_info.slug.clone();
 +        let expected_policy = invocation.step_context.settings.approval_policy();
 +        let expected_cwd = invocation.turn.config.cwd.clone();
