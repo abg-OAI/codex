@@ -1,0 +1,12 @@
+Add independent root forks through saffron.fork_thread
+
+Root threads can start a persistent independent assignment from completed
+history without copying their active turn or goal.
+Keep execution under the host thread manager so the fork can continue
+after its caller stops, and preserve inherited settings and permissions.
+
+Desktop owns sidebar membership, including remote-host routing.
+Use its advertised list and move capabilities after assignment submission,
+and report placement separately from execution.
+Return the saved thread ID when submission fails so callers can recover
+without creating a duplicate fork.

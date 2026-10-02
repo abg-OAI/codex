@@ -25,6 +25,38 @@ process.
 }
 ```
 
+`saffron.fork_thread`
+---------------------
+
+Starts a persistent independent root from the calling root's completed history.
+The current unfinished turn is excluded; `prompt` supplies the new assignment.
+The fork inherits model settings, working directory, and permissions,
+but does not inherit or automatically create a goal.
+Execution belongs to the host and does not wait for Desktop placement.
+The tool returns submission and placement outcomes without waiting for the fork
+to finish, and does not send a subagent completion notification.
+
+```cpp
+{
+  // Assignment to start after the inherited history.
+  "prompt": string,
+  // Optional persistent name for the new thread.
+  "title": string?,
+  // Inherit the caller's Desktop sidebar section when available. Defaults true.
+  "inherit_section": bool?,
+}
+```
+
+The response includes `thread_id`, `status`, and a separate `section` outcome.
+`status: "started"` includes the accepted `turn_id`.
+`status: "created_not_started"` includes an error and the saved thread's ID,
+which callers should use for recovery instead of creating another fork.
+Section status is `inherited`, `skipped`, or `failed`;
+the latter two include a reason.
+Placement uses the caller's advertised Desktop list and move tools.
+Absent capabilities skip placement; a timeout reports an unconfirmed outcome.
+Neither case cancels the fork or its assignment.
+
 `saffron.edit_active_goal`
 --------------------------
 
