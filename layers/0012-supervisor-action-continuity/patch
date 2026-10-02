@@ -15,10 +15,10 @@ index 662d643ba03952a0203730aeeef279d19bc36e10..f8375b30cc3f34c7869c75512953a6ce
      crate_srcs = glob(["src/**/*.rs"]) + [
          "//codex-rs/ext/guardian-v2:src/sync_reviewer/reviewer_config.rs",
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index ce9aaee9f3da5517de6e3a680e655f7425889418..2934c3a0d2004dd154cb7f30bf757fff0efdf323 100644
+index 20aeb8939acf8240183bbef666bcfdcf6173355d..1af8cf548461cd4f69edfcc47ce375f4ca1bdb3c 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -369,7 +369,7 @@ impl CodexThread {
+@@ -399,7 +399,7 @@ impl CodexThread {
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
      }
 

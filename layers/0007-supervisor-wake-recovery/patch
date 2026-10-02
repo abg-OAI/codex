@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 8c883373be0475add94475ab5193026c19cdec49..3a442e4a6a42bbeab3e5e6d5547196cad817abb3 100644
+index bf811f06cc8f12cd831acd5bd7beebcd6ca5244d..35c05d72dd99c8b62181bbb0b30d1d154b70db27 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -75,6 +75,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
@@ -756,10 +756,10 @@ index dd1527cb8a4d3859624e0e2eb548afee9406733f..a71e13266cb5b01a64786548aeb62206
 +        .collect()
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 7510278c81af7c64462f6330d3fc43ce5258671c..b7038d8c4178286fdb35baf0e39928e7bec7205e 100644
+index 9a34e0b3ab6e8742b06d290ebd50d2a13afe20d9..6fae7af50fe9593465d9d313b41ff5a0acc45cfe 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -360,6 +360,21 @@ impl CodexThread {
+@@ -390,6 +390,21 @@ impl CodexThread {
      pub async fn stop_saffron_goal_supervisor(&self) {
          crate::saffron::goal_supervisor::stop(&self.session).await;
      }
@@ -782,10 +782,10 @@ index 7510278c81af7c64462f6330d3fc43ce5258671c..b7038d8c4178286fdb35baf0e39928e7
      pub async fn ensure_rollout_materialized(&self) {
          self.session
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 3e5b1376c98f52b45a243658dc5e416c33cd8182..df67c4ebbe22ebd31184efc837bb56999971693f 100644
+index b4c54a45548a0b20966ab93adc637aeb00364937..29d130b5db1b47f2395907ad6307cd90b8cd66d5 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -154,6 +154,9 @@ pub use codex_prompts as review_prompts;
+@@ -156,6 +156,9 @@ pub use codex_prompts as review_prompts;
  mod thread_manager;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;

@@ -1,8 +1,8 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index ae76b2d1a74059dfe4d13e49ec775e0a3128bca2..42f79950cea52b5209b07591e13243afbb16fac1 100644
+index 04841ac6a21ec2cad173920c70647e463e58e5a4..54f2e3314e93d88112a9c4d6f967aba535418607 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -3011,6 +3011,7 @@ dependencies = [
+@@ -3038,6 +3038,7 @@ dependencies = [
   "sha1 0.10.6",
   "shlex",
   "similar",
@@ -11,7 +11,7 @@ index ae76b2d1a74059dfe4d13e49ec775e0a3128bca2..42f79950cea52b5209b07591e13243af
   "test-case",
   "test-log",
 diff --git a/codex-rs/core/Cargo.toml b/codex-rs/core/Cargo.toml
-index 661bfdd43a992c47923cbcee8a172cba5dfbb606..2c880ea9bbb551664fe3cc6346d82253e3352a27 100644
+index cfd72368816f4356c17823d57f8640e49572a34c..cd4171935ad195a95d668da97c22a8ec7fdfb088 100644
 --- a/codex-rs/core/Cargo.toml
 +++ b/codex-rs/core/Cargo.toml
 @@ -110,6 +110,8 @@ serde_json = { workspace = true }

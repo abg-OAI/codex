@@ -11,10 +11,10 @@ index defd306f86f0e55c469e3a01eccaa5cd2ef49867..15effd88bfee2f17124ce1f671b7c228
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 14b37e5f01b1f6c57f8ddba9d0de93ff7975f297..a79a5b6af5ddfe43741389553e8b550c500876ef 100644
+index b7ca243467560ecd8a767f3b8a4a626ea085a208..f44b073f53b0f3a942612afb464324ac08455338 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -134,6 +134,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -136,6 +136,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
@@ -1667,10 +1667,10 @@ index 988be7d758dfde506aff555db95ea2491b9957d6..755414c1c70bfa4d65202f54d08b072b
 +    fork_thread::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 1561e4bbd91bb50af0d8b418572603ee4a7069a8..38ca6600da54600238cb46148a6cab022c52de1c 100644
+index 34b2977a689e007b27fd63309a6c0df4f57f1211..da69475d637a936c6eeefd5e872a72ca9e51cef4 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -921,6 +921,11 @@ impl ThreadManager {
+@@ -924,6 +924,11 @@ impl ThreadManager {
          self.state.thread_created_tx.subscribe()
      }
 
@@ -1705,7 +1705,7 @@ index f2b7860d06385301ebefa9bdd70eb0a43a8639ad..70eeee2d6623d299c586272a80dbc48e
      };
      if prev_entry.is_some() {
 diff --git a/codex-rs/core/src/tools/handlers/mod.rs b/codex-rs/core/src/tools/handlers/mod.rs
-index 2d0b6177e10efec4f4352acf9875b4d9e91382b2..a63de88c9a9b6478c9a6916ec383521a88a0c0cc 100644
+index bd58aeda593820ecb1222e0f97802e5a9d2a7870..415855e3de532527aba361cc98793d0dfe25de00 100644
 --- a/codex-rs/core/src/tools/handlers/mod.rs
 +++ b/codex-rs/core/src/tools/handlers/mod.rs
 @@ -1,7 +1,7 @@
