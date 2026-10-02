@@ -8,6 +8,7 @@ use crate::agent::api::AgentControl;
 use crate::agent::registry::AgentRegistry;
 use crate::config::RolloutBudgetConfig;
 use crate::rollout_budget::RolloutBudget;
+use crate::saffron::subagent_completion::AncestorTurnRetention;
 use crate::thread_manager::ThreadIdGenerator;
 use crate::thread_manager::ThreadManagerState;
 use arc_swap::ArcSwapOption;
@@ -100,6 +101,7 @@ pub(crate) struct LocalAgentRuntime {
     /// Captured at construction so delegates retain their manager's allocation policy.
     pub(super) thread_id_generator: ThreadIdGenerator,
     pub(super) agent_execution_limiter: Arc<AgentExecutionLimiter>,
+    pub(super) ancestor_turn_retention: Arc<AncestorTurnRetention>,
     /// Session-scoped state shared by the root thread and every cloned sub-agent control handle.
     pub(super) rollout_budget: Arc<RolloutBudget>,
     /// The user-selected root routing tier, shared by the entire agent tree.
@@ -128,6 +130,7 @@ impl LocalAgentRuntime {
             shutdown: CancellationToken::new(),
             shutdown_state: Arc::default(),
             agent_execution_limiter: Arc::default(),
+            ancestor_turn_retention: Arc::default(),
             rollout_budget: Arc::default(),
             root_service_tier: Arc::new(ArcSwapOption::from(None)),
             shared_thread_instructions_provider: Arc::default(),
