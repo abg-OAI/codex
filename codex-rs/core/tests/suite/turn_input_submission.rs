@@ -345,6 +345,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()> 
                 /*trigger_turn*/ true,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await?;
     wait_for_event(&test.codex, |event| {
