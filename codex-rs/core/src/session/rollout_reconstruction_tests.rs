@@ -1422,6 +1422,65 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
     assert_eq!(reconstructed.window_id, Some(initial_window_id));
 }
 
+/// Persisted replacement history keeps delivery bodies and identity on cold replay.
+#[tokio::test]
+async fn compaction_delivery_survives_rollout_replay_and_next_compaction() {
+    let (session, turn_context) = make_session_and_context().await;
+    let assignment = crate::saffron::compaction_requests::tests::admitted_delivery(
+        "Investigate the orchard export instead.",
+        2,
+    );
+    let steer = crate::saffron::compaction_requests::tests::admitted_delivery(
+        "Inspect its midnight batch first.",
+        3,
+    );
+    let history = vec![
+        ResponseItemEnvelope::new(user_message("Catalogue garden fixtures.")),
+        assignment.clone(),
+        steer.clone(),
+    ];
+    let compacted = crate::compact::build_compacted_history(
+        Vec::new(),
+        &crate::compact::collect_annotated_user_messages(&history, &AgentPath::root()),
+        &format!(
+            "{}\nThe orchard investigation is active.",
+            crate::compact::SUMMARY_PREFIX
+        ),
+    );
+    let checkpoint = RolloutItem::Compacted(CompactedItem {
+        message: String::new(),
+        replacement_history: Some(compacted),
+        guardian_history: None,
+        retained_context: None,
+        mcp_resource_origins: None,
+        window_number: Some(1),
+        first_window_id: None,
+        previous_window_id: None,
+        window_id: None,
+        compaction_response_id: None,
+        latest_token_usage_record: None,
+        resume_metadata: None,
+    });
+    let encoded = serde_json::to_vec(&checkpoint).unwrap();
+    let restored: RolloutItem = serde_json::from_slice(&encoded).unwrap();
+    let replayed = session
+        .reconstruct_history_from_rollout(&turn_context, &[restored])
+        .await;
+    assert_eq!(replayed.history[1], assignment);
+    assert_eq!(replayed.history[2], steer);
+    let next = crate::compact::build_compacted_history(
+        Vec::new(),
+        &crate::compact::collect_annotated_user_messages(&replayed.history, &AgentPath::root()),
+        &format!(
+            "{}\nStill investigating the orchard.",
+            crate::compact::SUMMARY_PREFIX
+        ),
+    );
+    assert_eq!(next.len(), 4);
+    assert_eq!(next[1], assignment);
+    assert_eq!(next[2], steer);
+}
+
 #[tokio::test]
 async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
     let (session, turn_context) = make_session_and_context().await;
