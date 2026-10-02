@@ -44,6 +44,8 @@ to finish, and does not send a subagent completion notification.
   "title": string?,
   // Inherit the caller's Desktop sidebar section when available. Defaults true.
   "inherit_section": bool?,
+  // Named destination; overrides inherit_section and creates it if absent.
+  "section": string?,
 }
 ```
 
@@ -51,11 +53,22 @@ The response includes `thread_id`, `status`, and a separate `section` outcome.
 `status: "started"` includes the accepted `turn_id`.
 `status: "created_not_started"` includes an error and the saved thread's ID,
 which callers should use for recovery instead of creating another fork.
-Section status is `inherited`, `skipped`, or `failed`;
+Section status is `inherited`, `placed`, `skipped`, or `failed`;
 the latter two include a reason.
-Placement uses the caller's advertised Desktop list and move tools.
+`placed` reports the destination `section_id` and whether it was `created`.
+An explicit `section` overrides inheritance, including `inherit_section: false`.
+Names are matched case-sensitively after trimming surrounding whitespace;
+blank names are rejected before creating a fork.
+A unique matching section is reused; an absent name creates a new section.
+Duplicate names report failure without selecting or creating a destination.
+Placement uses the caller's advertised Desktop list and move tools,
+plus the creation tool only when a named destination is absent.
 Absent capabilities skip placement; a timeout reports an unconfirmed outcome.
-Neither case cancels the fork or its assignment.
+If creation is needed but unavailable or fails, placement reports failure.
+Creation and moving are separate effects: a section may remain after a failed
+move, and requests are not retried automatically.
+Explicit placement never falls back to the caller's section.
+Placement failure never cancels the fork or its assignment.
 
 `saffron.edit_active_goal`
 --------------------------
