@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index 6de37b1e0ae40b3efb0788ceecfdd407cb082294..292482ec8289d7ecf7c136aa4626017053297f2d 100644
+index 39919cfef601752cfa2ebf0699e404d7c3f540d0..18a1d9c7ccb1b1e5e0a14f9ab0bad7f3fe623eab 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
-@@ -15,6 +15,7 @@ use crate::hook_runtime::run_post_compact_hooks;
+@@ -16,6 +16,7 @@ use crate::hook_runtime::run_post_compact_hooks;
  use crate::hook_runtime::run_pre_compact_hooks;
  use crate::responses_metadata::CodexResponsesMetadata;
  use crate::responses_metadata::CompactionTurnMetadata;
@@ -10,7 +10,7 @@ index 6de37b1e0ae40b3efb0788ceecfdd407cb082294..292482ec8289d7ecf7c136aa46260170
  use crate::session::RequestEffortUsage;
  use crate::session::session::Session;
  use crate::session::step_context::StepContext;
-@@ -359,7 +360,11 @@ async fn run_compact_task_inner_impl(
+@@ -360,7 +361,11 @@ async fn run_compact_task_inner_impl(
          get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default()
      };
      let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
@@ -23,7 +23,7 @@ index 6de37b1e0ae40b3efb0788ceecfdd407cb082294..292482ec8289d7ecf7c136aa46260170
 
      let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
      if let Some(summary_item) = new_history.last_mut() {
-@@ -546,19 +551,39 @@ pub(crate) struct CompactedUserMessage<'a> {
+@@ -547,19 +552,39 @@ pub(crate) struct CompactedUserMessage<'a> {
  }
 
  #[cfg(test)]
@@ -69,7 +69,7 @@ index 6de37b1e0ae40b3efb0788ceecfdd407cb082294..292482ec8289d7ecf7c136aa46260170
          .collect()
  }
 
-@@ -652,9 +677,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
+@@ -653,9 +678,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
      compacted_history
  }
 
@@ -81,7 +81,7 @@ index 6de37b1e0ae40b3efb0788ceecfdd407cb082294..292482ec8289d7ecf7c136aa46260170
      summary_text: &str,
  ) -> Vec<ResponseItemEnvelope> {
      build_compacted_history_with_limit(
-@@ -665,9 +691,10 @@ pub(crate) fn build_compacted_history(
+@@ -666,9 +692,10 @@ pub(crate) fn build_compacted_history(
      )
  }
 
@@ -93,7 +93,7 @@ index 6de37b1e0ae40b3efb0788ceecfdd407cb082294..292482ec8289d7ecf7c136aa46260170
      summary_text: &str,
      max_tokens: usize,
  ) -> Vec<ResponseItemEnvelope> {
-@@ -678,6 +705,26 @@ fn build_compacted_history_with_limit(
+@@ -679,6 +706,26 @@ fn build_compacted_history_with_limit(
              if remaining == 0 {
                  break;
              }
@@ -1042,10 +1042,10 @@ index ab20e5b30ef4a363d12d12ee9d5c1375b985a825..fe017f0d7be8b3ee85cc9cb072bfc411
                              Vec::new(),
                              &user_messages,
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index 05a7d37f91702f24d7e7409cd42cd2f8b201f377..a3870873f90576e17d1ce3dfa1e0726c58b6603a 100644
+index c7c0407d96fdefc5ff5bb64ae49ff3d14edab148..e97ce7c0d29d65fe757bbb001337d7e321773966 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-@@ -1421,6 +1421,65 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
+@@ -1422,6 +1422,65 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
      assert_eq!(reconstructed.window_id, Some(initial_window_id));
  }
 

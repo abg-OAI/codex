@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index 292482ec8289d7ecf7c136aa4626017053297f2d..831d922dcd9a0569cd2f9a7bca95d4c9b42231da 100644
+index 18a1d9c7ccb1b1e5e0a14f9ab0bad7f3fe623eab..62af3112d3c08b5d595d8503ca43b2891024add0 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
-@@ -372,6 +372,18 @@ async fn run_compact_task_inner_impl(
+@@ -373,6 +373,18 @@ async fn run_compact_task_inner_impl(
          // belongs to this compaction turn.
          summary_item.set_turn_id_if_missing(&turn_context.sub_id);
      }
@@ -64,10 +64,10 @@ index a6291c2236e6b42200bd3698146ffcb9c43c6814..6b8e1e3b10d345db2e4ded97354d035c
          .filter(|group| {
              crate::saffron::compaction_requests::is_request(
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
-index 2475e685ea12ff4f3d32cb00a1cfd877969f5673..94b3e40c1e1782f78fc5e2783332b7763409b08d 100644
+index 7e9531695eddd7c48e9a7c7cd950465ff6584b68..edb4e9530c440c359a1fd80fe58d74dae9b7d283 100644
 --- a/codex-rs/core/src/context_manager/history.rs
 +++ b/codex-rs/core/src/context_manager/history.rs
-@@ -591,7 +591,7 @@ impl ContextManager {
+@@ -608,7 +608,7 @@ impl ContextManager {
          input_modalities: &[InputModality],
      ) -> Vec<ResponseItemEnvelope> {
          self.normalize_history(input_modalities);
@@ -76,7 +76,7 @@ index 2475e685ea12ff4f3d32cb00a1cfd877969f5673..94b3e40c1e1782f78fc5e2783332b776
      }
 
      /// Iterates over raw response items without exposing their history envelopes.
-@@ -638,9 +638,7 @@ impl ContextManager {
+@@ -655,9 +655,7 @@ impl ContextManager {
          let base_tokens =
              i64::try_from(approx_token_count(&base_instructions.text)).unwrap_or(i64::MAX);
 

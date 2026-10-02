@@ -181,10 +181,10 @@ index 16c4ceec61d3e1eede9cffbd1296a6e3711c84fc..dd1527cb8a4d3859624e0e2eb548afee
 
      Ok(())
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 6834baa007b70d96245e19aadb3508a8e7fd4601..7510278c81af7c64462f6330d3fc43ce5258671c 100644
+index f3b3a75b5f7bdbcb4af9fd4f2f1ed5830ea19330..9a34e0b3ab6e8742b06d290ebd50d2a13afe20d9 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -351,10 +351,9 @@ impl CodexThread {
+@@ -381,10 +381,9 @@ impl CodexThread {
      /// goal extension can retain its ordinary continuation behavior.
      pub async fn start_saffron_goal_supervisor_checkin(
          &self,
@@ -815,10 +815,10 @@ index c40cad928f6aa1777b70b341836323c0bbeac47a..48515f0e45992c555e89b76f4b238e5b
              .thread_extension_data()
              .get::<TurnStartOptions>()
 diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
-index 232b6f766c4c8dee687047cb5c75617f6080729b..263c9563f33a52dd11d77b3ec58c0eb5dd0fa30b 100644
+index 5f716eab5f6336b4f8e5c963486613fd4c678036..94719828c813c4255fd91defa5d256167b4e0389 100644
 --- a/codex-rs/state/src/lib.rs
 +++ b/codex-rs/state/src/lib.rs
-@@ -85,6 +85,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
+@@ -88,6 +88,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
  pub use runtime::SqliteIntegrityCheck;
  pub use runtime::SqliteQueueStore;
  pub use runtime::ThreadFilterOptions;
