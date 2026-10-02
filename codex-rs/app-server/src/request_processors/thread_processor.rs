@@ -2866,7 +2866,9 @@ impl ThreadRequestProcessor {
                 ))
             })?
             .and_then(|metadata| metadata.daybreak_enabled);
-        let loaded_thread = self.thread_manager.get_thread(thread_id).await.ok();
+        let loaded_thread = get_loaded_thread_for_persistence(&self.thread_manager, thread_id)
+            .await
+            .map_err(ThreadReadViewError::JsonRpc)?;
         let mut thread = if include_turns {
             if let Some(loaded_thread) = loaded_thread.as_ref() {
                 // Loaded thread with turns: use persisted metadata when it exists,
@@ -4297,11 +4299,9 @@ impl ThreadRequestProcessor {
     ) -> Result<RunningThreadResumeResult, JSONRPCErrorError> {
         let running_thread = if params.history.is_some() {
             if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
-                && self
-                    .thread_manager
-                    .get_thread(existing_thread_id)
-                    .await
-                    .is_ok()
+                && get_loaded_thread_for_persistence(&self.thread_manager, existing_thread_id)
+                    .await?
+                    .is_some()
             {
                 return Err(invalid_request(format!(
                     "cannot resume thread {existing_thread_id} with history while it is already running"
@@ -4309,7 +4309,8 @@ impl ThreadRequestProcessor {
             }
             None
         } else if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
-            && let Ok(existing_thread) = self.thread_manager.get_thread(existing_thread_id).await
+            && let Some(existing_thread) =
+                get_loaded_thread_for_persistence(&self.thread_manager, existing_thread_id).await?
         {
             let source_thread = self
                 .read_stored_thread_for_resume(
@@ -4328,9 +4329,11 @@ impl ThreadRequestProcessor {
                 )
                 .await?;
             let existing_thread_id = source_thread.thread_id;
-            match self.thread_manager.get_thread(existing_thread_id).await {
-                Ok(existing_thread) => Some((existing_thread_id, existing_thread, source_thread)),
-                Err(_) => {
+            match get_loaded_thread_for_persistence(&self.thread_manager, existing_thread_id)
+                .await?
+            {
+                Some(existing_thread) => Some((existing_thread_id, existing_thread, source_thread)),
+                None => {
                     return Ok(RunningThreadResumeResult::NotRunning(Some(Box::new(
                         source_thread,
                     ))));
