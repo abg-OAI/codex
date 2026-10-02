@@ -107,3 +107,54 @@ fn execution_guards_ignore_hidden_internal_helpers() {
         .check_turn_admission(thread_id, MultiAgentVersion::V2, &source)
         .expect("hidden helpers should not consume agent capacity");
 }
+
+#[test]
+fn descendant_turn_guard_retains_every_registered_ancestor() {
+    let control = control_with_limit(/*max_threads*/ 4);
+    let root_thread_id = ThreadId::new();
+    let worker_thread_id = ThreadId::new();
+    let tester_thread_id = ThreadId::new();
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let tester_path = worker_path.join("tester").expect("tester path");
+    control
+        .runtime
+        .registry
+        .register_root_thread(root_thread_id);
+    control
+        .runtime
+        .registry
+        .reserve_spawn_slot(/*max_threads*/ None)
+        .expect("reserve worker")
+        .commit(AgentMetadata {
+            agent_id: Some(worker_thread_id),
+            agent_path: Some(worker_path),
+            ..Default::default()
+        });
+    control
+        .runtime
+        .registry
+        .reserve_spawn_slot(/*max_threads*/ None)
+        .expect("reserve tester")
+        .commit(AgentMetadata {
+            agent_id: Some(tester_thread_id),
+            agent_path: Some(tester_path.clone()),
+            ..Default::default()
+        });
+    let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: worker_thread_id,
+        depth: 2,
+        agent_path: Some(tester_path),
+        agent_nickname: None,
+        agent_role: None,
+    });
+
+    let guard = control
+        .ancestor_turn_retention_guard(MultiAgentVersion::V2, &source, tester_thread_id)
+        .expect("listed V2 child should retain ancestors");
+    assert!(control.is_retained_for_descendant_completion(root_thread_id));
+    assert!(control.is_retained_for_descendant_completion(worker_thread_id));
+
+    drop(guard);
+    assert!(!control.is_retained_for_descendant_completion(root_thread_id));
+    assert!(!control.is_retained_for_descendant_completion(worker_thread_id));
+}
