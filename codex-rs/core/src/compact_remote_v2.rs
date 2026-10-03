@@ -309,6 +309,14 @@ async fn run_remote_compact_task_inner_impl(
         analytics_details.cached_input_tokens = Some(token_usage.cached_input_tokens);
         analytics_details.cache_write_input_tokens = Some(token_usage.cache_write_input_tokens);
     }
+    let evidence = prompt_input
+        .iter()
+        .zip(&prompt_input_metadata)
+        .map(|(item, metadata)| ResponseItemEnvelope {
+            item: item.clone(),
+            metadata: metadata.clone(),
+        })
+        .collect::<Vec<_>>();
     let (compacted_history, retained_images) = build_v2_compacted_history(
         prompt_input,
         prompt_input_metadata,
@@ -324,6 +332,14 @@ async fn run_remote_compact_task_inner_impl(
             .get_agent_path()
             .unwrap_or_else(codex_protocol::AgentPath::root),
     );
+    let compacted_history = crate::saffron::request_account::contextualize(
+        sess,
+        compaction_turn_context,
+        compaction_metadata,
+        compacted_history,
+        &evidence,
+    )
+    .await;
     analytics_details.retained_image_count = Some(retained_images);
     let (new_window_number, new_window_ids) = sess.advance_auto_compact_window().await;
     let (initial_context, world_state_baseline) =
@@ -522,6 +538,7 @@ fn build_v2_compacted_history(
         .zip(prompt_input_metadata)
         .map(|(item, metadata)| ResponseItemEnvelope { item, metadata })
         .collect::<Vec<_>>();
+    let prompt_input = crate::saffron::request_account::restore_projected_requests(prompt_input);
     let retained = v2_history_item_groups(prompt_input)
         .filter(|group| {
             crate::saffron::compaction_requests::is_request(
