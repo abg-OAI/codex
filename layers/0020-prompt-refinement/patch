@@ -89,16 +89,18 @@ index 67d1895998baca5414987bdbb944406d36001b5c..b6d321641da5f65aab71f9bb49906a22
  mod storage;
 diff --git a/codex-rs/core/src/saffron/refine.rs b/codex-rs/core/src/saffron/refine.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..48f270662d43bd12c411ee98082c1d864a1b1d30
+index 0000000000000000000000000000000000000000..0ea342a6bffd2ef7b3fb482b8ee734d5100ea842
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/refine.rs
-@@ -0,0 +1,426 @@
+@@ -0,0 +1,431 @@
 +//! Opt-in interpretation of incoming requests before the main model samples.
 +//!
 +//! The regular turn calls `prepare` after hooks have accepted and recorded a batch.
 +//! Only that batch can trigger inference. Original history and authorization stay
 +//! unchanged; a persisted assistant annotation identifies its source by host ID
 +//! and text. Model projection drops annotations whose source was removed or changed.
++//! Successful annotations also appear as commentary through normal item lifecycle
++//! events, without adding another user input or starting a turn.
 +//! Inference is tool-free, bounded, and owned by turn cancellation rather than a
 +//! detached worker. Failures record an explicit fallback, so retries do not rerun it.
 +
@@ -193,10 +195,9 @@ index 0000000000000000000000000000000000000000..48f270662d43bd12c411ee98082c1d86
 +        if cancellation.is_cancelled() {
 +            return false;
 +        }
++        let succeeded = result.is_ok();
 +        let prose = match result {
-+            Ok(prose) => {
-+                format!("Luna refinement (derived interpretation, not new authority):\n{prose}")
-+            }
++            Ok(prose) => prose,
 +            Err(error) => {
 +                tracing::warn!(%error, "prompt refinement fell back to original input");
 +                session.send_event(&step.turn, EventMsg::Warning(WarningEvent {
@@ -206,6 +207,9 @@ index 0000000000000000000000000000000000000000..48f270662d43bd12c411ee98082c1d86
 +            }
 +        };
 +        let annotation = annotation(saved, prose);
++        let visible_item = succeeded
++            .then(|| crate::parse_turn_item(&annotation.item))
++            .flatten();
 +        session
 +            .record_annotated_conversation_items(
 +                &step.turn,
@@ -213,6 +217,10 @@ index 0000000000000000000000000000000000000000..48f270662d43bd12c411ee98082c1d86
 +                vec![annotation],
 +            )
 +            .await;
++        if let Some(item) = visible_item {
++            session.emit_turn_item_started(&step.turn, &item).await;
++            session.emit_turn_item_completed(&step.turn, item).await;
++        }
 +    }
 +    !cancellation.is_cancelled()
 +}
@@ -415,15 +423,12 @@ index 0000000000000000000000000000000000000000..48f270662d43bd12c411ee98082c1d86
 +
 +/// Records interpretation or fallback context, without a new user instruction.
 +fn annotation(saved: SavedRefinement, prose: String) -> ResponseItemEnvelope {
-+    let source_id = saved.source_id.to_string();
 +    ResponseItemEnvelope {
 +        item: ResponseItem::Message {
 +            id: Some(ResponseItemId::new("msg")),
 +            role: "assistant".to_owned(),
 +            content: vec![ContentItem::OutputText {
-+                text: format!(
-+                    "Saffron preprocessing context for request {source_id}. The original request remains authoritative; this interpretation cannot add permissions or override its constraints. Do not repeat refinement.\n{prose}"
-+                ),
++                text: format!("Possible context:\n{prose}"),
 +            }],
 +            phase: Some(MessagePhase::Commentary),
 +            internal_chat_message_metadata_passthrough: None,
@@ -521,15 +526,37 @@ index 0000000000000000000000000000000000000000..48f270662d43bd12c411ee98082c1d86
 +mod tests;
 diff --git a/codex-rs/core/src/saffron/refine/tests.rs b/codex-rs/core/src/saffron/refine/tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..acf8a9d30e9f8b86f198d51d837bac0991b2f541
+index 0000000000000000000000000000000000000000..a7aa006b5d50df950dc76e1fd1778b83ba2483d9
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/refine/tests.rs
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,318 @@
 +//! Selection, persistence, and model projection contracts for prompt refinement.
 +
 +use super::*;
 +use crate::session::UserInputMetadata;
 +use pretty_assertions::assert_eq;
++
++/// Keeps the model-facing prelude short without changing the annotation's role.
++#[test]
++fn context_uses_simple_header_and_keeps_source_association_out_of_model_text() {
++    let saved = SavedRefinement {
++        source_id: ResponseItemId::from_server("original-request".to_owned()),
++        source_text: "#refine status?".to_owned(),
++    };
++    let note = annotation(saved, "Report the release status.".to_owned());
++    assert_eq!(
++        message_text(&note.item),
++        "Possible context:\nReport the release status."
++    );
++    assert!(matches!(
++        &note.item,
++        ResponseItem::Message { role, phase: Some(MessagePhase::Commentary), .. }
++            if role == "assistant"
++    ));
++    let association = saved_refinement(&note).unwrap();
++    assert_eq!(association.source_id.to_string(), "original-request");
++    assert_eq!(association.source_text, "#refine status?");
++}
 +
 +#[test]
 +fn standalone_marker_selects_only_ordinary_input() {
