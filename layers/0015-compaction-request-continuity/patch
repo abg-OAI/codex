@@ -1042,7 +1042,7 @@ index ab20e5b30ef4a363d12d12ee9d5c1375b985a825..fe017f0d7be8b3ee85cc9cb072bfc411
                              Vec::new(),
                              &user_messages,
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index c7c0407d96fdefc5ff5bb64ae49ff3d14edab148..e97ce7c0d29d65fe757bbb001337d7e321773966 100644
+index 7b280be1205f785b8770729b0976ec8109bd0d12..cf29043d70cd63d048bf5c47255268e508390501 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 @@ -1422,6 +1422,65 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {

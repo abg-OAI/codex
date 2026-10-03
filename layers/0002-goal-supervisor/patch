@@ -3088,10 +3088,10 @@ index 893a01ce5ad0bb1789d7b27ce5baad5f8a7a01e8..efe282cc73938c574f582581c9695875
  pub(crate) mod await_exec;
 +pub(crate) mod goal_supervisor;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 613bdcaf15a4d5836dbbdf6a0e3092e00cad78a0..7b9607fef1bfd72417854732967888a85ed618ba 100644
+index dea3a06f0da8a82905aeec82cf83240af7f885e8..3a3d72b300ec1f61a4ab8448ddf0b3d4a3c953f5 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2380,6 +2380,9 @@ impl Session {
+@@ -2383,6 +2383,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }
@@ -3141,7 +3141,7 @@ index 5ace22c811bc97df2bf0546b461ba12102406cda..d0b70e511df323df4731aafd384785d2
              &turn_context.session_source,
          );
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 67efd11e8d69f718d422580a66c17f254e607fc9..432c05d242618d819f83ce4f139390bbcdd64660 100644
+index 8fdd685f78d0b0af320af980762262a98125abba..adda0eca5a8346168af926462ec9d5ab2733808e 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -150,6 +150,9 @@ pub(crate) fn build_tool_router(

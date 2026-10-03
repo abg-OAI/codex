@@ -1667,7 +1667,7 @@ index 988be7d758dfde506aff555db95ea2491b9957d6..755414c1c70bfa4d65202f54d08b072b
 +    fork_thread::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 34b2977a689e007b27fd63309a6c0df4f57f1211..da69475d637a936c6eeefd5e872a72ca9e51cef4 100644
+index 3228c6aa9139a1696ef23adb1f2889aa0ceccffc..0151fb8cfff555864f04bec45f4159ca4aa7eda5 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
 @@ -924,6 +924,11 @@ impl ThreadManager {

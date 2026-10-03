@@ -1,8 +1,8 @@
 diff --git a/codex-rs/model-provider-info/src/lib.rs b/codex-rs/model-provider-info/src/lib.rs
-index 5d5b1f92e58efc63ef24459db87c549285fc3119..5ae996af66df6bfe67fcd5988759627cc4af300a 100644
+index f020d34c25413a7ac581dc5ed0a5187be17caa99..ddf57711b44b126b0842de1be80a54cdefeffd32 100644
 --- a/codex-rs/model-provider-info/src/lib.rs
 +++ b/codex-rs/model-provider-info/src/lib.rs
-@@ -98,6 +98,18 @@ const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer su
+@@ -101,6 +101,18 @@ const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer su
  pub const LEGACY_OLLAMA_CHAT_PROVIDER_ID: &str = "ollama-chat";
  pub const OLLAMA_CHAT_PROVIDER_REMOVED_ERROR: &str = "`ollama-chat` is no longer supported.\nHow to fix: replace `ollama-chat` with `ollama` in `model_provider`, `oss_provider`, or `--local-provider`.\nMore info: https://github.com/openai/codex/discussions/7782";
 
@@ -21,7 +21,7 @@ index 5d5b1f92e58efc63ef24459db87c549285fc3119..5ae996af66df6bfe67fcd5988759627c
  /// Wire protocol that the provider speaks.
  #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
  #[serde(rename_all = "lowercase")]
-@@ -531,9 +543,12 @@ other non-default provider fields are not supported"
+@@ -537,9 +549,12 @@ other non-default provider fields are not supported"
              wire_api: WireApi::Responses,
              query_params: None,
              http_headers: Some(
@@ -38,10 +38,10 @@ index 5d5b1f92e58efc63ef24459db87c549285fc3119..5ae996af66df6bfe67fcd5988759627c
              env_http_headers: Some(
                  [
 diff --git a/codex-rs/model-provider-info/src/model_provider_info_tests.rs b/codex-rs/model-provider-info/src/model_provider_info_tests.rs
-index 3cbd8b2bac7a0b1482832f4634843e6e7387ebe6..2c7f3b4329591cf55db41da2d2c309f4b3a51620 100644
+index 9c15c54b70d1c500f07e2432aa1e7d9fada91740..29b29237bfd09781299ff0b57871b63a4c2fc343 100644
 --- a/codex-rs/model-provider-info/src/model_provider_info_tests.rs
 +++ b/codex-rs/model-provider-info/src/model_provider_info_tests.rs
-@@ -227,6 +227,32 @@ fn test_header_auth_uses_chatgpt_codex_base_url() {
+@@ -230,6 +230,32 @@ fn test_header_auth_uses_chatgpt_codex_base_url() {
      assert_eq!(api_provider.base_url, CHATGPT_CODEX_BASE_URL);
  }
 
