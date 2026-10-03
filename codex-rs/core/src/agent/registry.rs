@@ -172,6 +172,32 @@ impl AgentRegistry {
             .and_then(|metadata| metadata.agent_id)
     }
 
+    /// Returns the registered thread IDs above `agent_path`, ordered from root to parent.
+    pub(crate) fn ancestor_thread_ids(&self, agent_path: &AgentPath) -> Vec<ThreadId> {
+        let active_agents = self
+            .active_agents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut current_path = agent_path.as_str();
+        let mut ancestor_thread_ids = Vec::new();
+
+        while let Some((parent_path, _)) = current_path.rsplit_once('/') {
+            if parent_path.is_empty() {
+                break;
+            }
+            if let Some(thread_id) = active_agents
+                .agent_tree
+                .get(parent_path)
+                .and_then(|metadata| metadata.agent_id)
+            {
+                ancestor_thread_ids.push(thread_id);
+            }
+            current_path = parent_path;
+        }
+        ancestor_thread_ids.reverse();
+        ancestor_thread_ids
+    }
+
     pub(crate) fn agent_metadata_for_thread(&self, thread_id: ThreadId) -> Option<AgentMetadata> {
         let active_agents = self
             .active_agents
