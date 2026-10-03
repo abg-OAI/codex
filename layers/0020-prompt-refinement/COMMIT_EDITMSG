@@ -1,0 +1,20 @@
+Refine opted-in prompts with Luna context
+
+Start a request with `#refine` followed by whitespace to contextualize
+its remaining text before the main model responds.
+The newest catalog Luna uses Fast service and a bounded excerpt of
+preceding conversation, without tools or authority to perform the task.
+`#refinefoo` and ordinary requests remain unchanged.
+
+Preserve the original saved request and attach the interpretation as
+derived context rather than replacing user authority.
+Strip the control marker only in the main sampling view, retaining
+original content for history and compaction.
+Validate associations before media normalization and discard stale
+interpretations when their source disappears or changes.
+
+A recorded fallback lets an interrupted helper resume with the original
+prompt; completed interpretations supersede that fallback.
+Failures report a warning, and cancellation stops before main sampling.
+Share Luna catalog selection with compaction contextualization while
+keeping the two helper policies separate.
