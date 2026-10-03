@@ -13,6 +13,11 @@ original content for history and compaction.
 Validate associations before media normalization and discard stale
 interpretations when their source disappears or changes.
 
+The refinement preserves the current requested action and carries
+reported progress separately from the scope established by the user.
+Constraints on the work remain applicable when the requested phase
+changes, unless the user changes those constraints.
+
 A recorded fallback lets an interrupted helper resume with the original
 prompt; completed interpretations supersede that fallback.
 Failures report a warning, and cancellation stops before main sampling.
