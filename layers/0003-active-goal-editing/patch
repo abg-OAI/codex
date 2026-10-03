@@ -774,7 +774,7 @@ index efe282cc73938c574f582581c96958754e24a75d..3106cd654889423169397d98f01639fc
 +    goal_edit::register_root_if_available(session, turn_context, registry);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 432c05d242618d819f83ce4f139390bbcdd64660..24b6743f92afd7730eb91e93bb907e6c11490a1f 100644
+index adda0eca5a8346168af926462ec9d5ab2733808e..7f31302f4f4cce22afff07d9dd9730b83b80ce97 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -150,9 +150,7 @@ pub(crate) fn build_tool_router(
@@ -815,10 +815,10 @@ index c40cad928f6aa1777b70b341836323c0bbeac47a..48515f0e45992c555e89b76f4b238e5b
              .thread_extension_data()
              .get::<TurnStartOptions>()
 diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
-index 5f716eab5f6336b4f8e5c963486613fd4c678036..94719828c813c4255fd91defa5d256167b4e0389 100644
+index 5ae36f8b1168d66ba5de721af6df77d9f0a539c7..cc04db88792b1a3654c183bffb9832b9a3061db3 100644
 --- a/codex-rs/state/src/lib.rs
 +++ b/codex-rs/state/src/lib.rs
-@@ -88,6 +88,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
+@@ -90,6 +90,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
  pub use runtime::SqliteIntegrityCheck;
  pub use runtime::SqliteQueueStore;
  pub use runtime::ThreadFilterOptions;

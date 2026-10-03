@@ -542,7 +542,7 @@ index 763fa155766dc67536ab89214861705d90dc027f..ab2493211053fe2baa54c279c423d456
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 379facebdc6266527401f59f260bc8fc2ce3a6a1..67efd11e8d69f718d422580a66c17f254e607fc9 100644
+index 66f841d5924708794e39af02ae6c169455a9db5c..8fdd685f78d0b0af320af980762262a98125abba 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -553,7 +553,7 @@ index 379facebdc6266527401f59f260bc8fc2ce3a6a1..67efd11e8d69f718d422580a66c17f25
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -1108,6 +1109,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1091,6 +1092,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
      if features.enabled(Feature::UnifiedExec) {
          registry.add(ExecCommandHandler::new(options));
          registry.add(WriteStdinHandler);
