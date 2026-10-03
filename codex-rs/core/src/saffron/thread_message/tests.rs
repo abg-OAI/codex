@@ -26,6 +26,7 @@ use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::sse;
 use core_test_support::test_codex::run_test_with_large_stack;
+use serde_json::json;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -47,6 +48,16 @@ fn idle_delivery_preserves_destination(history_mode: ThreadHistoryMode) -> anyho
         )
         .await;
         let host = TestHost::new(&server, history_mode).await?;
+        host.source
+            .thread
+            .update_thread_metadata(
+                codex_thread_store::ThreadMetadataPatch {
+                    name: Some(Some("sender [c]".to_string())),
+                    ..Default::default()
+                },
+                true,
+            )
+            .await?;
         let before = host.destination.thread.config_snapshot().await;
         let receipt = host
             .send(host.destination.thread_id, "handoff-marker")
@@ -83,7 +94,7 @@ fn idle_delivery_preserves_destination(history_mode: ThreadHistoryMode) -> anyho
             serde_json::from_str(delivered["output"].as_str().unwrap())?;
         assert_eq!(
             content,
-            json!({"source_thread_id": host.source.thread_id, "input": "handoff-marker"})
+            json!({"source_thread_id": host.source.thread_id, "source_thread_name": "sender [c]", "input": "handoff-marker"})
         );
         let after = host.destination.thread.config_snapshot().await;
         assert_eq!(after.model, before.model);

@@ -899,12 +899,7 @@ impl From<CoreTurnItem> for ThreadItem {
                     questions: agent.questions,
                 }
             }
-            CoreTurnItem::FunctionCallOutput(output) => ThreadItem::FunctionCallOutput {
-                id: output.id,
-                name: output.name,
-                namespace: output.namespace,
-                output: output.output,
-            },
+            CoreTurnItem::FunctionCallOutput(output) => crate::saffron::thread_message(output),
             CoreTurnItem::Plan(plan) => ThreadItem::Plan {
                 id: plan.id,
                 text: plan.text,
