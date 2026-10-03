@@ -17,6 +17,7 @@ pub(crate) mod saved_thread_persistence;
 mod storage;
 pub(crate) mod subagent_completion;
 mod subagent_completion_tool;
+pub(crate) mod thread_message;
 
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
@@ -49,4 +50,5 @@ pub(crate) fn register_tools(
     goal_edit::register_root_if_available(session, turn_context, registry);
     goal_resume::register_root_if_available(session, turn_context, registry);
     fork_thread::register(session, turn_context, registry);
+    thread_message::register(session, turn_context, registry);
 }
