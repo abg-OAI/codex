@@ -155,6 +155,11 @@ jobs:
             --lib
           just test --cargo-profile ci-test \
             --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
+            -p codex-app-server-protocol \
+            --lib \
+            saffron::tests
+          just test --cargo-profile ci-test \
+            --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
             -p codex-app-server \
             --test all \
             saffron_goal_supervisor

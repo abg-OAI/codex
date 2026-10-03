@@ -1,0 +1,13 @@
+Show attributed Saffron messages in Desktop history
+
+Incoming saffron.send_message_to_thread output is delivered to the model
+but is not displayed as a message by Desktop.
+Present that output as a commentary row with a linked sender name and
+the original body in the client transcript.
+Keep the core event and model input as tool output so presentation does
+not change instruction authority or the receiving turn's final answer.
+
+Capture the sender's saved name when available, with its runtime thread
+ID as the fallback and link target.
+Use the shared conversion for live events and rebuilt history.
+Previously materialized paginated rows are not migrated.
