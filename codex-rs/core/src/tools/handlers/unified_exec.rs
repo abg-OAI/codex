@@ -78,7 +78,11 @@ pub(crate) struct ResolvedCommand {
     pub(crate) shell: ShellInvocation,
 }
 
-fn post_unified_exec_tool_use_payload(
+/// Builds a Bash hook payload using the result's unified-exec identity.
+///
+/// Reusing this adapter lets sibling interactions continue the originating
+/// command's hook lifecycle instead of appearing as unrelated tool calls.
+pub(crate) fn post_unified_exec_tool_use_payload(
     invocation: &ToolInvocation,
     result: &dyn ToolOutput,
 ) -> Option<PostToolUsePayload> {
