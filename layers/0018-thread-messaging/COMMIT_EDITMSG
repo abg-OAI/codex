@@ -1,0 +1,14 @@
+Add messaging between loaded root threads
+
+Independent conversations need to exchange work without depending on
+Desktop tool availability.
+Expose `saffron.send_message_to_thread` for roots loaded in the same
+app-server process.
+Start an idle destination or steer its active turn using Core admission,
+while preserving its settings and attributing the sender from runtime.
+Deliver the message as a standalone tool output, not user instructions.
+
+Report whether the input started a turn or steered one.
+Do not resume unloaded destinations or route across processes;
+the host must load the destination before delivery.
+Parent-owned agents continue to use their collaboration tools.

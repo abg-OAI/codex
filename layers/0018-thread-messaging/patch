@@ -1,0 +1,735 @@
+diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
+index 15effd88bfee2f17124ce1f671b7c228afcfaebe..55e89e45868b324cbb8aa19575304789cdb2eac5 100644
+--- a/codex-rs/app-server/src/extensions.rs
++++ b/codex-rs/app-server/src/extensions.rs
+@@ -74,6 +74,7 @@ pub(crate) fn thread_extensions(
+     codex_history_notes_extension::install(&mut builder, auth_manager.clone());
+     codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
+     codex_core::install_saffron_fork_thread(&mut builder, thread_manager.clone());
++    codex_core::install_saffron_thread_message(&mut builder, thread_manager.clone());
+     if let Some(state_db) = state_db {
+         codex_goal_extension::install_with_backend(
+             &mut builder,
+diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
+index f44b073f53b0f3a942612afb464324ac08455338..b13cce1b99d798b49f8217761f99a799c8e55883 100644
+--- a/codex-rs/core/src/lib.rs
++++ b/codex-rs/core/src/lib.rs
+@@ -137,6 +137,7 @@ pub(crate) use skills::skills_load_input_from_config;
+ mod saffron;
+
+ pub use saffron::fork_thread::install as install_saffron_fork_thread;
++pub use saffron::thread_message::install as install_saffron_thread_message;
+
+ /// Installs Saffrodex-owned model guidance that accompanies goal tools.
+ pub fn install_saffron_goal_guidance(
+diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
+index 755414c1c70bfa4d65202f54d08b072bd13068e8..67d1895998baca5414987bdbb944406d36001b5c 100644
+--- a/codex-rs/core/src/saffron/mod.rs
++++ b/codex-rs/core/src/saffron/mod.rs
+@@ -17,6 +17,7 @@ pub(crate) mod saved_thread_persistence;
+ mod storage;
+ pub(crate) mod subagent_completion;
+ mod subagent_completion_tool;
++pub(crate) mod thread_message;
+
+ use crate::session::session::Session;
+ use crate::session::turn_context::TurnContext;
+@@ -49,4 +50,5 @@ pub(crate) fn register_tools(
+     goal_edit::register_root_if_available(session, turn_context, registry);
+     goal_resume::register_root_if_available(session, turn_context, registry);
+     fork_thread::register(session, turn_context, registry);
++    thread_message::register(session, turn_context, registry);
+ }
+diff --git a/codex-rs/core/src/saffron/thread_message.rs b/codex-rs/core/src/saffron/thread_message.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..5715a9fda9d3d35106631c519baf5aa9b68fadd6
+--- /dev/null
++++ b/codex-rs/core/src/saffron/thread_message.rs
+@@ -0,0 +1,244 @@
++//! Message delivery between loaded root threads in one app-server process.
++//!
++//! The host installs a weak ThreadManager capability; this module owns the
++//! model-facing policy and sender attribution. Core owns atomic start-or-steer
++//! admission. Delivery never loads a saved thread, changes destination settings,
++//! or reaches another process. The receipt confirms acceptance, not completion.
++
++use std::collections::BTreeMap;
++use std::sync::Arc;
++use std::sync::Weak;
++
++use codex_extension_api::ExtensionFuture;
++use codex_extension_api::ExtensionRegistryBuilder;
++use codex_extension_api::ThreadLifecycleContributor;
++use codex_extension_api::ThreadStartInput;
++use codex_protocol::ThreadId;
++use codex_protocol::models::FunctionCallOutputPayload;
++use codex_protocol::models::ResponseItem;
++use codex_protocol::turn_input::TurnInput;
++use codex_protocol::turn_input::TurnInputSubmission;
++use codex_protocol::turn_input::TurnStartOptions;
++use codex_tools::JsonSchema;
++use codex_tools::JsonToolOutput;
++use codex_tools::ResponsesApiNamespace;
++use codex_tools::ResponsesApiNamespaceTool;
++use codex_tools::ResponsesApiTool;
++use codex_tools::ToolName;
++use codex_tools::ToolOutput;
++use codex_tools::ToolSpec;
++use serde::Deserialize;
++use serde::Serialize;
++use serde_json::json;
++
++use crate::ThreadManager;
++use crate::TurnInputRequest;
++use crate::config::Config;
++use crate::function_tool::FunctionCallError;
++use crate::session::session::Session;
++use crate::session::turn_context::TurnContext;
++use crate::tools::context::ToolInvocation;
++use crate::tools::context::ToolPayload;
++use crate::tools::context::boxed_tool_output;
++use crate::tools::handlers::parse_arguments;
++use crate::tools::registry::CoreToolRuntime;
++use crate::tools::registry::ToolExecutor;
++use crate::tools::registry::ToolRegistry;
++
++/// Installs messaging for roots owned by this app-server's thread registry.
++pub fn install(builder: &mut ExtensionRegistryBuilder<Config>, manager: Weak<ThreadManager>) {
++    builder.thread_lifecycle_contributor(Arc::new(MessageHost { manager }));
++}
++
++/// Registers the tool only for roots with a host-installed capability.
++pub(super) fn register(session: &Session, turn: &TurnContext, registry: &mut ToolRegistry) {
++    if !turn.session_source.is_non_root_agent()
++        && let Some(host) = session.services.thread_extension_data.get::<MessageHost>()
++    {
++        registry.add(Handler { host });
++    }
++}
++
++/// Process registry access without a thread-to-manager ownership cycle.
++struct MessageHost {
++    /// Only this registry may resolve the destination.
++    manager: Weak<ThreadManager>,
++}
++
++impl ThreadLifecycleContributor<Config> for MessageHost {
++    fn on_thread_start<'a>(
++        &'a self,
++        input: ThreadStartInput<'a, Config>,
++    ) -> ExtensionFuture<'a, ()> {
++        Box::pin(async move {
++            if !input.session_source.is_non_root_agent() {
++                input.thread_store.insert(MessageHost {
++                    manager: self.manager.clone(),
++                });
++            }
++        })
++    }
++}
++
++/// Validates a delivery and submits it through the destination's turn API.
++struct Handler {
++    /// Host capability captured when the caller started.
++    host: Arc<MessageHost>,
++}
++
++/// Destination and message selected by the model; identity comes from runtime.
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Args {
++    /// Loaded destination in the caller's app-server process.
++    thread_id: String,
++    /// Message content, delivered as agent output rather than user instructions.
++    prompt: String,
++}
++
++/// Confirmation of accepted input, not of completed processing.
++#[derive(Serialize)]
++struct Receipt {
++    /// Destination that accepted the input.
++    thread_id: ThreadId,
++    /// Runtime-derived sender identity, also included in delivered content.
++    source_thread_id: ThreadId,
++    /// Newly started or already active destination turn.
++    turn_id: String,
++    /// How Core accepted this submission.
++    status: Delivery,
++}
++
++/// Distinguishes starting new work from steering work already in progress.
++#[derive(Serialize)]
++#[serde(rename_all = "snake_case")]
++enum Delivery {
++    /// A new destination turn accepted the input.
++    Started,
++    /// The active destination turn accepted steering input.
++    Steered,
++}
++
++impl Handler {
++    /// Rejects unsupported destinations before submitting any input.
++    async fn handle_call(
++        &self,
++        invocation: ToolInvocation,
++    ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
++        let ToolPayload::Function { arguments } = &invocation.payload else {
++            return Err(invalid(
++                "send_message_to_thread requires function arguments",
++            ));
++        };
++        let args: Args = parse_arguments(arguments)?;
++        let thread_id = ThreadId::from_string(&args.thread_id).map_err(invalid)?;
++        if args.prompt.trim().is_empty() {
++            return Err(invalid("prompt must not be empty"));
++        }
++        if invocation
++            .session
++            .session_source()
++            .await
++            .is_non_root_agent()
++        {
++            return Err(invalid(
++                "only root threads may send independent thread messages",
++            ));
++        }
++        let manager = self
++            .host
++            .manager
++            .upgrade()
++            .ok_or_else(|| invalid("messaging host is shutting down"))?;
++        let destination = manager.get_thread(thread_id).await.map_err(|error| {
++            invalid(format!(
++                "destination must be loaded in this app-server process; resume it in the host first: {error}"
++            ))
++        })?;
++        if destination.session_source.is_non_root_agent() {
++            return Err(invalid(
++                "destination must be a root thread; use collaboration tools for subagents",
++            ));
++        }
++        let source_thread_id = invocation.session.thread_id();
++        let message = ResponseItem::FunctionCallOutput {
++            id: None,
++            call_id: None,
++            name: Some("send_message_to_thread".to_string()),
++            namespace: Some("saffron".to_string()),
++            output: FunctionCallOutputPayload::from_text(
++                json!({"source_thread_id": source_thread_id, "input": args.prompt}).to_string(),
++            ),
++            internal_chat_message_metadata_passthrough: None,
++        };
++        let submitted = destination
++            .start_or_steer_turn(
++                TurnInputRequest::new(TurnInput::ResponseItem(message)).on_start(
++                    TurnStartOptions {
++                        turn_trigger: Some("saffron_thread_message".to_string()),
++                        ..Default::default()
++                    },
++                ),
++            )
++            .await
++            .map_err(invalid)?;
++        let (status, turn_id) = match submitted {
++            TurnInputSubmission::Started { turn_id } => (Delivery::Started, turn_id),
++            TurnInputSubmission::Steered { turn_id } => (Delivery::Steered, turn_id),
++            TurnInputSubmission::NotSubmitted { reason } => {
++                return Err(invalid(format!("message was not submitted: {reason:?}")));
++            }
++        };
++        Ok(boxed_tool_output(JsonToolOutput::new(
++            serde_json::to_value(Receipt {
++                thread_id,
++                source_thread_id,
++                turn_id,
++                status,
++            })
++            .map_err(invalid)?,
++        )))
++    }
++}
++
++impl ToolExecutor<ToolInvocation> for Handler {
++    fn tool_name(&self) -> ToolName {
++        ToolName::namespaced("saffron", "send_message_to_thread")
++    }
++
++    fn spec(&self) -> ToolSpec {
++        ToolSpec::Namespace(ResponsesApiNamespace {
++            name: "saffron".to_string(),
++            description: "Saffron extensions for independent thread and task coordination.".to_string(),
++            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
++                name: "send_message_to_thread".to_string(),
++                description: "Send a message to a root thread already loaded in this app-server process. Starts a turn when idle and steers an active turn without interrupting it. Preserves destination settings and includes your thread ID as the sender. Use only for user-authorized communication. The result reports submission, not completion. Unloaded threads must first be resumed by the host; other processes and subagents are not supported. Do not retry an uncertain delivery automatically.".to_string(),
++                strict: false,
++                defer_loading: None,
++                parameters: JsonSchema::object(BTreeMap::from([
++                    ("thread_id".to_string(), JsonSchema::string(Some("Destination root thread ID in this app-server process.".to_string()))),
++                    ("prompt".to_string(), JsonSchema::string(Some("Message to deliver to the destination.".to_string()))),
++                ]), Some(vec!["thread_id".to_string(), "prompt".to_string()]), Some(false.into())),
++                output_schema: None,
++            })],
++        })
++    }
++
++    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
++    where
++        ToolInvocation: 'a,
++    {
++        Box::pin(self.handle_call(invocation))
++    }
++}
++
++impl CoreToolRuntime for Handler {}
++
++/// Makes submission failures visible without suggesting another delivery occurred.
++fn invalid(error: impl std::fmt::Display) -> FunctionCallError {
++    FunctionCallError::RespondToModel(error.to_string())
++}
++
++#[cfg(test)]
++#[path = "thread_message/tests.rs"]
++mod tests;
+diff --git a/codex-rs/core/src/saffron/thread_message/tests.rs b/codex-rs/core/src/saffron/thread_message/tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..9de19323f34b8ac9f7549633a372340f1a37dbc8
+--- /dev/null
++++ b/codex-rs/core/src/saffron/thread_message/tests.rs
+@@ -0,0 +1,437 @@
++//! Delivery checks through real thread managers and the turn-input boundary.
++
++use super::*;
++use crate::CodexAppsToolsCache;
++use crate::build_models_manager;
++use crate::init_state_db;
++use crate::session::step_context::StepContext;
++use crate::session::tests::make_session_and_context;
++use crate::state::TaskKind;
++use crate::tasks::SessionTask;
++use crate::tasks::SessionTaskResult;
++use crate::thread_manager::NewThread;
++use crate::thread_manager::StartThreadOptions;
++use crate::thread_manager::thread_store_from_config;
++use crate::tools::context::ToolCallSource;
++use crate::turn_diff_tracker::TurnDiffTracker;
++use codex_login::AuthManager;
++use codex_login::CodexAuth;
++use codex_protocol::protocol::EventMsg;
++use codex_protocol::protocol::SessionSource;
++use codex_protocol::protocol::SubAgentSource;
++use codex_protocol::protocol::ThreadHistoryMode;
++use core_test_support::responses::ev_assistant_message;
++use core_test_support::responses::ev_completed;
++use core_test_support::responses::ev_response_created;
++use core_test_support::responses::mount_sse_once;
++use core_test_support::responses::sse;
++use core_test_support::test_codex::run_test_with_large_stack;
++use std::time::Duration;
++use tokio::sync::Mutex;
++use tokio_util::sync::CancellationToken;
++use wiremock::MockServer;
++
++/// Idle delivery is attributed tool output and does not replace saved settings.
++#[test_case::test_case(ThreadHistoryMode::Legacy; "legacy")]
++#[test_case::test_case(ThreadHistoryMode::Paginated; "paginated")]
++fn idle_delivery_preserves_destination(history_mode: ThreadHistoryMode) -> anyhow::Result<()> {
++    run_test_with_large_stack("idle thread message", move || async move {
++        let server = MockServer::start().await;
++        let response = mount_sse_once(
++            &server,
++            sse(vec![
++                ev_response_created("message-response"),
++                ev_assistant_message("message-answer", "received"),
++                ev_completed("message-response"),
++            ]),
++        )
++        .await;
++        let host = TestHost::new(&server, history_mode).await?;
++        let before = host.destination.thread.config_snapshot().await;
++        let receipt = host
++            .send(host.destination.thread_id, "handoff-marker")
++            .await?;
++        assert_eq!(receipt["status"], "started");
++        assert_eq!(
++            receipt["source_thread_id"],
++            host.source.thread_id.to_string()
++        );
++        assert_eq!(receipt["thread_id"], host.destination.thread_id.to_string());
++        tokio::time::timeout(Duration::from_secs(10), async {
++            loop {
++                if let EventMsg::TurnComplete(event) =
++                    host.destination.thread.next_event().await?.msg
++                {
++                    assert_eq!(event.turn_id, receipt["turn_id"].as_str().unwrap());
++                    assert_eq!(event.last_agent_message.as_deref(), Some("received"));
++                    assert!(event.error.is_none());
++                    break;
++                }
++            }
++            anyhow::Ok(())
++        })
++        .await??;
++        let request = response.single_request().body_json();
++        let delivered = request["input"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .find(|item| item["type"] == "function_call_output" && item["namespace"] == "saffron")
++            .expect("the model receives an attributed standalone tool output");
++        assert_eq!(delivered["name"], "send_message_to_thread");
++        let content: serde_json::Value =
++            serde_json::from_str(delivered["output"].as_str().unwrap())?;
++        assert_eq!(
++            content,
++            json!({"source_thread_id": host.source.thread_id, "input": "handoff-marker"})
++        );
++        let after = host.destination.thread.config_snapshot().await;
++        assert_eq!(after.model, before.model);
++        assert_eq!(after.approval_policy, before.approval_policy);
++        assert_eq!(after.cwd(), before.cwd());
++        assert_eq!(after.ephemeral, before.ephemeral);
++        let instructions = request.to_string();
++        assert!(instructions.contains("destination-instructions-marker"));
++        assert!(!instructions.contains("sender-instructions-marker"));
++        host.destination.thread.flush_rollout().await?;
++        assert!(
++            host.destination
++                .thread
++                .read_thread(true, false)
++                .await?
++                .rollout_path
++                .is_some()
++        );
++        host.shutdown().await
++    })
++}
++
++/// An active regular turn receives the message without replacement or interruption.
++#[test]
++fn busy_delivery_steers_the_existing_turn() -> anyhow::Result<()> {
++    run_test_with_large_stack("busy thread message", || async {
++        let server = MockServer::start().await;
++        let host = TestHost::new(&server, ThreadHistoryMode::Legacy).await?;
++        let (_, mut active_context) = make_session_and_context().await;
++        active_context.sub_id = "active-destination-turn".to_string();
++        let active_context = Arc::new(active_context);
++        host.destination
++            .thread
++            .session
++            .spawn_task(
++                Arc::clone(&active_context),
++                Vec::new(),
++                WaitingTask(TaskKind::Regular),
++            )
++            .await;
++        let receipt = host
++            .send(host.destination.thread_id, "steering-marker")
++            .await?;
++        assert_eq!(receipt["status"], "steered");
++        assert_eq!(receipt["turn_id"], "active-destination-turn");
++        let pending = host
++            .destination
++            .thread
++            .session
++            .input_queue
++            .get_pending_input(&host.destination.thread.session.active_turn)
++            .await
++            .0;
++        assert_eq!(pending.len(), 1);
++        let crate::session::TurnInput::FunctionCallOutput(output) = &pending[0] else {
++            panic!("steering must retain tool-output provenance");
++        };
++        let ResponseItem::FunctionCallOutput {
++            output, namespace, ..
++        } = &output.item
++        else {
++            panic!("expected a standalone output");
++        };
++        assert_eq!(namespace.as_deref(), Some("saffron"));
++        let content: serde_json::Value = serde_json::from_str(output.text_content().unwrap())?;
++        assert_eq!(content["input"], "steering-marker");
++        assert_eq!(
++            content["source_thread_id"],
++            host.source.thread_id.to_string()
++        );
++        assert!(
++            host.destination
++                .thread
++                .session
++                .active_turn
++                .lock()
++                .await
++                .is_some()
++        );
++        assert!(server.received_requests().await.unwrap().is_empty());
++        host.shutdown().await
++    })
++}
++
++/// A task that does not support steering is left running and receives no input.
++#[test]
++fn nonsteerable_turn_is_not_interrupted() -> anyhow::Result<()> {
++    run_test_with_large_stack("message review boundary", || async {
++        let server = MockServer::start().await;
++        let host = TestHost::new(&server, ThreadHistoryMode::Legacy).await?;
++        let (_, context) = make_session_and_context().await;
++        host.destination
++            .thread
++            .session
++            .spawn_task(Arc::new(context), Vec::new(), WaitingTask(TaskKind::Review))
++            .await;
++        let error = host
++            .send(host.destination.thread_id, "not delivered")
++            .await
++            .unwrap_err();
++        assert!(error.to_string().contains("ActiveTurnNotSteerable"));
++        let pending = host
++            .destination
++            .thread
++            .session
++            .input_queue
++            .get_pending_input(&host.destination.thread.session.active_turn)
++            .await
++            .0;
++        assert!(pending.is_empty());
++        assert!(
++            host.destination
++                .thread
++                .session
++                .active_turn
++                .lock()
++                .await
++                .is_some()
++        );
++        host.shutdown().await
++    })
++}
++
++/// A thread loaded by another registry cannot be reached even on the same host.
++#[test]
++fn foreign_and_unloaded_destinations_are_not_resumed() -> anyhow::Result<()> {
++    run_test_with_large_stack("message process scope", || async {
++        let server = MockServer::start().await;
++        let host = TestHost::new(&server, ThreadHistoryMode::Legacy).await?;
++        let foreign = TestHost::new(&server, ThreadHistoryMode::Legacy).await?;
++        let error = host
++            .send(foreign.destination.thread_id, "not delivered")
++            .await
++            .unwrap_err();
++        assert!(
++            error
++                .to_string()
++                .contains("destination must be loaded in this app-server process")
++        );
++        host.destination.thread.shutdown_and_wait().await?;
++        host.manager
++            .remove_thread(&host.destination.thread_id)
++            .await;
++        let error = host
++            .send(host.destination.thread_id, "not resumed")
++            .await
++            .unwrap_err();
++        assert!(error.to_string().contains("resume it in the host first"));
++        assert!(
++            host.manager
++                .get_thread(host.destination.thread_id)
++                .await
++                .is_err()
++        );
++        assert!(server.received_requests().await.unwrap().is_empty());
++        host.source.thread.shutdown_and_wait().await?;
++        foreign.shutdown().await
++    })
++}
++
++/// Caller input cannot supply sender identity, configuration, or blank content.
++#[test]
++fn invalid_arguments_have_no_delivery_effect() -> anyhow::Result<()> {
++    run_test_with_large_stack("message argument validation", || async {
++        let server = MockServer::start().await;
++        let host = TestHost::new(&server, ThreadHistoryMode::Legacy).await?;
++        for arguments in [
++            json!({"thread_id": host.destination.thread_id, "prompt": " \n\t"}),
++            json!({"thread_id": "not-a-thread", "prompt": "hello"}),
++            json!({"thread_id": host.destination.thread_id, "prompt": "hello", "source_thread_id": "forged"}),
++            json!({"thread_id": host.destination.thread_id, "prompt": "hello", "model": "override"}),
++        ] {
++            assert!(host.invoke(arguments).await.is_err());
++        }
++        assert!(server.received_requests().await.unwrap().is_empty());
++        host.shutdown().await
++    })
++}
++
++/// Parent-owned agents keep their existing collaboration and lifecycle contract.
++#[test]
++fn subagent_destination_is_rejected() -> anyhow::Result<()> {
++    run_test_with_large_stack("message root boundary", || async {
++        let server = MockServer::start().await;
++        let host = TestHost::new(&server, ThreadHistoryMode::Legacy).await?;
++        let child = host
++            .manager
++            .start_thread(StartThreadOptions {
++                session_source: Some(SessionSource::SubAgent(SubAgentSource::Other(
++                    "test-helper".to_string(),
++                ))),
++                ..StartThreadOptions::new(host.turn.config.as_ref().clone())
++            })
++            .await?;
++        let error = host
++            .send(child.thread_id, "not delivered")
++            .await
++            .unwrap_err();
++        assert!(
++            error
++                .to_string()
++                .contains("destination must be a root thread")
++        );
++        assert!(
++            child
++                .thread
++                .session
++                .services
++                .thread_extension_data
++                .get::<MessageHost>()
++                .is_none()
++        );
++        assert!(server.received_requests().await.unwrap().is_empty());
++        child.thread.shutdown_and_wait().await?;
++        host.shutdown().await
++    })
++}
++
++/// A pair of independent roots in a host with the production extension installed.
++struct TestHost {
++    /// Keeps the temporary home and base configuration alive.
++    _fixture: Session,
++    /// Registry that defines the process boundary under test.
++    manager: Arc<ThreadManager>,
++    /// Runtime sender, independent of model-provided arguments.
++    source: NewThread,
++    /// Root whose lifecycle and settings must survive delivery.
++    destination: NewThread,
++    /// Captured calling context used to invoke the model-facing handler.
++    turn: Arc<TurnContext>,
++}
++
++impl TestHost {
++    /// Starts roots with distinct instruction settings and a local model endpoint.
++    async fn new(server: &MockServer, history_mode: ThreadHistoryMode) -> anyhow::Result<Self> {
++        let (fixture, turn) = make_session_and_context().await;
++        let mut config = turn.config.as_ref().clone();
++        config.ephemeral = false;
++        config.model_provider.base_url = Some(server.uri());
++        config.model_provider.supports_websockets = false;
++        let state = init_state_db(&config).await.expect("test state database");
++        let auth = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
++        let manager = Arc::new_cyclic(|manager| {
++            let mut builder = ExtensionRegistryBuilder::default();
++            install(&mut builder, manager.clone());
++            ThreadManager::new(
++                &config,
++                Arc::clone(&auth),
++                build_models_manager(&config, Arc::clone(&auth)),
++                CodexAppsToolsCache::default(),
++                SessionSource::Exec,
++                Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
++                Arc::new(builder.build()),
++                Arc::new(crate::test_support::EmptyUserInstructionsProvider),
++                None,
++                crate::passthrough_image_store(),
++                thread_store_from_config(&config, Some(state)),
++                None,
++                "message-test".to_string(),
++                None,
++                None,
++            )
++        });
++        config.developer_instructions = Some("sender-instructions-marker".to_string());
++        let source = manager
++            .start_thread(StartThreadOptions {
++                history_mode: Some(history_mode),
++                ..StartThreadOptions::new(config.clone())
++            })
++            .await?;
++        config.developer_instructions = Some("destination-instructions-marker".to_string());
++        let destination = manager
++            .start_thread(StartThreadOptions {
++                history_mode: Some(history_mode),
++                ..StartThreadOptions::new(config)
++            })
++            .await?;
++        Ok(Self {
++            _fixture: fixture,
++            manager,
++            source,
++            destination,
++            turn: Arc::new(turn),
++        })
++    }
++
++    /// Invokes the handler with only the caller-controlled argument object.
++    async fn invoke(&self, arguments: serde_json::Value) -> anyhow::Result<serde_json::Value> {
++        let mut registry = ToolRegistry::default();
++        register(&self.source.thread.session, &self.turn, &mut registry);
++        let handler = registry
++            .remove(&ToolName::namespaced("saffron", "send_message_to_thread"))
++            .expect("production lifecycle and registration expose messaging on roots");
++        let output = handler
++            .handle(ToolInvocation {
++                session: Arc::clone(&self.source.thread.session),
++                step_context: StepContext::for_test(Arc::clone(&self.turn)),
++                turn: Arc::clone(&self.turn),
++                cancellation_token: CancellationToken::new(),
++                tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
++                call_id: "message-call".to_string(),
++                tool_name: ToolName::namespaced("saffron", "send_message_to_thread"),
++                source: ToolCallSource::Direct,
++                payload: ToolPayload::Function {
++                    arguments: arguments.to_string(),
++                },
++            })
++            .await?;
++        Ok(serde_json::from_str(&output.log_output())?)
++    }
++
++    /// Sends one ordinary message and decodes the acceptance receipt.
++    async fn send(&self, destination: ThreadId, prompt: &str) -> anyhow::Result<serde_json::Value> {
++        self.invoke(json!({"thread_id": destination, "prompt": prompt}))
++            .await
++    }
++
++    /// Joins both session loops before their temporary home can be released.
++    async fn shutdown(self) -> anyhow::Result<()> {
++        self.source.thread.shutdown_and_wait().await?;
++        self.destination.thread.shutdown_and_wait().await?;
++        Ok(())
++    }
++}
++
++/// Holds a regular turn open until normal shutdown cancels it.
++struct WaitingTask(
++    /// Controls whether the existing task permits steering.
++    TaskKind,
++);
++
++impl SessionTask for WaitingTask {
++    fn kind(&self) -> TaskKind {
++        self.0
++    }
++
++    fn span_name(&self) -> &'static str {
++        "session_task.thread_message_test"
++    }
++
++    async fn run(
++        self: Arc<Self>,
++        _session: Arc<Session>,
++        _ctx: Arc<TurnContext>,
++        _input: Vec<crate::session::TurnInput>,
++        cancellation_token: CancellationToken,
++    ) -> SessionTaskResult {
++        cancellation_token.cancelled().await;
++        Ok(None)
++    }
++}
