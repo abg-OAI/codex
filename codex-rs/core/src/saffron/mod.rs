@@ -7,6 +7,7 @@
 
 pub(crate) mod await_exec;
 pub(crate) mod compaction_requests;
+pub(crate) mod fork_thread;
 mod goal_edit;
 pub(crate) mod goal_resume;
 pub(crate) mod goal_scheduler;
@@ -47,4 +48,5 @@ pub(crate) fn register_tools(
 
     goal_edit::register_root_if_available(session, turn_context, registry);
     goal_resume::register_root_if_available(session, turn_context, registry);
+    fork_thread::register(session, turn_context, registry);
 }
