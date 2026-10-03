@@ -17,11 +17,118 @@ async fn saffron_migrations_have_an_independent_ledger() -> anyhow::Result<()> {
 
     assert_eq!(
         migration_versions(home.path().join(SAFFRON_DB_FILENAME), &sqlite).await?,
-        vec![1]
+        vec![1, 2, 3]
     );
     assert_eq!(
         migration_versions(state.sqlite().state_db_path(), &sqlite).await?,
         state_versions_before
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn supervisor_continuity_round_trips_snooze_context() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let sqlite = SqliteConfig::new_for_testing(home.path().abs());
+    let store = SaffronStore::open(&sqlite).await?;
+    let continuity = GoalSupervisorContinuity {
+        thread_id: ThreadId::new(),
+        goal_id: "goal-a".to_string(),
+        action: GoalSupervisorAction::Snooze {
+            delay_seconds: 1_477,
+            reason: "release build is still running".to_string(),
+        },
+        action_at_ms: 1_787_288_448_000,
+        snooze_count: 3,
+        snoozed_seconds: 2_377,
+    };
+
+    store.set_goal_supervisor_continuity(&continuity).await?;
+
+    assert_eq!(
+        store
+            .reconcile_goal_supervisor_continuity(continuity.thread_id, &continuity.goal_id)
+            .await?,
+        Some(continuity)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn supervisor_continuity_is_scoped_to_the_current_goal() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let sqlite = SqliteConfig::new_for_testing(home.path().abs());
+    let store = SaffronStore::open(&sqlite).await?;
+    let thread_id = ThreadId::new();
+    let previous = GoalSupervisorContinuity {
+        thread_id,
+        goal_id: "goal-a".to_string(),
+        action: GoalSupervisorAction::Followup {
+            delivered_message: Some("continue the accepted implementation".to_string()),
+        },
+        action_at_ms: 10,
+        snooze_count: 1,
+        snoozed_seconds: 60,
+    };
+    let replacement = GoalSupervisorContinuity {
+        thread_id,
+        goal_id: "goal-b".to_string(),
+        action: GoalSupervisorAction::Compact,
+        action_at_ms: 20,
+        snooze_count: 0,
+        snoozed_seconds: 0,
+    };
+
+    store.set_goal_supervisor_continuity(&previous).await?;
+    assert_eq!(
+        store
+            .reconcile_goal_supervisor_continuity(thread_id, &replacement.goal_id)
+            .await?,
+        None
+    );
+
+    store.set_goal_supervisor_continuity(&replacement).await?;
+    assert!(
+        !store
+            .clear_goal_supervisor_continuity_for_goal(thread_id, &previous.goal_id)
+            .await?
+    );
+    assert_eq!(
+        store
+            .reconcile_goal_supervisor_continuity(thread_id, &replacement.goal_id)
+            .await?,
+        Some(replacement)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn supervisor_continuity_clears_when_no_goal_remains() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let sqlite = SqliteConfig::new_for_testing(home.path().abs());
+    let store = SaffronStore::open(&sqlite).await?;
+    let continuity = GoalSupervisorContinuity {
+        thread_id: ThreadId::new(),
+        goal_id: "completed-goal".to_string(),
+        action: GoalSupervisorAction::Followup {
+            delivered_message: Some("continue the release".to_string()),
+        },
+        action_at_ms: 10,
+        snooze_count: 0,
+        snoozed_seconds: 0,
+    };
+
+    store.set_goal_supervisor_continuity(&continuity).await?;
+    assert!(
+        store
+            .clear_goal_supervisor_continuity(continuity.thread_id)
+            .await?
+    );
+    assert_eq!(
+        store
+            .reconcile_goal_supervisor_continuity(continuity.thread_id, &continuity.goal_id)
+            .await?,
+        None
     );
     Ok(())
 }
