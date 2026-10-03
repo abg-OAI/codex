@@ -458,30 +458,8 @@ async fn generate_account(
     input: String,
     output_limit: usize,
 ) -> anyhow::Result<String> {
-    let models = session
-        .services
-        .models_manager
-        .list_models(
-            codex_models_manager::manager::RefreshStrategy::Offline,
-            turn.config.http_client_factory(),
-        )
-        .await;
-    let selected = models
-        .iter()
-        .filter_map(|model| luna_generation(&model.model).map(|generation| (generation, model)))
-        .max_by(|(a, _), (b, _)| a.cmp(b))
-        .map(|(_, model)| model)
-        .ok_or_else(|| anyhow::anyhow!("no Luna model in catalog"))?;
-    let model = session
-        .services
-        .models_manager
-        .get_model_info(&selected.model, &turn.config.to_models_manager_config())
-        .await;
+    let (model, effort) = super::luna::select(session, turn).await?;
     let tier = ServiceTier::Fast.request_value();
-    anyhow::ensure!(
-        model.supports_service_tier(tier),
-        "Luna model does not support Fast service"
-    );
     let prompt = Prompt {
         input: vec![ResponseItem::Message {
             id: None,
@@ -509,7 +487,7 @@ async fn generate_account(
             &prompt,
             &model,
             &turn.session_telemetry,
-            Some(selected.default_reasoning_effort.clone()),
+            Some(effort),
             ReasoningSummary::None,
             Some(tier.to_owned()),
             &metadata,
@@ -551,14 +529,9 @@ async fn generate_account(
 }
 
 /// Orders published Luna generations numerically rather than by display name.
+#[cfg(test)]
 fn luna_generation(model: &str) -> Option<Vec<u32>> {
-    model
-        .strip_prefix("gpt-")?
-        .strip_suffix("-luna")?
-        .split('.')
-        .map(str::parse)
-        .collect::<Result<Vec<_>, _>>()
-        .ok()
+    super::luna::generation(model)
 }
 
 #[cfg(test)]
