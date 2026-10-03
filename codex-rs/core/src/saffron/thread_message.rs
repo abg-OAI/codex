@@ -29,7 +29,6 @@ use codex_tools::ToolOutput;
 use codex_tools::ToolSpec;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::json;
 
 use crate::ThreadManager;
 use crate::TurnInputRequest;
@@ -94,6 +93,18 @@ struct Args {
     thread_id: String,
     /// Message content, delivered as agent output rather than user instructions.
     prompt: String,
+}
+
+/// Runtime attribution saved with the message so transcript replay needs no lookup.
+#[derive(Serialize)]
+struct Message {
+    /// Sender identity supplied by the session, never by tool arguments.
+    source_thread_id: ThreadId,
+    /// Best-effort display name at send time; absence does not prevent delivery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_thread_name: Option<String>,
+    /// Agent-provided body retaining its original authority as tool output.
+    input: String,
 }
 
 /// Confirmation of accepted input, not of completed processing.
@@ -161,13 +172,27 @@ impl Handler {
             ));
         }
         let source_thread_id = invocation.session.thread_id();
+        let source_thread_name = if let Ok(source) = manager.get_thread(source_thread_id).await {
+            source
+                .read_thread(true, false)
+                .await
+                .ok()
+                .and_then(|thread| thread.name)
+        } else {
+            None
+        };
         let message = ResponseItem::FunctionCallOutput {
             id: None,
             call_id: None,
             name: Some("send_message_to_thread".to_string()),
             namespace: Some("saffron".to_string()),
             output: FunctionCallOutputPayload::from_text(
-                json!({"source_thread_id": source_thread_id, "input": args.prompt}).to_string(),
+                serde_json::to_string(&Message {
+                    source_thread_id,
+                    source_thread_name,
+                    input: args.prompt,
+                })
+                .map_err(invalid)?,
             ),
             internal_chat_message_metadata_passthrough: None,
         };
