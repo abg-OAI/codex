@@ -608,6 +608,9 @@ impl ContextManager {
         mut self,
         input_modalities: &[InputModality],
     ) -> Vec<ResponseItemEnvelope> {
+        self.items = Arc::new(crate::saffron::refine::valid_items(Arc::unwrap_or_clone(
+            self.items,
+        )));
         self.normalize_history(input_modalities);
         crate::saffron::request_account::into_model_items(Arc::unwrap_or_clone(self.items))
     }
@@ -657,6 +660,7 @@ impl ContextManager {
             i64::try_from(approx_token_count(&base_instructions.text)).unwrap_or(i64::MAX);
 
         let items_tokens = crate::saffron::request_account::model_items(&self.items)
+            .filter(|item| crate::saffron::refine::valid_annotation(item, &self.items))
             .map(|envelope| estimate_item_token_count(&envelope.item))
             .fold(0i64, i64::saturating_add);
 

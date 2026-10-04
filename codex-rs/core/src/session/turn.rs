@@ -422,6 +422,7 @@ pub(crate) async fn run_turn(
     // 2. After auto-compact, while a model/tool continuation is pending.
 
     let mut next_step_context = Some(first_step_context);
+    let mut initial_refinement_input = Some(input.as_slice());
     let mut guardian_budget_compacted = false;
     loop {
         // Note that pending_input would be something like a message the user
@@ -496,6 +497,19 @@ pub(crate) async fn run_turn(
                 .await?
             }
         };
+        if !crate::saffron::refine::prepare(
+            &sess,
+            &step_context,
+            initial_refinement_input
+                .take()
+                .filter(|inputs| !inputs.is_empty())
+                .unwrap_or(&pending_input),
+            &cancellation_token,
+        )
+        .await
+        {
+            return Ok(None);
+        }
         let sampling_request_result: CodexResult<_> = async {
             super::time_reminder::maybe_record_current_time_reminder(
                 sess.as_ref(),
@@ -514,9 +528,14 @@ pub(crate) async fn run_turn(
 
             // Construct the input that we will send to the model.
             let sampling_request_input: Vec<ResponseItem> = async {
-                sess.clone_history()
-                    .await
-                    .for_prompt(&step_context.settings.model_info.input_modalities)
+                crate::saffron::refine::model_items(
+                    sess.clone_history()
+                        .await
+                        .for_prompt_annotated(&step_context.settings.model_info.input_modalities),
+                )
+                .into_iter()
+                .map(codex_history::ResponseItemEnvelope::into_item)
+                .collect()
             }
             .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
             .await;
