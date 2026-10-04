@@ -1683,10 +1683,10 @@ index 3228c6aa9139a1696ef23adb1f2889aa0ceccffc..0151fb8cfff555864f04bec45f4159ca
          let thread = self.state.get_thread(thread_id).await?;
          if !thread.has_persistence() && self.state.is_saved_target(thread_id) {
 diff --git a/codex-rs/core/src/tools/handlers/dynamic.rs b/codex-rs/core/src/tools/handlers/dynamic.rs
-index f2b7860d06385301ebefa9bdd70eb0a43a8639ad..70eeee2d6623d299c586272a80dbc48ed9d0e126 100644
+index f658d6742b158fbc5abbf6a8e1a78dba890466e1..74a5697ee526d7587f9e798e43703e0a871bfccf 100644
 --- a/codex-rs/core/src/tools/handlers/dynamic.rs
 +++ b/codex-rs/core/src/tools/handlers/dynamic.rs
-@@ -171,7 +171,7 @@ impl CoreToolRuntime for DynamicToolHandler {}
+@@ -175,7 +175,7 @@ impl CoreToolRuntime for DynamicToolHandler {
      clippy::await_holding_invalid_type,
      reason = "active turn checks and dynamic tool response registration must remain atomic"
  )]
@@ -1695,7 +1695,7 @@ index f2b7860d06385301ebefa9bdd70eb0a43a8639ad..70eeee2d6623d299c586272a80dbc48e
      session: &Session,
      turn_context: &TurnContext,
      call_id: String,
-@@ -189,7 +189,7 @@ async fn request_dynamic_tool(
+@@ -193,7 +193,7 @@ async fn request_dynamic_tool(
                  let mut ts = at.turn_state.lock().await;
                  ts.insert_pending_dynamic_tool(call_id.clone(), tx_response)
              }

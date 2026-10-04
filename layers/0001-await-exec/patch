@@ -542,7 +542,7 @@ index 763fa155766dc67536ab89214861705d90dc027f..ab2493211053fe2baa54c279c423d456
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 66f841d5924708794e39af02ae6c169455a9db5c..8fdd685f78d0b0af320af980762262a98125abba 100644
+index a3ec808099fc4dfd89607fa10fd896b984856bd8..5cfb1f3513af629435c30c51053629907d869abb 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -553,7 +553,7 @@ index 66f841d5924708794e39af02ae6c169455a9db5c..8fdd685f78d0b0af320af980762262a9
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -1091,6 +1092,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1142,6 +1143,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
      if features.enabled(Feature::UnifiedExec) {
          registry.add(ExecCommandHandler::new(options));
          registry.add(WriteStdinHandler);
@@ -1256,10 +1256,10 @@ index 0000000000000000000000000000000000000000..0c3c4b17c6553a6c3efd713d021a4f33
 +    assert_eq!(output.process_id, Some(PROCESS_ID));
 +}
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index d0f0f0c8a8792aaea6224842fbccfadad1fa18bb..a1930b771f5ba5e932a38ffd6f1a1b67d5555218 100644
+index 8142ec5c11abbda37eeae93cff8da5aa26a6df78..0ec070942f284d4177072113723c8feaf6d8e43d 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -194,6 +194,7 @@ mod rollout_compression;
+@@ -196,6 +196,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;

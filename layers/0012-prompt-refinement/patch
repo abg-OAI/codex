@@ -1130,7 +1130,7 @@ index 0000000000000000000000000000000000000000..b7fdcb8d7ad3b2a8bfd82aa5ca98411f
 +Write a concise standalone instruction in the user's language, not an answer,
 +plan, completion claim, or report about the rewriting process.
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index 03aa0f197e2e0b44ec2a8c298bdb74e463978882..e9f08b820de746d3d569273a0f4b7c7e1589e489 100644
+index 96456c77ebd698c32da820fd5125a20d31ea1aeb..a194b85552fa2c6a124a9bc9707a8bdd26b4945b 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
 @@ -422,6 +422,7 @@ pub(crate) async fn run_turn(
