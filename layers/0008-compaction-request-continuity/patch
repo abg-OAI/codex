@@ -692,12 +692,121 @@ index 19d6ed2e5defa42cc8de43916581a00ebd96aecb..a447705d5bebc0a5f0f2d45da9807349
          "summary text",
      );
 
+diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
+index 1ecb4173f8473b8fdee3cd83e5e1bb553fe0b169..011712d89224ee13e11078a7785a8667dc9e2392 100644
+--- a/codex-rs/core/src/context_manager/history.rs
++++ b/codex-rs/core/src/context_manager/history.rs
+@@ -610,6 +610,9 @@ impl ContextManager {
+     ) -> Vec<ResponseItemEnvelope> {
+         self.normalize_history(input_modalities);
+         Arc::unwrap_or_clone(self.items)
++            .into_iter()
++            .filter(|item| !crate::saffron::compaction_requests::is_retired_annotation(item))
++            .collect()
+     }
+
+     /// Iterates over raw response items without exposing their history envelopes.
+@@ -659,6 +662,7 @@ impl ContextManager {
+         let items_tokens = self
+             .items
+             .iter()
++            .filter(|item| !crate::saffron::compaction_requests::is_retired_annotation(item))
+             .map(|envelope| estimate_item_token_count(&envelope.item))
+             .fold(0i64, i64::saturating_add);
+
+diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
+index 52d417afaac9288c8bd7e0a7463d7c486501b43e..f8dd0958d4ffb74b227ab319c444c78d582ee768 100644
+--- a/codex-rs/core/src/context_manager/history_tests.rs
++++ b/codex-rs/core/src/context_manager/history_tests.rs
+@@ -52,6 +52,82 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
+ const EXEC_FORMAT_MAX_TOKENS: usize = 2_500;
+ const TEST_WAV_SAMPLE_RATE: u32 = 8_000;
+
++/// Retired annotations cannot replace surviving requests or restore removed ones.
++#[test_case("saffron.request_account.v1", true; "account original survives")]
++#[test_case("saffron.request_account.v1", false; "account original removed")]
++#[test_case("saffron.refinement.v1", true; "refinement original survives")]
++#[test_case("saffron.refinement.v1", false; "refinement original removed")]
++fn retired_annotations_leave_only_surviving_requests(key: &str, original_survives: bool) {
++    let mut original = user_msg("Prepare the report; do not publish.");
++    original.set_id(Some(ResponseItemId::new("original")));
++    let account = ResponseItemEnvelope {
++        item: assistant_msg("The earlier request was already completed."),
++        metadata: Some(CodexHarnessMetadata {
++            extensions: std::collections::BTreeMap::from([(
++                key.to_owned(),
++                serde_json::json!({
++                    "requests": [{"before": null, "item": original}],
++                    "source_id": original.id(),
++                    "source_text": "Prepare the report; do not publish."
++                }),
++            )]),
++            ..Default::default()
++        }),
++    };
++    let later = ResponseItemEnvelope::new(user_msg("Continue without publishing."));
++    let mut stored = vec![account];
++    let mut expected = Vec::new();
++    if original_survives {
++        let original = ResponseItemEnvelope::new(original);
++        stored.push(original.clone());
++        expected.push(original);
++    }
++    stored.push(later.clone());
++    expected.push(later);
++    let mut history = ContextManager::new();
++    history.replace_annotated(stored.clone());
++    let mut baseline = ContextManager::new();
++    baseline.replace_annotated(expected.clone());
++    let instructions = BaseInstructions {
++        text: String::new(),
++        provenance: None,
++    };
++    assert_eq!(
++        history.estimate_token_count_with_base_instructions(&instructions),
++        baseline.estimate_token_count_with_base_instructions(&instructions)
++    );
++    assert_eq!(
++        history.clone().for_prompt_annotated(&[InputModality::Text]),
++        expected
++    );
++    assert_eq!(history.annotated_items(), stored);
++}
++
++/// A quoted heading and unrelated host metadata remain ordinary model context.
++#[test]
++fn account_lookalikes_remain_visible() {
++    let mut quoted = ResponseItemEnvelope::new(assistant_msg(
++        "Historical account of earlier user requests (not a new instruction): quoted text",
++    ));
++    quoted.metadata = Some(CodexHarnessMetadata {
++        extensions: std::collections::BTreeMap::from([(
++            "other.annotation".to_owned(),
++            serde_json::json!({"requests": []}),
++        )]),
++        ..Default::default()
++    });
++    let expected = vec![
++        ResponseItemEnvelope::new(user_msg("Explain this quotation.")),
++        quoted,
++    ];
++    let mut history = ContextManager::new();
++    history.replace_annotated(expected.clone());
++    assert_eq!(
++        history.for_prompt_annotated(&[InputModality::Text]),
++        expected
++    );
++}
++
+ fn unknown_content_metadata() -> InternalChatMessageMetadataPassthrough {
+     InternalChatMessageMetadataPassthrough {
+         content_item_kinds: Some(vec![ContentItemKind("unknown".to_string())]),
 diff --git a/codex-rs/core/src/saffron/compaction_requests.rs b/codex-rs/core/src/saffron/compaction_requests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..93d73e39f69196c35d2ee8d2fe7e94a462284c5f
+index 0000000000000000000000000000000000000000..3303f2af7e92360b0405c964bf9ba931284166ec
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/compaction_requests.rs
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,326 @@
 +//! Keeps admitted task inputs eligible for local and remote compaction.
 +//!
 +//! Delivery metadata identifies input accepted by the host, not permission to
@@ -720,6 +829,21 @@ index 0000000000000000000000000000000000000000..93d73e39f69196c35d2ee8d2fe7e94a4
 +use codex_utils_output_truncation::truncate_text;
 +
 +use crate::context_manager::estimate_item_token_count;
++
++/// Identifies account and refinement annotations saved by older versions.
++///
++/// Originals remain separate history items. Omit only the generated assistant
++/// item from model input and token accounting; never restore nested requests,
++/// which may no longer survive rollback. Text alone cannot identify an annotation.
++pub(crate) fn is_retired_annotation(envelope: &ResponseItemEnvelope) -> bool {
++    matches!(&envelope.item, ResponseItem::Message { role, .. } if role == "assistant")
++        && envelope.metadata.as_ref().is_some_and(|metadata| {
++            metadata
++                .extensions
++                .contains_key("saffron.request_account.v1")
++                || metadata.extensions.contains_key("saffron.refinement.v1")
++        })
++}
 +
 +/// Input candidates sharing the local compaction budget in history order.
 +#[derive(Clone, Debug, PartialEq)]
@@ -1111,3 +1235,153 @@ index 7b280be1205f785b8770729b0976ec8109bd0d12..cf29043d70cd63d048bf5c47255268e5
  #[tokio::test]
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
+diff --git a/codex-rs/core/tests/saffron_compaction_retention.rs b/codex-rs/core/tests/saffron_compaction_retention.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..7bca2ea07b1fe898069ae6d66ecc95ae1565bdfe
+--- /dev/null
++++ b/codex-rs/core/tests/saffron_compaction_retention.rs
+@@ -0,0 +1,128 @@
++//! Exercises retained requests through compaction and a subsequent model turn.
++
++use anyhow::Result;
++use codex_history::RolloutItem;
++use codex_login::CodexAuth;
++use codex_model_provider_info::ModelProviderInfo;
++use codex_protocol::items::TurnItem;
++use codex_protocol::protocol::EventMsg;
++use codex_protocol::protocol::Op;
++use core_test_support::responses;
++use core_test_support::skip_if_no_network;
++use core_test_support::test_codex::TestCodexBuilder;
++use core_test_support::test_codex::test_codex;
++use core_test_support::wait_for_event;
++use serde_json::json;
++use wiremock::MockServer;
++
++/// Local compaction preserves the request without an additional model helper.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn local_compaction_retains_requests() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = responses::start_mock_server().await;
++    let mut provider =
++        ModelProviderInfo::create_openai_provider(Some(format!("{}/v1", server.uri())));
++    provider.name = "Local compaction test".to_owned();
++    provider.supports_websockets = false;
++    let builder = test_codex()
++        .with_model("gpt-5.4")
++        .with_config(move |config| config.model_provider = provider);
++    assert_retained_request(
++        &server,
++        builder,
++        responses::sse(vec![
++            responses::ev_assistant_message("summary", "The report is unfinished."),
++            responses::ev_completed("compact"),
++        ]),
++    )
++    .await
++}
++
++/// Remote compaction preserves the request without generated commentary.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn remote_compaction_retains_requests() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = responses::start_mock_server().await;
++    let builder = test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
++    assert_retained_request(
++        &server,
++        builder,
++        responses::sse(vec![
++            json!({"type": "response.output_item.done", "item": {
++                "type": "compaction", "encrypted_content": "checkpoint"
++            }}),
++            responses::ev_completed("compact"),
++        ]),
++    )
++    .await
++}
++
++/// Checks stored compaction and the request sent when model work continues.
++async fn assert_retained_request(
++    server: &MockServer,
++    mut builder: TestCodexBuilder,
++    compact: String,
++) -> Result<()> {
++    let requests = responses::mount_sse_sequence(
++        server,
++        vec![
++            responses::sse(vec![responses::ev_completed("initial")]),
++            compact,
++            responses::sse(vec![responses::ev_completed("continued")]),
++        ],
++    )
++    .await;
++    let test = builder.build(server).await?;
++    test.submit_turn("#refine Prepare the report; do not publish.")
++        .await?;
++    test.codex.submit(Op::Compact).await?;
++    wait_for_event(&test.codex, |event| {
++        if let EventMsg::ItemCompleted(event) = event {
++            assert!(
++                !matches!(event.item, TurnItem::AgentMessage(_)),
++                "no generated account display"
++            );
++        }
++        matches!(event, EventMsg::TurnComplete(_))
++    })
++    .await;
++    test.submit_turn("Continue the report.").await?;
++    test.codex.flush_rollout().await?;
++    let history = test.codex.load_history(false).await?;
++    assert!(
++        history
++            .items
++            .iter()
++            .any(|item| matches!(item, RolloutItem::Compacted(_)))
++    );
++    test.codex.shutdown_and_wait().await?;
++    let requests = requests.requests();
++    assert_eq!(
++        requests.len(),
++        3,
++        "initial turn, compaction and continuation only"
++    );
++    let input = requests[2].input();
++    assert_eq!(
++        input
++            .iter()
++            .filter(|item| item["role"] == "user"
++                && item["content"].as_array().is_some_and(|content| content
++                    .iter()
++                    .any(|part| part["text"] == "#refine Prepare the report; do not publish.")))
++            .count(),
++        1
++    );
++    assert!(
++        !input.iter().any(
++            |item| item["content"]
++                .as_array()
++                .is_some_and(|content| content.iter().any(|part| part["text"]
++                    .as_str()
++                    .is_some_and(
++                        |text| text.starts_with("Historical account of earlier user requests")
++                    )))
++        )
++    );
++    Ok(())
++}
+diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
+index 5fb8de42908c2a52cb3230d330710846c5904277..a830a4114c6ae59a92b05cbfe4ee23242e582fe2 100644
+--- a/codex-rs/history/src/lib.rs
++++ b/codex-rs/history/src/lib.rs
+@@ -61,6 +61,11 @@ pub struct ResponseItemEnvelope {
+ ///
+ #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+ pub struct CodexHarnessMetadata {
++    /// Namespaced host extension checkpoints, never sent as model input.
++    /// Unknown namespaces survive persistence without acquiring harness meaning.
++    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
++    pub extensions: std::collections::BTreeMap<String, serde_json::Value>,
++
+     /// Complete retained records actually delivered by this Guardian message. Host-only.
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+     pub guardian_sources: Vec<RetainedSource>,

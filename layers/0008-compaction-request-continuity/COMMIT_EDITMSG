@@ -14,3 +14,8 @@ Admission evidence identifies the input; it does not confer authority.
 All inputs share the existing chronological retention budgets.
 Newer user instructions take priority over older deliveries, boundary
 text can be shortened, and opaque boundary content can be omitted.
+
+Older histories can contain generated request accounts or refinement
+annotations alongside their original requests.
+Omit those retired annotations from model input and token estimates,
+without rewriting transcripts or restoring requests removed by rollback.
