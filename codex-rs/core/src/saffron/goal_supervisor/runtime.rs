@@ -95,7 +95,8 @@ enum IdleDisposition {
 struct ActiveHelper {
     thread_id: ThreadId,
     continuation: ContinuationPermit,
-    goal_id: String,
+    goal_revision: codex_state::ThreadGoalRevision,
+    edit_state: GoalEditState,
     action: Option<Action>,
 }
 
@@ -126,6 +127,14 @@ impl CheckinStart {
     pub(crate) fn is_saffron_owned(self) -> bool {
         !matches!(self, Self::OutsideScope)
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum GoalEditState {
+    #[default]
+    Available,
+    InFlight,
+    Committed,
 }
 
 #[derive(Clone)]
@@ -247,7 +256,7 @@ pub(crate) async fn start_checkin(
             (
                 active.thread_id,
                 active.continuation,
-                active.goal_id.clone(),
+                active.goal_revision.goal_id().to_string(),
             )
         });
         (state.starting, active)
@@ -343,7 +352,8 @@ pub(crate) async fn start_checkin(
             runtime.state.lock().await.active = Some(ActiveHelper {
                 thread_id: helper_id,
                 continuation,
-                goal_id: goal.goal_id.clone(),
+                goal_revision: codex_state::ThreadGoalRevision::capture(goal),
+                edit_state: GoalEditState::Available,
                 action: None,
             });
             settle_persisted_wake(parent, goal, &runtime, continuation).await;
@@ -376,7 +386,9 @@ pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: Contin
         state.starting = None;
         state
             .active
-            .take_if(|active| active.action.is_none())
+            .take_if(|active| {
+                active.action.is_none() && active.edit_state != GoalEditState::InFlight
+            })
             .map(|active| active.thread_id)
     };
     drop(_transition);
@@ -492,9 +504,76 @@ pub(super) async fn select_action(
     if active.action.is_some() {
         return Err("a supervisor action was already selected for this check-in".to_string());
     }
+    if active.edit_state == GoalEditState::InFlight {
+        return Err("the supervisor goal edit is still in progress".to_string());
+    }
     active.action = Some(action.clone());
-    let goal_id = active.goal_id.clone();
+    let goal_id = active.goal_revision.goal_id().to_string();
     Ok(goal_id)
+}
+
+/// Reserves the one optional goal edit allowed before a disposition action.
+pub(in crate::saffron) async fn begin_goal_edit(
+    parent: &Arc<Session>,
+    helper_id: ThreadId,
+) -> Result<codex_state::ThreadGoalRevision, String> {
+    let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    if parent.active_turn.lock().await.is_some() {
+        return Err("the parent started a turn before this goal edit began".to_string());
+    }
+    let mut state = runtime.state.lock().await;
+    let Some(active) = state
+        .active
+        .as_mut()
+        .filter(|active| active.thread_id == helper_id)
+    else {
+        return Err("this supervisor helper is no longer active".to_string());
+    };
+    if !runtime.owns_continuation(active.continuation) {
+        return Err("the parent claimed continuation before this goal edit began".to_string());
+    }
+    if active.action.is_some() {
+        return Err("the supervisor disposition was already selected".to_string());
+    }
+    match active.edit_state {
+        GoalEditState::Available => {
+            active.edit_state = GoalEditState::InFlight;
+            Ok(active.goal_revision.clone())
+        }
+        GoalEditState::InFlight => Err("a supervisor goal edit is already in progress".to_string()),
+        GoalEditState::Committed => {
+            Err("the active goal was already edited during this check-in".to_string())
+        }
+    }
+}
+
+/// Commits the helper's edit reservation without consuming its disposition.
+pub(in crate::saffron) async fn commit_goal_edit(parent: &Session, helper_id: ThreadId) {
+    let runtime = runtime(parent);
+    let mut state = runtime.state.lock().await;
+    if let Some(active) = state
+        .active
+        .as_mut()
+        .filter(|active| active.thread_id == helper_id)
+        && active.edit_state == GoalEditState::InFlight
+    {
+        active.edit_state = GoalEditState::Committed;
+    }
+}
+
+/// Releases an edit reservation when validation or persistence fails.
+pub(in crate::saffron) async fn clear_failed_goal_edit(parent: &Session, helper_id: ThreadId) {
+    let runtime = runtime(parent);
+    let mut state = runtime.state.lock().await;
+    if let Some(active) = state
+        .active
+        .as_mut()
+        .filter(|active| active.thread_id == helper_id)
+        && active.edit_state == GoalEditState::InFlight
+    {
+        active.edit_state = GoalEditState::Available;
+    }
 }
 
 pub(super) async fn commit_action(parent: &Session, goal_id: &str, action: Action) {
