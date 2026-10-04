@@ -403,10 +403,10 @@ index 0000000000000000000000000000000000000000..ec084660b107a4d5c323218260508daa
 +    }
 +}
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index f52cdac97161742728c1bfa302454e164f14f69e..387609afdaf6a6ee71c8efdba667dcfdfab9c796 100644
+index 4eed47fe52e143193a27e98f7ab3a086b6c48b22..7291317b97123f5a466062851c01261d8d87b8a6 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
-@@ -119,6 +119,9 @@ mod review;
+@@ -121,6 +121,9 @@ mod review;
  mod rollout_compress;
  mod rollout_migration;
  mod safety_check_downgrade;
@@ -6980,7 +6980,7 @@ index 5ace22c811bc97df2bf0546b461ba12102406cda..8eee2e54ad49706718c3fe29cadcf719
              |item| matches!(item, TurnInput::InterAgentCommunication(mail) if mail.trigger_turn),
          ) {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 8fdd685f78d0b0af320af980762262a98125abba..7f31302f4f4cce22afff07d9dd9730b83b80ce97 100644
+index 5cfb1f3513af629435c30c51053629907d869abb..9161c1d6227d235463b5f98b646a81802803a0e2 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -150,6 +150,7 @@ pub(crate) fn build_tool_router(
