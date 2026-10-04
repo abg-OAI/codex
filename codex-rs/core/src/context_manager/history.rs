@@ -609,7 +609,7 @@ impl ContextManager {
         input_modalities: &[InputModality],
     ) -> Vec<ResponseItemEnvelope> {
         self.normalize_history(input_modalities);
-        Arc::unwrap_or_clone(self.items)
+        crate::saffron::request_account::into_model_items(Arc::unwrap_or_clone(self.items))
     }
 
     /// Iterates over raw response items without exposing their history envelopes.
@@ -656,9 +656,7 @@ impl ContextManager {
         let base_tokens =
             i64::try_from(approx_token_count(&base_instructions.text)).unwrap_or(i64::MAX);
 
-        let items_tokens = self
-            .items
-            .iter()
+        let items_tokens = crate::saffron::request_account::model_items(&self.items)
             .map(|envelope| estimate_item_token_count(&envelope.item))
             .fold(0i64, i64::saturating_add);
 
