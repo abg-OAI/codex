@@ -87,24 +87,79 @@ index 1ecb4173f8473b8fdee3cd83e5e1bb553fe0b169..5dbff2bbfddc2ef490097f22e3ad8573
              .map(|envelope| estimate_item_token_count(&envelope.item))
              .fold(0i64, i64::saturating_add);
 
+diff --git a/codex-rs/core/src/saffron/luna.rs b/codex-rs/core/src/saffron/luna.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ed5f5c65d5be1c59afd74ddb3d69d5590caf5414
+--- /dev/null
++++ b/codex-rs/core/src/saffron/luna.rs
+@@ -0,0 +1,48 @@
++//! Catalog selection shared by Saffron's tool-free Luna helpers.
++
++use codex_models_manager::manager::RefreshStrategy;
++use codex_protocol::config_types::ServiceTier;
++use codex_protocol::openai_models::ModelInfo;
++use codex_protocol::openai_models::ReasoningEffort;
++
++use crate::session::session::Session;
++use crate::session::turn_context::TurnContext;
++
++/// Selects the newest catalog Luna and requires its Fast service tier.
++pub(super) async fn select(
++    session: &Session,
++    turn: &TurnContext,
++) -> anyhow::Result<(ModelInfo, ReasoningEffort)> {
++    let models = session
++        .services
++        .models_manager
++        .list_models(RefreshStrategy::Offline, turn.config.http_client_factory())
++        .await;
++    let selected = models
++        .iter()
++        .filter_map(|model| generation(&model.model).map(|generation| (generation, model)))
++        .max_by(|(a, _), (b, _)| a.cmp(b))
++        .map(|(_, model)| model)
++        .ok_or_else(|| anyhow::anyhow!("no Luna model in catalog"))?;
++    let model = session
++        .services
++        .models_manager
++        .get_model_info(&selected.model, &turn.config.to_models_manager_config())
++        .await;
++    anyhow::ensure!(
++        model.supports_service_tier(ServiceTier::Fast.request_value()),
++        "Luna model does not support Fast service"
++    );
++    Ok((model, selected.default_reasoning_effort.clone()))
++}
++
++/// Orders published Luna generations numerically rather than by display name.
++pub(super) fn generation(model: &str) -> Option<Vec<u32>> {
++    model
++        .strip_prefix("gpt-")?
++        .strip_suffix("-luna")?
++        .split('.')
++        .map(str::parse)
++        .collect::<Result<Vec<_>, _>>()
++        .ok()
++}
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
-index 0e5b94605cafe76a6c7fe66b8627aa905dd16dd4..988be7d758dfde506aff555db95ea2491b9957d6 100644
+index 0e5b94605cafe76a6c7fe66b8627aa905dd16dd4..c57f447d5d0e67de466ea218d84b19ddae86be21 100644
 --- a/codex-rs/core/src/saffron/mod.rs
 +++ b/codex-rs/core/src/saffron/mod.rs
-@@ -11,6 +11,7 @@ mod goal_edit;
+@@ -11,6 +11,8 @@ mod goal_edit;
  pub(crate) mod goal_resume;
  pub(crate) mod goal_scheduler;
  pub(crate) mod goal_supervisor;
++mod luna;
 +pub(crate) mod request_account;
  pub(crate) mod saved_thread_persistence;
  mod storage;
  pub(crate) mod subagent_completion;
 diff --git a/codex-rs/core/src/saffron/request_account.rs b/codex-rs/core/src/saffron/request_account.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..228187261f6936eefd86e9d2071a38d1275c10a8
+index 0000000000000000000000000000000000000000..090fcb51ad824a7c1af1e6b92b576d0651297994
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/request_account.rs
-@@ -0,0 +1,566 @@
+@@ -0,0 +1,539 @@
 +//! Replaces retained requests with one historical account at compaction time.
 +//!
 +//! Compaction callers first apply their ordinary retention budget, then call
@@ -565,30 +620,8 @@ index 0000000000000000000000000000000000000000..228187261f6936eefd86e9d2071a38d1
 +    input: String,
 +    output_limit: usize,
 +) -> anyhow::Result<String> {
-+    let models = session
-+        .services
-+        .models_manager
-+        .list_models(
-+            codex_models_manager::manager::RefreshStrategy::Offline,
-+            turn.config.http_client_factory(),
-+        )
-+        .await;
-+    let selected = models
-+        .iter()
-+        .filter_map(|model| luna_generation(&model.model).map(|generation| (generation, model)))
-+        .max_by(|(a, _), (b, _)| a.cmp(b))
-+        .map(|(_, model)| model)
-+        .ok_or_else(|| anyhow::anyhow!("no Luna model in catalog"))?;
-+    let model = session
-+        .services
-+        .models_manager
-+        .get_model_info(&selected.model, &turn.config.to_models_manager_config())
-+        .await;
++    let (model, effort) = super::luna::select(session, turn).await?;
 +    let tier = ServiceTier::Fast.request_value();
-+    anyhow::ensure!(
-+        model.supports_service_tier(tier),
-+        "Luna model does not support Fast service"
-+    );
 +    let prompt = Prompt {
 +        input: vec![ResponseItem::Message {
 +            id: None,
@@ -616,7 +649,7 @@ index 0000000000000000000000000000000000000000..228187261f6936eefd86e9d2071a38d1
 +            &prompt,
 +            &model,
 +            &turn.session_telemetry,
-+            Some(selected.default_reasoning_effort.clone()),
++            Some(effort),
 +            ReasoningSummary::None,
 +            Some(tier.to_owned()),
 +            &metadata,
@@ -658,14 +691,9 @@ index 0000000000000000000000000000000000000000..228187261f6936eefd86e9d2071a38d1
 +}
 +
 +/// Orders published Luna generations numerically rather than by display name.
++#[cfg(test)]
 +fn luna_generation(model: &str) -> Option<Vec<u32>> {
-+    model
-+        .strip_prefix("gpt-")?
-+        .strip_suffix("-luna")?
-+        .split('.')
-+        .map(str::parse)
-+        .collect::<Result<Vec<_>, _>>()
-+        .ok()
++    super::luna::generation(model)
 +}
 +
 +#[cfg(test)]

@@ -1,3 +1,327 @@
+diff --git a/codex-rs/app-server-protocol/src/lib.rs b/codex-rs/app-server-protocol/src/lib.rs
+index eb2b76de07971fdc13c8a470415aa70a8a6cf120..1432f4667b508a31655ba5759169fadcc8f5785b 100644
+--- a/codex-rs/app-server-protocol/src/lib.rs
++++ b/codex-rs/app-server-protocol/src/lib.rs
+@@ -7,6 +7,7 @@ mod precomputed_exports;
+ mod precomputed_exports_tests;
+ mod protocol;
+ pub mod rpc;
++mod saffron;
+ #[cfg(test)]
+ mod schema_fixtures;
+ #[cfg(test)]
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/item.rs b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
+index 04f68a3351c765d6c2be8d492b1a3cded43a22bb..2396a13d6394e6065aae34adc11b1ada88561f27 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/item.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
+@@ -899,12 +899,7 @@ impl From<CoreTurnItem> for ThreadItem {
+                     questions: agent.questions,
+                 }
+             }
+-            CoreTurnItem::FunctionCallOutput(output) => ThreadItem::FunctionCallOutput {
+-                id: output.id,
+-                name: output.name,
+-                namespace: output.namespace,
+-                output: output.output,
+-            },
++            CoreTurnItem::FunctionCallOutput(output) => crate::saffron::thread_message(output),
+             CoreTurnItem::Plan(plan) => ThreadItem::Plan {
+                 id: plan.id,
+                 text: plan.text,
+diff --git a/codex-rs/app-server-protocol/src/saffron.rs b/codex-rs/app-server-protocol/src/saffron.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..1a8308e1858faa3f5f50d3f1c67ee1202c119c36
+--- /dev/null
++++ b/codex-rs/app-server-protocol/src/saffron.rs
+@@ -0,0 +1,79 @@
++//! Client transcript presentation for Saffron's incoming thread messages.
++//!
++//! Both live item notifications and rebuilt history use this conversion. Core
++//! keeps the original tool output for persistence and model input; this module
++//! only supplies an attributed commentary row to clients. Unrecognized payloads
++//! remain tool outputs rather than acquiring assistant-message semantics.
++
++use crate::ThreadItem;
++use codex_protocol::ThreadId;
++use codex_protocol::items::FunctionCallOutputItem;
++use codex_protocol::models::FunctionCallOutputBody;
++use codex_protocol::models::MessagePhase;
++use serde::Deserialize;
++
++/// Presents a valid incoming Saffron message without changing its item identity.
++pub(crate) fn thread_message(output: FunctionCallOutputItem) -> ThreadItem {
++    let message = if output.namespace.as_deref() == Some("saffron")
++        && output.name == "send_message_to_thread"
++        && let FunctionCallOutputBody::Text(body) = &output.output
++    {
++        serde_json::from_str::<Message>(body).ok()
++    } else {
++        None
++    };
++    if let Some(message) = message {
++        let sender = message
++            .source_thread_name
++            .filter(|name| !name.trim().is_empty())
++            .unwrap_or_else(|| message.source_thread_id.to_string());
++        let label = escape_link_label(&sender);
++        return ThreadItem::AgentMessage {
++            id: output.id,
++            text: format!(
++                "**Message from [{label}](thread://{})**\n\n{}",
++                message.source_thread_id, message.input
++            ),
++            phase: Some(MessagePhase::Commentary),
++            memory_citation: None,
++            delivery: None,
++            questions: None,
++        };
++    }
++    ThreadItem::FunctionCallOutput {
++        id: output.id,
++        name: output.name,
++        namespace: output.namespace,
++        output: output.output,
++    }
++}
++
++/// Saffron-owned envelope; older messages have only identity and input.
++#[derive(Deserialize)]
++struct Message {
++    /// Runtime-derived sender; parsing also constrains the link destination.
++    source_thread_id: ThreadId,
++    /// Display name captured by the sender runtime when available.
++    source_thread_name: Option<String>,
++    /// Original message body, including its Markdown formatting.
++    input: String,
++}
++
++/// Keeps a thread name inside one Markdown link label and one display line.
++fn escape_link_label(name: &str) -> String {
++    let mut escaped = String::new();
++    for character in name.chars() {
++        if character.is_ascii_punctuation() {
++            escaped.push('\\');
++        }
++        escaped.push(if character.is_whitespace() {
++            ' '
++        } else {
++            character
++        });
++    }
++    escaped
++}
++
++#[cfg(test)]
++mod tests;
+diff --git a/codex-rs/app-server-protocol/src/saffron/tests.rs b/codex-rs/app-server-protocol/src/saffron/tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..272d4050b4de04a9db4b1d83ad42b3ba2ef848f4
+--- /dev/null
++++ b/codex-rs/app-server-protocol/src/saffron/tests.rs
+@@ -0,0 +1,203 @@
++//! Checks attributed presentation across live events and persisted history.
++
++use super::*;
++use crate::ServerNotification;
++use crate::build_turns_from_rollout_items;
++use crate::item_event_to_server_notification;
++use crate::project_rollout_line;
++use codex_protocol::items::TurnItem;
++use codex_protocol::protocol::EventMsg;
++use codex_protocol::protocol::ItemCompletedEvent;
++use codex_protocol::protocol::ItemStartedEvent;
++use codex_protocol::protocol::TurnStartedEvent;
++use codex_rollout::RolloutItem;
++use codex_rollout::RolloutLine;
++use pretty_assertions::assert_eq;
++use serde_json::json;
++
++/// A received message has identical attribution live and after history reload.
++#[test]
++fn live_and_replayed_message_keep_identity_and_commentary() {
++    let sender = ThreadId::new();
++    let receiver = ThreadId::new();
++    let output = incoming_message(json!({
++        "source_thread_id": sender,
++        "source_thread_name": "worker [c]",
++        "input": "First line.\n\n**Second line.**"
++    }));
++    let original = serde_json::to_value(&output).unwrap();
++    let started = EventMsg::ItemStarted(ItemStartedEvent {
++        thread_id: receiver,
++        turn_id: "receiving-turn".into(),
++        item: TurnItem::FunctionCallOutput(output.clone()),
++        started_at_ms: 1000,
++    });
++    let completed = EventMsg::ItemCompleted(ItemCompletedEvent {
++        thread_id: receiver,
++        turn_id: "receiving-turn".into(),
++        item: TurnItem::FunctionCallOutput(output.clone()),
++        started_at_ms: Some(1000),
++        completed_at_ms: 1001,
++    });
++    let ServerNotification::ItemStarted(live_start) =
++        item_event_to_server_notification(started.clone(), &receiver.to_string(), "receiving-turn")
++    else {
++        panic!("expected start notification")
++    };
++    let ServerNotification::ItemCompleted(live_end) = item_event_to_server_notification(
++        completed.clone(),
++        &receiver.to_string(),
++        "receiving-turn",
++    ) else {
++        panic!("expected completion notification")
++    };
++    let turns = build_turns_from_rollout_items(&[
++        RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
++            turn_id: "receiving-turn".into(),
++            root_turn_id: None,
++            trace_id: None,
++            started_at: Some(1),
++            model_context_window: None,
++            collaboration_mode_kind: Default::default(),
++        })),
++        RolloutItem::EventMsg(started),
++        RolloutItem::EventMsg(completed),
++    ]);
++    let expected = ThreadItem::AgentMessage {
++        id: "incoming-message".into(),
++        text: format!(
++            "**Message from [worker \\[c\\]](thread://{sender})**\n\nFirst line.\n\n**Second line.**"
++        ),
++        phase: Some(MessagePhase::Commentary),
++        memory_citation: None,
++        delivery: None,
++        questions: None,
++    };
++    assert_eq!(live_start.item, expected);
++    assert_eq!(live_end.item, expected);
++    assert_eq!(turns.len(), 1);
++    assert_eq!(turns[0].items, vec![expected]);
++    assert_eq!(serde_json::to_value(output).unwrap(), original);
++}
++
++/// Messages saved before display names were included still link to their sender.
++#[test]
++fn legacy_envelope_uses_sender_identity() {
++    let sender = ThreadId::from_string("01a10009-cf4e-7650-bb64-c0fd72a05f77").unwrap();
++    let item = thread_message(incoming_message(json!({
++        "source_thread_id": sender, "input": "hello"
++    })));
++    let ThreadItem::AgentMessage { text, .. } = item else {
++        panic!("expected message")
++    };
++    assert_eq!(
++        text,
++        format!(
++            "**Message from [01a10009\\-cf4e\\-7650\\-bb64\\-c0fd72a05f77](thread://{sender})**\n\nhello"
++        )
++    );
++}
++
++/// Newly materialized history retains the same row through storage serialization.
++#[test]
++fn paginated_history_stores_the_presented_message() {
++    let output = incoming_message(json!({
++        "source_thread_id": ThreadId::new(), "input": "persisted message"
++    }));
++    let expected = thread_message(output.clone());
++    let line = RolloutLine {
++        timestamp: "2026-10-03T04:30:00Z".into(),
++        ordinal: Some(3),
++        item: RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
++            thread_id: ThreadId::new(),
++            turn_id: "receiving-turn".into(),
++            item: TurnItem::FunctionCallOutput(output),
++            started_at_ms: Some(1000),
++            completed_at_ms: 1001,
++        })),
++    };
++    let changes = project_rollout_line(&line);
++    assert_eq!(changes.changed_items.len(), 1);
++    let serialized = serde_json::to_string(&changes.changed_items[0].item).unwrap();
++    let reloaded: ThreadItem = serde_json::from_str(&serialized).unwrap();
++    assert_eq!(reloaded, expected);
++    let RolloutItem::EventMsg(EventMsg::ItemCompleted(event)) = line.item else {
++        panic!("expected original completion event")
++    };
++    assert!(matches!(event.item, TurnItem::FunctionCallOutput(_)));
++}
++
++/// A display name cannot close its link or add a second Markdown block.
++#[test]
++fn sender_name_is_literal_but_message_markdown_is_preserved() {
++    let sender = ThreadId::new();
++    let item = thread_message(incoming_message(json!({
++        "source_thread_id": sender,
++        "source_thread_name": "worker](https://example.test)\n**other**",
++        "input": "`body`"
++    })));
++    let ThreadItem::AgentMessage { text, .. } = item else {
++        panic!("expected message")
++    };
++    assert_eq!(
++        text,
++        format!(
++            "**Message from [worker\\]\\(https\\:\\/\\/example\\.test\\) \\*\\*other\\*\\*](thread://{sender})**\n\n`body`"
++        )
++    );
++}
++
++/// Invalid or unrelated tool output keeps its original representation and body.
++#[test]
++fn other_outputs_are_not_reclassified() {
++    for (namespace, name, body) in [
++        (
++            "codex_app",
++            "send_message_to_thread",
++            json!({"source_thread_id": ThreadId::new(), "input": "relay"}).to_string(),
++        ),
++        (
++            "saffron",
++            "fork_thread",
++            json!({"source_thread_id": ThreadId::new(), "input": "receipt"}).to_string(),
++        ),
++        ("saffron", "send_message_to_thread", "not json".into()),
++        (
++            "saffron",
++            "send_message_to_thread",
++            json!({"source_thread_id": "bad-id](https://example.test)", "input": "body"})
++                .to_string(),
++        ),
++        (
++            "saffron",
++            "send_message_to_thread",
++            json!({"source_thread_id": ThreadId::new()}).to_string(),
++        ),
++    ] {
++        let output = FunctionCallOutputItem {
++            id: "unchanged".into(),
++            name: name.into(),
++            namespace: Some(namespace.into()),
++            output: FunctionCallOutputBody::Text(body.clone()),
++        };
++        assert_eq!(
++            thread_message(output),
++            ThreadItem::FunctionCallOutput {
++                id: "unchanged".into(),
++                name: name.into(),
++                namespace: Some(namespace.into()),
++                output: FunctionCallOutputBody::Text(body),
++            }
++        );
++    }
++}
++
++/// Constructs a delivered envelope at the boundary owned by the sender runtime.
++fn incoming_message(body: serde_json::Value) -> FunctionCallOutputItem {
++    FunctionCallOutputItem {
++        id: "incoming-message".into(),
++        name: "send_message_to_thread".into(),
++        namespace: Some("saffron".into()),
++        output: FunctionCallOutputBody::Text(body.to_string()),
++    }
++}
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
 index 15effd88bfee2f17124ce1f671b7c228afcfaebe..55e89e45868b324cbb8aa19575304789cdb2eac5 100644
 --- a/codex-rs/app-server/src/extensions.rs
@@ -23,10 +347,10 @@ index f44b073f53b0f3a942612afb464324ac08455338..b13cce1b99d798b49f8217761f99a799
  /// Installs Saffrodex-owned model guidance that accompanies goal tools.
  pub fn install_saffron_goal_guidance(
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
-index 755414c1c70bfa4d65202f54d08b072bd13068e8..67d1895998baca5414987bdbb944406d36001b5c 100644
+index a7b88419e11add01b0bd11ce8c52b7186f14f650..d269f36ec2ae02984b8e218446506c1cc4ffa1d9 100644
 --- a/codex-rs/core/src/saffron/mod.rs
 +++ b/codex-rs/core/src/saffron/mod.rs
-@@ -17,6 +17,7 @@ pub(crate) mod saved_thread_persistence;
+@@ -18,6 +18,7 @@ pub(crate) mod saved_thread_persistence;
  mod storage;
  pub(crate) mod subagent_completion;
  mod subagent_completion_tool;
@@ -34,7 +358,7 @@ index 755414c1c70bfa4d65202f54d08b072bd13068e8..67d1895998baca5414987bdbb944406d
 
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
-@@ -49,4 +50,5 @@ pub(crate) fn register_tools(
+@@ -50,4 +51,5 @@ pub(crate) fn register_tools(
      goal_edit::register_root_if_available(session, turn_context, registry);
      goal_resume::register_root_if_available(session, turn_context, registry);
      fork_thread::register(session, turn_context, registry);
@@ -42,10 +366,10 @@ index 755414c1c70bfa4d65202f54d08b072bd13068e8..67d1895998baca5414987bdbb944406d
  }
 diff --git a/codex-rs/core/src/saffron/thread_message.rs b/codex-rs/core/src/saffron/thread_message.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5715a9fda9d3d35106631c519baf5aa9b68fadd6
+index 0000000000000000000000000000000000000000..e51c72c998a15e4a38a7de316d292a50029c2f8f
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/thread_message.rs
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,269 @@
 +//! Message delivery between loaded root threads in one app-server process.
 +//!
 +//! The host installs a weak ThreadManager capability; this module owns the
@@ -77,7 +401,6 @@ index 0000000000000000000000000000000000000000..5715a9fda9d3d35106631c519baf5aa9
 +use codex_tools::ToolSpec;
 +use serde::Deserialize;
 +use serde::Serialize;
-+use serde_json::json;
 +
 +use crate::ThreadManager;
 +use crate::TurnInputRequest;
@@ -142,6 +465,18 @@ index 0000000000000000000000000000000000000000..5715a9fda9d3d35106631c519baf5aa9
 +    thread_id: String,
 +    /// Message content, delivered as agent output rather than user instructions.
 +    prompt: String,
++}
++
++/// Runtime attribution saved with the message so transcript replay needs no lookup.
++#[derive(Serialize)]
++struct Message {
++    /// Sender identity supplied by the session, never by tool arguments.
++    source_thread_id: ThreadId,
++    /// Best-effort display name at send time; absence does not prevent delivery.
++    #[serde(skip_serializing_if = "Option::is_none")]
++    source_thread_name: Option<String>,
++    /// Agent-provided body retaining its original authority as tool output.
++    input: String,
 +}
 +
 +/// Confirmation of accepted input, not of completed processing.
@@ -209,13 +544,27 @@ index 0000000000000000000000000000000000000000..5715a9fda9d3d35106631c519baf5aa9
 +            ));
 +        }
 +        let source_thread_id = invocation.session.thread_id();
++        let source_thread_name = if let Ok(source) = manager.get_thread(source_thread_id).await {
++            source
++                .read_thread(true, false)
++                .await
++                .ok()
++                .and_then(|thread| thread.name)
++        } else {
++            None
++        };
 +        let message = ResponseItem::FunctionCallOutput {
 +            id: None,
 +            call_id: None,
 +            name: Some("send_message_to_thread".to_string()),
 +            namespace: Some("saffron".to_string()),
 +            output: FunctionCallOutputPayload::from_text(
-+                json!({"source_thread_id": source_thread_id, "input": args.prompt}).to_string(),
++                serde_json::to_string(&Message {
++                    source_thread_id,
++                    source_thread_name,
++                    input: args.prompt,
++                })
++                .map_err(invalid)?,
 +            ),
 +            internal_chat_message_metadata_passthrough: None,
 +        };
@@ -292,10 +641,10 @@ index 0000000000000000000000000000000000000000..5715a9fda9d3d35106631c519baf5aa9
 +mod tests;
 diff --git a/codex-rs/core/src/saffron/thread_message/tests.rs b/codex-rs/core/src/saffron/thread_message/tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9de19323f34b8ac9f7549633a372340f1a37dbc8
+index 0000000000000000000000000000000000000000..6ee8bdc3f93431fdf3eedc8199de0de03241c04a
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/thread_message/tests.rs
-@@ -0,0 +1,437 @@
+@@ -0,0 +1,448 @@
 +//! Delivery checks through real thread managers and the turn-input boundary.
 +
 +use super::*;
@@ -324,6 +673,7 @@ index 0000000000000000000000000000000000000000..9de19323f34b8ac9f7549633a372340f
 +use core_test_support::responses::mount_sse_once;
 +use core_test_support::responses::sse;
 +use core_test_support::test_codex::run_test_with_large_stack;
++use serde_json::json;
 +use std::time::Duration;
 +use tokio::sync::Mutex;
 +use tokio_util::sync::CancellationToken;
@@ -345,6 +695,16 @@ index 0000000000000000000000000000000000000000..9de19323f34b8ac9f7549633a372340f
 +        )
 +        .await;
 +        let host = TestHost::new(&server, history_mode).await?;
++        host.source
++            .thread
++            .update_thread_metadata(
++                codex_thread_store::ThreadMetadataPatch {
++                    name: Some(Some("sender [c]".to_string())),
++                    ..Default::default()
++                },
++                true,
++            )
++            .await?;
 +        let before = host.destination.thread.config_snapshot().await;
 +        let receipt = host
 +            .send(host.destination.thread_id, "handoff-marker")
@@ -381,7 +741,7 @@ index 0000000000000000000000000000000000000000..9de19323f34b8ac9f7549633a372340f
 +            serde_json::from_str(delivered["output"].as_str().unwrap())?;
 +        assert_eq!(
 +            content,
-+            json!({"source_thread_id": host.source.thread_id, "input": "handoff-marker"})
++            json!({"source_thread_id": host.source.thread_id, "source_thread_name": "sender [c]", "input": "handoff-marker"})
 +        );
 +        let after = host.destination.thread.config_snapshot().await;
 +        assert_eq!(after.model, before.model);
