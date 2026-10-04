@@ -34,7 +34,10 @@ upstream.json           Current exact Codex base
 Layer directory names are applied in lexical order.
 Their four-digit prefixes are the only ordering mechanism.
 Each directory contains the required generated commit message in
-`COMMIT_EDITMSG` and an optional binary-safe tree delta in `patch`.
+`COMMIT_EDITMSG`, an optional binary-safe delta in `patch`, and optional
+complete added files under `overlay/`.
+The patch applies before the additive overlay; changes to inherited files
+remain in the patch.
 `layers/0000-foundation/` is the required first layer and carries changes
 needed by every generated Saffrodex source tree.
 

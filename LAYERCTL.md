@@ -5,6 +5,27 @@ layerctl
 Saffrodex layers.
 Run it from this repository with `go run ./cmd/layerctl`.
 
+Layer contents
+--------------
+
+Each layer contains `COMMIT_EDITMSG`, optional `patch`, and optional `overlay/`.
+Apply the patch, then add the overlay files, and create one generated commit.
+Overlay paths are relative to the projected repository root.
+They contain complete final additions, including binary or empty files,
+executable bits, and symlinks stored as links rather than their targets.
+Changes to inherited files, including files introduced by preceding layers,
+belong in the patch. Existing-path type changes and deletions also belong there.
+Gitlinks remain in the patch.
+
+Patch and overlay cannot both change the same leaf path.
+A patch may remove a file before overlay adds children beneath that path,
+or remove children before overlay adds a file at their former directory.
+An overlay path newly supplied by upstream requires resolution and refresh,
+even when its contents match. Overlay never silently replaces inherited content.
+Git applies the patch and encoded overlay additions together so clean additions
+remain staged during three-way conflict resolution.
+Command execution and configurable step ordering are not supported.
+
 Projections
 -----------
 
@@ -57,8 +78,10 @@ go run ./cmd/layerctl projection delete <name>
 
 Capture uses the projection head's complete tree and exact commit message as
 the desired layer result. It does not preserve commit authorship metadata.
-`git diff-tree` produces the optional binary-safe `patch` file relative to the
-generated predecessor.
+Capture extracts added blobs into `overlay/` and uses `git diff-tree` for the
+remaining binary-safe `patch` relative to the generated predecessor.
+It replays the whole candidate layer and compares its tree and message with
+the accepted result before replacing the canonical directory.
 
 Advance upstream
 ----------------
@@ -81,6 +104,12 @@ When a layer conflicts, resolve its complete desired tree in the reported
 `layerctl` owns the interrupted three-way patch application, commits the
 resolved layer with its canonical message, and directs the required
 `layerctl layer refresh <layer> --from upstream-advance` command.
+During ordinary three-way conflicts, clean overlay additions are already staged.
+Structural collisions can stop Git before it installs changes; in that case,
+reconstruct the complete desired layer, including its patch and overlay additions.
+When upstream introduces an overlay path, reconcile that path in the same
+worktree before continuing; refresh then captures it as an inherited change
+or omits it if the resolved content matches upstream.
 Run `layerctl upstream continue` again; it independently reapplies the
 refreshed definition and proceeds only when the generated tree matches.
 Use `layerctl upstream abort` to discard both the interrupted layer

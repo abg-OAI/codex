@@ -48,7 +48,7 @@ func TestAddAndRefreshRoundTripProjectionTrees(t *testing.T) {
 	if message != "saffrodex: added layer\n\nExact added body.\n" ||
 		!strings.Contains(patch, "base.txt") ||
 		!strings.Contains(patch, "delete.txt") ||
-		!strings.Contains(patch, "new.sh") {
+		strings.Contains(patch, "new.sh") {
 		t.Fatalf("captured layer patch is incomplete:\n%s", patch)
 	}
 	repository, err := definition.Load(root)
@@ -106,6 +106,33 @@ func TestAddAndRefreshRoundTripProjectionTrees(t *testing.T) {
 		t.Fatalf("Create(refresh-fresh) error = %v", err)
 	}
 	assertSameTree(t, root, refreshSourceHead, freshRefresh.Head)
+}
+
+func TestRefreshFailedOverlayCapturePreservesDefinition(t *testing.T) {
+	root := newCanonicalRepository(t)
+	layers, projections := newServices(t, root)
+	worktree := filepath.Join(t.TempDir(), "invalid-overlay")
+	if _, err := projections.Create(t.Context(), projection.CreateRequest{
+		Name: "invalid-overlay", WorktreePath: worktree, Through: "0001-feature",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Git can store a symlink with an empty target, but the filesystem cannot
+	// serialize it. Failure must leave the existing canonical layer intact.
+	empty := gitOutput(t, worktree, "hash-object", "-w", "--stdin")
+	gitRun(t, worktree, "update-index", "--add", "--cacheinfo", "120000,"+empty+",empty-link")
+	gitRun(t, worktree, "commit", "-m", "Unrepresentable overlay")
+	if err := layers.Refresh(t.Context(), "0001-feature", "invalid-overlay"); err == nil {
+		t.Fatal("Refresh accepted an unrepresentable symlink")
+	}
+	gitRun(t, root, "diff", "--exit-code", "HEAD", "--", "layers")
+	entries, err := os.ReadDir(filepath.Join(root, "layers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("failed refresh left unexpected layer directories: %v", entries)
+	}
 }
 
 func newCanonicalRepository(t *testing.T) string {
@@ -236,6 +263,9 @@ func captureLayer(t *testing.T, directory, before, after string) layercommit.Cap
 func writeLayerDefinition(t *testing.T, root, id string, captured layercommit.Captured) {
 	t.Helper()
 	directory := filepath.Join(root, "layers", id)
+	if err := definition.WriteOverlay(directory, captured.Overlay); err != nil {
+		t.Fatal(err)
+	}
 	writeFile(t, filepath.Join(directory, "COMMIT_EDITMSG"), string(captured.Message), 0o644)
 	if len(captured.Patch) > 0 {
 		writeFile(t, filepath.Join(directory, "patch"), string(captured.Patch), 0o644)

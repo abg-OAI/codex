@@ -33,12 +33,13 @@ type Upstream struct {
 	Commit string `json:"commit"`
 }
 
-// Unit is one generated commit serialized as a message and optional tree diff.
+// Unit is one generated commit: a message, a patch, then disjoint additions.
 type Unit struct {
 	ID          string
 	Directory   string
 	MessagePath string
 	PatchPath   string
+	Overlay     []OverlayEntry
 }
 
 // Load reads the canonical repository rooted at root and rejects malformed or
@@ -123,7 +124,7 @@ func loadLayers(path string) ([]Unit, error) {
 			return nil, fmt.Errorf("invalid layer entry %q: %w", filepath.Join(path, name), err)
 		}
 		directory := filepath.Join(path, name)
-		unit, err := loadUnit(name, directory)
+		unit, err := LoadUnit(name, directory)
 		if err != nil {
 			return nil, err
 		}
@@ -132,7 +133,9 @@ func loadLayers(path string) ([]Unit, error) {
 	return layers, nil
 }
 
-func loadUnit(id, directory string) (Unit, error) {
+// LoadUnit reads one layer directory, including an unpublished capture candidate.
+// It validates the supported entries and loads overlay bytes without following links.
+func LoadUnit(id, directory string) (Unit, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		return Unit{}, fmt.Errorf("read layer %q: %w", id, err)
@@ -154,6 +157,14 @@ func loadUnit(id, directory string) (Unit, error) {
 				return Unit{}, err
 			}
 			unit.PatchPath = path
+		case "overlay":
+			if !entry.IsDir() {
+				return Unit{}, fmt.Errorf("overlay %q must be a directory", path)
+			}
+			unit.Overlay, err = readOverlay(path)
+			if err != nil {
+				return Unit{}, err
+			}
 		default:
 			return Unit{}, fmt.Errorf("invalid entry %q in layer %q", entry.Name(), id)
 		}

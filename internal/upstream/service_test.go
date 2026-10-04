@@ -79,6 +79,7 @@ func TestAdvanceConflictRefreshContinueAndAbort(t *testing.T) {
 	}
 	assertUpstreamTag(t, root, "rust-v1.2.0")
 	assertFile(t, filepath.Join(resolveWorktree, "base.txt"), "resolved feature\n")
+	assertFile(t, filepath.Join(resolveWorktree, "feature.txt"), "feature\n")
 	if err := upstreamService.Check(t.Context()); err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
@@ -122,6 +123,67 @@ func TestContinueRecoversAfterResolvedLayerWasCommitted(t *testing.T) {
 	assertFile(t, filepath.Join(resolveWorktree, "base.txt"), "resolved after interruption\n")
 	if err := projections.Delete(t.Context(), "upstream-advance"); err != nil {
 		t.Fatalf("Delete(resolved projection) error = %v", err)
+	}
+}
+
+func TestAdvance_overlayCollisionRequiresRefresh(t *testing.T) {
+	for _, scenario := range []string{"identical", "different", "directory"} {
+		t.Run(scenario, func(t *testing.T) {
+			testOverlayCollision(t, scenario)
+		})
+	}
+}
+
+func testOverlayCollision(t *testing.T, scenario string) {
+	t.Helper()
+	root := newCanonicalRepository(t)
+	upstreamTree := filepath.Join(t.TempDir(), "new-upstream")
+	gitRun(t, root, "worktree", "add", "--detach", upstreamTree, "rust-v1.1.0")
+	switch scenario {
+	case "identical":
+		// Identical content still requires ownership reconciliation.
+		writeFile(t, filepath.Join(upstreamTree, "feature.txt"), "feature\n")
+	case "different":
+		writeFile(t, filepath.Join(upstreamTree, "feature.txt"), "upstream content\n")
+	case "directory":
+		writeFile(t, filepath.Join(upstreamTree, "feature.txt", "child"), "upstream child\n")
+	}
+	gitRun(t, upstreamTree, "add", "-A")
+	gitRun(t, upstreamTree, "commit", "-m", "upstream adds same path")
+	gitRun(t, upstreamTree, "tag", "rust-v1.3.0")
+	service, _, _ := newServices(t, root)
+	worktree := filepath.Join(t.TempDir(), "advance")
+	if _, err := service.Advance(t.Context(), upstream.AdvanceRequest{Tag: "rust-v1.3.0", WorktreePath: worktree}); err == nil || !strings.Contains(err.Error(), "requires resolution") {
+		t.Fatalf("Advance collision = %v", err)
+	}
+	assertUpstreamTag(t, root, "rust-v1.0.0")
+	if scenario == "directory" {
+		if err := os.RemoveAll(filepath.Join(worktree, "feature.txt")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Reconcile the complete intended tree, including a patch edit if Git
+	// stopped before installing changes due to a structural collision.
+	writeFile(t, filepath.Join(worktree, "feature.txt"), "feature\n")
+	writeFile(t, filepath.Join(worktree, "base.txt"), "feature\n")
+	// Reconstruct services to exercise durable recovery, not in-memory state.
+	service, _, _ = newServices(t, root)
+	if _, err := service.Continue(t.Context()); err == nil || !strings.Contains(err.Error(), "layer refresh") {
+		t.Fatalf("Continue collision = %v", err)
+	}
+	_, layers, _ := newServices(t, root)
+	if err := layers.Refresh(t.Context(), "0001-feature", "upstream-advance"); err != nil {
+		t.Fatal(err)
+	}
+	service, _, _ = newServices(t, root)
+	if _, err := service.Continue(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertUpstreamTag(t, root, "rust-v1.3.0")
+	assertFile(t, filepath.Join(worktree, "base.txt"), "feature\n")
+	assertFile(t, filepath.Join(worktree, "feature.txt"), "feature\n")
+	if err := service.Check(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -304,6 +366,9 @@ func captureLayer(t *testing.T, directory, before, after string) layercommit.Cap
 func writeLayerDefinition(t *testing.T, root, id string, captured layercommit.Captured) {
 	t.Helper()
 	directory := filepath.Join(root, "layers", id)
+	if err := definition.WriteOverlay(directory, captured.Overlay); err != nil {
+		t.Fatal(err)
+	}
 	writeFile(t, filepath.Join(directory, "COMMIT_EDITMSG"), string(captured.Message))
 	if len(captured.Patch) > 0 {
 		writeFile(t, filepath.Join(directory, "patch"), string(captured.Patch))
