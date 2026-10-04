@@ -7,6 +7,7 @@ mod precomputed_exports;
 mod precomputed_exports_tests;
 mod protocol;
 pub mod rpc;
+mod saffron;
 #[cfg(test)]
 mod schema_fixtures;
 #[cfg(test)]
