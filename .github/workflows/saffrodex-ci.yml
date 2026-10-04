@@ -156,7 +156,7 @@ jobs:
           just test --cargo-profile ci-test \
             --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
             -p codex-core \
-            --test saffron_request_account
+            --test saffron_compaction_retention
           just test --cargo-profile ci-test \
             --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
             -p codex-app-server-protocol \
