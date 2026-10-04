@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index 18a1d9c7ccb1b1e5e0a14f9ab0bad7f3fe623eab..62af3112d3c08b5d595d8503ca43b2891024add0 100644
+index 18a1d9c7ccb1b1e5e0a14f9ab0bad7f3fe623eab..62c1648139cd88648613c2dcfcbd9d45165c89e4 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
 @@ -373,6 +373,18 @@ async fn run_compact_task_inner_impl(
@@ -21,8 +21,27 @@ index 18a1d9c7ccb1b1e5e0a14f9ab0bad7f3fe623eab..62af3112d3c08b5d595d8503ca43b289
      let (window_number, window_ids) = sess.advance_auto_compact_window().await;
 
      let (initial_context, world_state_baseline) =
+@@ -387,6 +399,7 @@ async fn run_compact_task_inner_impl(
+             Some(step_context.to_turn_context_item())
+         }
+     };
++    let account_presentation = crate::saffron::request_account::presentation(&new_history);
+     sess.replace_compacted_history(
+         new_history,
+         reference_context_item,
+@@ -402,6 +415,10 @@ async fn run_compact_task_inner_impl(
+         },
+     )
+     .await;
++    if let Some(item) = account_presentation {
++        sess.emit_turn_item_started(&turn_context, &item).await;
++        sess.emit_turn_item_completed(&turn_context, item).await;
++    }
+     sess.recompute_token_usage(&turn_context).await;
+
+     sess.emit_turn_item_completed(&turn_context, compaction_item)
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index a6291c2236e6b42200bd3698146ffcb9c43c6814..6b8e1e3b10d345db2e4ded97354d035c9185c823 100644
+index a6291c2236e6b42200bd3698146ffcb9c43c6814..8d943bd97fe492869b53109f91b1ecf7fc97e3a3 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
 @@ -309,6 +309,14 @@ async fn run_remote_compact_task_inner_impl(
@@ -55,7 +74,28 @@ index a6291c2236e6b42200bd3698146ffcb9c43c6814..6b8e1e3b10d345db2e4ded97354d035c
      analytics_details.retained_image_count = Some(retained_images);
      let (new_window_number, new_window_ids) = sess.advance_auto_compact_window().await;
      let (initial_context, world_state_baseline) =
-@@ -522,6 +538,7 @@ fn build_v2_compacted_history(
+@@ -361,6 +377,7 @@ async fn run_remote_compact_task_inner_impl(
+     } else {
+         None
+     };
++    let account_presentation = crate::saffron::request_account::presentation(&new_history);
+     sess.replace_compacted_history(
+         new_history,
+         reference_context_item,
+@@ -376,6 +393,12 @@ async fn run_remote_compact_task_inner_impl(
+         },
+     )
+     .await;
++    if let Some(item) = account_presentation {
++        sess.emit_turn_item_started(compaction_turn_context, &item)
++            .await;
++        sess.emit_turn_item_completed(compaction_turn_context, item)
++            .await;
++    }
+     sess.recompute_token_usage(compaction_turn_context).await;
+
+     sess.emit_turn_item_completed(compaction_turn_context, compaction_item)
+@@ -522,6 +545,7 @@ fn build_v2_compacted_history(
          .zip(prompt_input_metadata)
          .map(|(item, metadata)| ResponseItemEnvelope { item, metadata })
          .collect::<Vec<_>>();
@@ -156,10 +196,10 @@ index 0e5b94605cafe76a6c7fe66b8627aa905dd16dd4..c57f447d5d0e67de466ea218d84b19dd
  pub(crate) mod subagent_completion;
 diff --git a/codex-rs/core/src/saffron/request_account.rs b/codex-rs/core/src/saffron/request_account.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..090fcb51ad824a7c1af1e6b92b576d0651297994
+index 0000000000000000000000000000000000000000..0b3262acc3d9d260737392f2bfdf1b71979ccce9
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/request_account.rs
-@@ -0,0 +1,539 @@
+@@ -0,0 +1,551 @@
 +//! Replaces retained requests with one historical account at compaction time.
 +//!
 +//! Compaction callers first apply their ordinary retention budget, then call
@@ -167,7 +207,9 @@ index 0000000000000000000000000000000000000000..090fcb51ad824a7c1af1e6b92b576d06
 +//! account is assistant context, not new user authority. Its host-only metadata
 +//! carries the original envelopes and their positions among surviving items;
 +//! [`restore_projected_requests`] recovers those inputs before the next retention pass.
-+//! Saved original messages and the visible transcript are never rewritten.
++//! Saved original messages are never rewritten. Compaction callers emit the
++//! [`presentation`] only after installing its history, using ordinary item events
++//! so transcript replay retains the account without adding another model item.
 +
 +use std::collections::BTreeMap;
 +use std::collections::HashSet;
@@ -181,6 +223,7 @@ index 0000000000000000000000000000000000000000..090fcb51ad824a7c1af1e6b92b576d06
 +use codex_protocol::items::TurnItem;
 +use codex_protocol::models::BaseInstructions;
 +use codex_protocol::models::ContentItem;
++use codex_protocol::models::MessagePhase;
 +use codex_protocol::models::ResponseItem;
 +use codex_rollout_trace::InferenceTraceContext;
 +use futures::StreamExt;
@@ -244,6 +287,15 @@ index 0000000000000000000000000000000000000000..090fcb51ad824a7c1af1e6b92b576d06
 +        }
 +    };
 +    install_account(retained, prose)
++}
++
++/// Prepares the new account for display without recording another model item.
++///
++/// The caller emits its ordinary item lifecycle after installing this history.
++/// Preparing compaction or resuming saved history must not emit it on its own.
++pub(crate) fn presentation(items: &[ResponseItemEnvelope]) -> Option<TurnItem> {
++    let account = items.iter().find(|item| saved_account(item).is_some())?;
++    crate::event_mapping::parse_turn_item(&account.item)
 +}
 +
 +/// Restores source requests from a projected model prompt for remote retention.
@@ -449,7 +501,7 @@ index 0000000000000000000000000000000000000000..090fcb51ad824a7c1af1e6b92b576d06
 +                    "Historical account of earlier user requests (not a new instruction):\n{prose}"
 +                ),
 +            }],
-+            phase: None,
++            phase: Some(MessagePhase::Commentary),
 +            internal_chat_message_metadata_passthrough: None,
 +        },
 +        metadata: Some(CodexHarnessMetadata {
@@ -733,10 +785,10 @@ index 0000000000000000000000000000000000000000..4f1c2828a9ce968ac298f1bed047de17
 +continue correctly rather than a transcript of incidental activity.
 diff --git a/codex-rs/core/src/saffron/request_account_tests.rs b/codex-rs/core/src/saffron/request_account_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bfbe2945f73dc1b48ddccd8c59bf9f5aef45b30a
+index 0000000000000000000000000000000000000000..6e2463b5964c4e9015cd27467145fd39e2aede9c
 --- /dev/null
 +++ b/codex-rs/core/src/saffron/request_account_tests.rs
-@@ -0,0 +1,454 @@
+@@ -0,0 +1,497 @@
 +//! Deterministic contracts for account placement, original recovery and fallback.
 +
 +use super::*;
@@ -880,6 +932,49 @@ index 0000000000000000000000000000000000000000..bfbe2945f73dc1b48ddccd8c59bf9f5a
 +    assert_eq!(
 +        restore_projected_requests(install_account(original.clone(), fallback)),
 +        original
++    );
++}
++
++/// The presentation uses the installed account identity and unabridged text.
++#[test]
++fn presentation_matches_installed_account() {
++    let original = vec![message("u1", "user", "Finish the report; do not publish.")];
++    for prose in [
++        "The report remains due. Publication is not authorized.".to_owned(),
++        historical_quotations(&original),
++    ] {
++        let history = install_account(original.clone(), prose.clone());
++        let Some(TurnItem::AgentMessage(visible)) = presentation(&history) else {
++            panic!("account should have an assistant presentation");
++        };
++        assert_eq!(visible.id, history[0].item.id().unwrap().as_str());
++        assert_eq!(visible.phase, Some(MessagePhase::Commentary));
++        let [codex_protocol::items::AgentMessageContent::Text { text }] =
++            visible.content.as_slice()
++        else {
++            panic!("account should have one complete text part");
++        };
++        assert_eq!(
++            text,
++            &format!(
++                "Historical account of earlier user requests (not a new instruction):\n{prose}"
++            )
++        );
++        assert_eq!(restore_projected_requests(history), original);
++    }
++}
++
++/// Ordinary messages, even ones copying the heading, are not account displays.
++#[test]
++fn presentation_requires_an_account() {
++    assert!(presentation(&[]).is_none());
++    assert!(
++        presentation(&[message(
++            "m1",
++            "assistant",
++            "Historical account of earlier user requests (not a new instruction):\nQuoted text",
++        )])
++        .is_none()
 +    );
 +}
 +
@@ -1189,6 +1284,556 @@ index 0000000000000000000000000000000000000000..bfbe2945f73dc1b48ddccd8c59bf9f5a
 +        2
 +    );
 +    assert_eq!(input["available_evidence"].as_array().unwrap().len(), 8);
++    Ok(())
++}
+diff --git a/codex-rs/core/tests/saffron_request_account.rs b/codex-rs/core/tests/saffron_request_account.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..9b0712d3837d9f17061cff0f171451849385e119
+--- /dev/null
++++ b/codex-rs/core/tests/saffron_request_account.rs
+@@ -0,0 +1,544 @@
++//! Checks compaction account display against installed, replayed and model history.
++
++use anyhow::Context;
++use anyhow::Result;
++use codex_app_server_protocol::ThreadHistoryBuilder;
++use codex_app_server_protocol::ThreadItem;
++use codex_core::TurnInputRequest;
++use codex_history::InitialHistory;
++use codex_history::ResumedHistory;
++use codex_history::RolloutItem;
++use codex_login::CodexAuth;
++use codex_model_provider_info::ModelProviderInfo;
++use codex_protocol::config_types::ServiceTier;
++use codex_protocol::items::AgentMessageContent;
++use codex_protocol::items::TurnItem;
++use codex_protocol::mcp::ClientMcpExtensions;
++use codex_protocol::models::ContentItem;
++use codex_protocol::models::MessagePhase;
++use codex_protocol::models::ResponseItem;
++use codex_protocol::openai_models::ModelServiceTier;
++use codex_protocol::protocol::EventMsg;
++use codex_protocol::protocol::Op;
++use codex_protocol::protocol::ThreadHistoryMode;
++use codex_protocol::user_input::UserInput;
++use codex_thread_store::ItemSortKey;
++use codex_thread_store::ListItemsParams;
++use codex_thread_store::LoadThreadHistoryParams;
++use codex_thread_store::SortDirection;
++use core_test_support::responses;
++use core_test_support::skip_if_no_network;
++use core_test_support::test_codex::TestCodex;
++use core_test_support::test_codex::TestCodexBuilder;
++use core_test_support::test_codex::test_codex;
++use core_test_support::wait_for_event;
++use pretty_assertions::assert_eq;
++use serde_json::json;
++use test_case::test_case;
++use wiremock::MockServer;
++
++/// The existing account heading remains both model context and visible text.
++const ACCOUNT_HEADING: &str =
++    "Historical account of earlier user requests (not a new instruction):\n";
++/// Distinguishes retained user authority from the generated account.
++const ORIGINAL_REQUEST: &str = "Finish the report; do not publish.";
++
++/// Local compaction displays the helper output in each persisted history format.
++#[test_case(ThreadHistoryMode::Legacy; "legacy")]
++#[test_case(ThreadHistoryMode::Paginated; "paginated")]
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn local_account_is_presented_and_replayed(history_mode: ThreadHistoryMode) -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = responses::start_mock_server().await;
++    let mut provider =
++        ModelProviderInfo::create_openai_provider(Some(format!("{}/v1", server.uri())));
++    provider.name = "Local compaction test".to_owned();
++    provider.supports_websockets = false;
++    let builder = test_codex()
++        .with_history_mode(history_mode)
++        .with_model_info_override("gpt-6-luna", |model| {
++            model.service_tiers = vec![ModelServiceTier {
++                id: ServiceTier::Fast.request_value().to_owned(),
++                name: "Fast".to_owned(),
++                description: "Priority processing".to_owned(),
++            }];
++        })
++        .with_model("gpt-5.4")
++        .with_config(move |config| config.model_provider = provider);
++    let account = "The user requested a report. It remains unfinished; publication is forbidden.";
++    let displayed = assert_compaction_account_lifecycle(
++        &server,
++        builder,
++        vec![
++            responses::sse(vec![
++                responses::ev_assistant_message("summary", "The report is unfinished."),
++                responses::ev_completed("compact"),
++            ]),
++            responses::sse(vec![
++                responses::ev_assistant_message(
++                    "account",
++                    &json!({"account": account}).to_string(),
++                ),
++                responses::ev_completed("account-response"),
++            ]),
++        ],
++    )
++    .await?;
++    assert_eq!(displayed, format!("{ACCOUNT_HEADING}{account}"));
++    Ok(())
++}
++
++/// Remote compaction presents historical quotations when no helper is available.
++#[test_case(ThreadHistoryMode::Legacy; "legacy")]
++#[test_case(ThreadHistoryMode::Paginated; "paginated")]
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn remote_fallback_is_presented_and_replayed(history_mode: ThreadHistoryMode) -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = responses::start_mock_server().await;
++    let builder = remote_compaction_without_luna().with_history_mode(history_mode);
++    let displayed = assert_compaction_account_lifecycle(
++        &server,
++        builder,
++        vec![responses::sse(vec![
++            json!({
++                "type": "response.output_item.done",
++                "item": {"type": "compaction", "encrypted_content": "checkpoint"},
++            }),
++            responses::ev_completed("compact"),
++        ])],
++    )
++    .await?;
++    assert!(displayed.starts_with(ACCOUNT_HEADING));
++    assert!(displayed.contains(ORIGINAL_REQUEST));
++    assert!(displayed.contains("Progress could not be contextualized"));
++    Ok(())
++}
++
++/// Provides remote compaction with an explicit catalog that cannot run the helper.
++fn remote_compaction_without_luna() -> TestCodexBuilder {
++    test_codex()
++        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
++        .with_config(|config| {
++            let mut catalog =
++                codex_models_manager::bundled_models_response().expect("test catalog");
++            catalog.models.retain(|model| model.slug == "gpt-5.4");
++            config.model_catalog = Some(catalog);
++            config.model = Some("gpt-5.4".to_owned());
++        })
++}
++
++/// A later compaction creates a new display but replaces the model's old account.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn repeated_compaction_presents_each_account_once() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = responses::start_mock_server().await;
++    let compact = responses::sse(vec![
++        json!({
++            "type": "response.output_item.done",
++            "item": {"type": "compaction", "encrypted_content": "checkpoint"},
++        }),
++        responses::ev_completed("compact"),
++    ]);
++    let requests = responses::mount_sse_sequence(
++        &server,
++        vec![
++            responses::sse(vec![responses::ev_completed("initial")]),
++            compact.clone(),
++            compact,
++            responses::sse(vec![responses::ev_completed("continued")]),
++        ],
++    )
++    .await;
++    let test = remote_compaction_without_luna().build(&server).await?;
++    test.submit_turn(ORIGINAL_REQUEST).await?;
++    let mut accounts = Vec::new();
++    for iteration in 0..2 {
++        test.codex.submit(Op::Compact).await?;
++        let mut completed = Vec::new();
++        wait_for_event(&test.codex, |event| {
++            assert!(
++                !matches!(event, EventMsg::Error(_)),
++                "compaction {iteration}: {event:?}"
++            );
++            if let EventMsg::ItemCompleted(event) = event
++                && let TurnItem::AgentMessage(account) = &event.item
++            {
++                completed.push(account.clone());
++            }
++            matches!(event, EventMsg::TurnComplete(_))
++        })
++        .await;
++        assert_eq!(completed.len(), 1, "one account for compaction {iteration}");
++        accounts.push(completed.remove(0));
++    }
++    assert_ne!(accounts[0].id, accounts[1].id);
++    test.submit_turn("Continue the report.").await?;
++    test.codex.flush_rollout().await?;
++    let history = test.codex.load_history(false).await?;
++    let AgentMessageContent::Text { text: first } = &accounts[0].content[0];
++    let AgentMessageContent::Text { text: second } = &accounts[1].content[0];
++    assert_eq!(first, second);
++    assert_persisted_accounts(&test, &history.items, second, 2).await?;
++    let input = requests
++        .last_request()
++        .context("continued model request")?
++        .input();
++    assert_eq!(
++        input
++            .iter()
++            .filter(|item| item["content"].as_array().is_some_and(|parts| {
++                parts.iter().any(|part| {
++                    part["text"]
++                        .as_str()
++                        .is_some_and(|text| text.starts_with(ACCOUNT_HEADING))
++                })
++            }))
++            .count(),
++        1
++    );
++    test.codex.shutdown_and_wait().await?;
++    Ok(())
++}
++
++/// A failed local summary must not produce an account presentation.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn failed_local_compaction_has_no_account_presentation() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = responses::start_mock_server().await;
++    let mut provider =
++        ModelProviderInfo::create_openai_provider(Some(format!("{}/v1", server.uri())));
++    provider.name = "Local compaction test".to_owned();
++    provider.supports_websockets = false;
++    provider.stream_max_retries = Some(0);
++    assert_failed_compaction_has_no_account(
++        &server,
++        test_codex().with_config(move |config| {
++            config.model_provider = provider;
++        }),
++    )
++    .await
++}
++
++/// A failed remote checkpoint must not produce an account presentation.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn failed_remote_compaction_has_no_account_presentation() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = responses::start_mock_server().await;
++    assert_failed_compaction_has_no_account(
++        &server,
++        test_codex()
++            .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
++            .with_config(|config| config.model_provider.stream_max_retries = Some(0)),
++    )
++    .await
++}
++
++/// Interrupting compaction before installation cannot announce an account.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn interrupted_compaction_has_no_account_presentation() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = responses::start_mock_server().await;
++    responses::mount_sse_once(
++        &server,
++        responses::sse(vec![responses::ev_completed("initial")]),
++    )
++    .await;
++    let test = test_codex()
++        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
++        .build(&server)
++        .await?;
++    test.submit_turn(ORIGINAL_REQUEST).await?;
++    let requested = std::sync::Arc::new(tokio::sync::Notify::new());
++    let observed = std::sync::Arc::clone(&requested);
++    wiremock::Mock::given(wiremock::matchers::method("POST"))
++        .respond_with(move |_: &wiremock::Request| {
++            observed.notify_one();
++            wiremock::ResponseTemplate::new(200)
++                .insert_header("content-type", "text/event-stream")
++                .set_body_string(responses::sse(vec![responses::ev_completed("compact")]))
++                .set_delay(std::time::Duration::from_secs(60))
++        })
++        .with_priority(1)
++        .mount(&server)
++        .await;
++    test.codex.submit(Op::Compact).await?;
++    tokio::time::timeout(std::time::Duration::from_secs(10), requested.notified()).await?;
++    test.codex.submit(Op::Interrupt).await?;
++    wait_for_event(&test.codex, |event| {
++        match event {
++            EventMsg::ItemStarted(event) => {
++                assert!(!matches!(event.item, TurnItem::AgentMessage(_)))
++            }
++            EventMsg::ItemCompleted(event) => {
++                assert!(!matches!(event.item, TurnItem::AgentMessage(_)))
++            }
++            _ => {}
++        }
++        matches!(event, EventMsg::TurnAborted(_))
++    })
++    .await;
++    test.codex.flush_rollout().await?;
++    let history = test.codex.load_history(false).await?;
++    assert!(
++        !history
++            .items
++            .iter()
++            .any(|item| matches!(item, RolloutItem::Compacted(_)))
++    );
++    test.codex.shutdown_and_wait().await?;
++    Ok(())
++}
++
++/// Forces compaction failure and checks both live display and persisted history.
++async fn assert_failed_compaction_has_no_account(
++    server: &MockServer,
++    mut builder: TestCodexBuilder,
++) -> Result<()> {
++    responses::mount_sse_sequence(
++        server,
++        vec![
++            responses::sse(vec![responses::ev_completed("initial")]),
++            responses::sse_failed("compact", "server_error", "compaction failed"),
++        ],
++    )
++    .await;
++    let test = builder.build(server).await?;
++    test.submit_turn(ORIGINAL_REQUEST).await?;
++    test.codex.submit(Op::Compact).await?;
++    let mut failed = false;
++    wait_for_event(&test.codex, |event| {
++        match event {
++            EventMsg::ItemStarted(event) => {
++                assert!(!matches!(event.item, TurnItem::AgentMessage(_)))
++            }
++            EventMsg::ItemCompleted(event) => {
++                assert!(!matches!(event.item, TurnItem::AgentMessage(_)))
++            }
++            EventMsg::Error(_) => failed = true,
++            _ => {}
++        }
++        matches!(event, EventMsg::TurnComplete(_))
++    })
++    .await;
++    assert!(failed);
++    test.codex.flush_rollout().await?;
++    let history = test.codex.load_history(false).await?;
++    assert!(
++        !history
++            .items
++            .iter()
++            .any(|item| matches!(item, RolloutItem::Compacted(_)))
++    );
++    test.codex.shutdown_and_wait().await?;
++    Ok(())
++}
++
++/// Runs a compaction, checks its display against storage, then resumes model work.
++async fn assert_compaction_account_lifecycle(
++    server: &MockServer,
++    mut builder: TestCodexBuilder,
++    compaction_responses: Vec<String>,
++) -> Result<String> {
++    let mut scripts = vec![responses::sse(vec![responses::ev_completed("initial")])];
++    scripts.extend(compaction_responses);
++    scripts.push(responses::sse(vec![responses::ev_completed("resumed")]));
++    let requests = responses::mount_sse_sequence(server, scripts).await;
++    let test = builder.build(server).await?;
++    test.submit_turn(ORIGINAL_REQUEST).await?;
++    test.codex.submit(Op::Compact).await?;
++    let mut started = Vec::new();
++    let mut completed = Vec::new();
++    wait_for_event(&test.codex, |event| {
++        match event {
++            EventMsg::ItemStarted(event) if matches!(event.item, TurnItem::AgentMessage(_)) => {
++                started.push(event.item.clone());
++            }
++            EventMsg::ItemCompleted(event) if matches!(event.item, TurnItem::AgentMessage(_)) => {
++                completed.push(event.item.clone());
++            }
++            _ => {}
++        }
++        matches!(event, EventMsg::TurnComplete(_))
++    })
++    .await;
++    let [TurnItem::AgentMessage(account)] = completed.as_slice() else {
++        panic!("one completed account expected: {completed:?}");
++    };
++    assert_eq!(started.len(), 1);
++    assert_eq!(started[0].id(), account.id);
++    assert_eq!(account.phase, Some(MessagePhase::Commentary));
++    let [AgentMessageContent::Text { text: displayed }] = account.content.as_slice() else {
++        panic!("account should have one complete text part");
++    };
++    test.codex.flush_rollout().await?;
++    let history = test
++        .thread_store
++        .load_latest_model_context(LoadThreadHistoryParams {
++            thread_id: test.session_configured.thread_id,
++            include_archived: false,
++        })
++        .await?;
++    let checkpoint_index = history
++        .items
++        .iter()
++        .position(|item| matches!(item, RolloutItem::Compacted(_)))
++        .context("installed compaction checkpoint")?;
++    let RolloutItem::Compacted(checkpoint) = &history.items[checkpoint_index] else {
++        unreachable!();
++    };
++    let installed = checkpoint
++        .replacement_history
++        .as_ref()
++        .context("replacement history")?;
++    let installed_account = installed
++        .iter()
++        .find(|item| item.item.id().is_some_and(|id| id.as_str() == account.id))
++        .context("displayed account in installed history")?;
++    assert!(
++        matches!(&installed_account.item, ResponseItem::Message { content, phase, .. }
++        if *phase == Some(MessagePhase::Commentary)
++            && content == &vec![ContentItem::OutputText { text: displayed.clone() }])
++    );
++    assert!(installed.iter().any(|item| matches!(&item.item,
++        ResponseItem::Message { role, content, .. }
++            if role == "user" && content == &vec![ContentItem::InputText { text: ORIGINAL_REQUEST.to_owned() }])));
++    let display_index = history
++        .items
++        .iter()
++        .position(|item| match item {
++            RolloutItem::EventMsg(EventMsg::ItemCompleted(event)) => event.item.id() == account.id,
++            RolloutItem::EventMsg(EventMsg::AgentMessage(event)) => event.message == *displayed,
++            _ => false,
++        })
++        .context("persisted account presentation")?;
++    assert!(
++        display_index > checkpoint_index,
++        "presentation follows installation"
++    );
++    assert_persisted_accounts(&test, &history.items, displayed, 1).await?;
++
++    test.codex.shutdown_and_wait().await?;
++    let saved = test
++        .thread_store
++        .load_latest_model_context(LoadThreadHistoryParams {
++            thread_id: test.session_configured.thread_id,
++            include_archived: false,
++        })
++        .await?;
++    let resumed = test
++        .thread_manager
++        .resume_thread_with_history(
++            test.config.clone(),
++            InitialHistory::Resumed(ResumedHistory {
++                history_revision: None,
++                conversation_id: saved.thread_id,
++                history: std::sync::Arc::new(saved.items),
++                rollout_path: test.session_configured.rollout_path.clone(),
++            }),
++            test.thread_manager.auth_manager(),
++            None,
++            ClientMcpExtensions::default(),
++        )
++        .await?;
++    resumed
++        .thread
++        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
++            text: "Continue the report.".to_owned(),
++            text_elements: Vec::new(),
++        }]))
++        .await?;
++    wait_for_event(&resumed.thread, |event| {
++        matches!(event, EventMsg::TurnComplete(_))
++    })
++    .await;
++    resumed.thread.flush_rollout().await?;
++    let resumed_history = test
++        .thread_store
++        .load_latest_model_context(LoadThreadHistoryParams {
++            thread_id: test.session_configured.thread_id,
++            include_archived: false,
++        })
++        .await?;
++    assert_persisted_accounts(&test, &resumed_history.items, displayed, 1).await?;
++    resumed.thread.shutdown_and_wait().await?;
++    let requests = requests.requests();
++    let input = requests.last().context("resumed model request")?.input();
++    assert_eq!(
++        input
++            .iter()
++            .filter(|item| item["content"]
++                .as_array()
++                .is_some_and(|parts| { parts.iter().any(|part| part["text"] == *displayed) }))
++            .count(),
++        1,
++        "the model sees only one account after resume"
++    );
++    assert!(
++        !input.iter().any(|item| item["role"] == "user"
++            && item["content"].as_array().is_some_and(|parts| {
++                parts.iter().any(|part| part["text"] == ORIGINAL_REQUEST)
++            })),
++        "original request remains saved but is replaced in model input"
++    );
++    Ok(displayed.clone())
++}
++
++/// Reads commentary through the consumer for each persisted history format.
++async fn assert_persisted_accounts(
++    test: &TestCodex,
++    items: &[RolloutItem],
++    text: &str,
++    count: usize,
++) -> Result<()> {
++    let transcript = match test.codex.config_snapshot().await.history_mode {
++        ThreadHistoryMode::Legacy => {
++            let mut transcript = ThreadHistoryBuilder::new();
++            for item in items {
++                transcript.handle_rollout_item(item);
++            }
++            transcript
++                .finish()
++                .into_iter()
++                .flat_map(|turn| turn.items)
++                .collect::<Vec<_>>()
++        }
++        ThreadHistoryMode::Paginated => {
++            let page = test
++                .thread_store
++                .list_items(ListItemsParams {
++                    thread_id: test.session_configured.thread_id,
++                    turn_id: None,
++                    include_archived: false,
++                    position: None,
++                    page_size: 100,
++                    sort_direction: SortDirection::Asc,
++                    sort_key: ItemSortKey::CreatedAtOrdinal,
++                    after_updated_at_ordinal: None,
++                })
++                .await?;
++            assert!(page.next_cursor.is_none());
++            page.items
++                .into_iter()
++                .map(|item| serde_json::from_slice::<ThreadItem>(&item.item_json))
++                .collect::<serde_json::Result<Vec<_>>>()?
++        }
++    };
++    let accounts = transcript
++        .into_iter()
++        .filter(
++            |item| matches!(item, ThreadItem::AgentMessage { text: actual, .. } if actual == text),
++        )
++        .collect::<Vec<_>>();
++    assert_eq!(
++        accounts.len(),
++        count,
++        "replay must not duplicate the presentation"
++    );
++    assert!(
++        accounts
++            .iter()
++            .all(|item| matches!(item, ThreadItem::AgentMessage { phase, .. }
++        if *phase == Some(MessagePhase::Commentary)))
++    );
 +    Ok(())
 +}
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
