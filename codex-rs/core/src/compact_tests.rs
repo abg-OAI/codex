@@ -204,6 +204,114 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
     items.into_iter().map(ResponseItemEnvelope::new).collect()
 }
 
+/// Local compaction keeps a parent assignment after the inherited user request.
+#[test]
+fn local_compaction_preserves_parent_assignment() {
+    let assignment = ResponseItem::AgentMessage {
+        id: Some(ResponseItemId::with_suffix("amsg", "assignment")),
+        author: "/root".to_owned(),
+        recipient: "/root/orchard".to_owned(),
+        content: vec![AgentMessageInputContent::InputText {
+            text: "Message Type: NEW_TASK\nInvestigate the orchard export.".to_owned(),
+        }],
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let history = annotated(vec![
+        user_message("Catalogue the garden fixtures."),
+        assignment.clone(),
+    ]);
+    let inputs = collect_annotated_user_messages(
+        &history,
+        &codex_protocol::AgentPath::try_from("/root/orchard").unwrap(),
+    );
+    let compacted = build_compacted_history(Vec::new(), &inputs, "summary");
+    assert_eq!(compacted[0], history[0]);
+    assert_eq!(compacted[1].item, assignment);
+    assert_eq!(compacted.len(), 3);
+}
+
+/// Dependent steers keep their position through successive local compactions.
+#[test]
+fn local_compaction_preserves_delivery_chain_without_duplicate_summaries() {
+    use crate::saffron::compaction_requests::tests::admitted_delivery;
+
+    let first = ResponseItemEnvelope::new(user_message("Catalogue the garden fixtures."));
+    let assignment = admitted_delivery("Investigate the orchard export instead.", 2);
+    let steer = admitted_delivery("For that export, check the midnight batch first.", 3);
+    let user = ResponseItemEnvelope::new(user_message("Report findings; do not change files."));
+    let ordinary_output: ResponseItem = serde_json::from_value(json!({
+        "type": "function_call_output", "call_id": "inspection",
+        "output": "Ordinary tool output must not become an instruction."
+    }))
+    .unwrap();
+    let mut history = vec![
+        first.clone(),
+        assignment.clone(),
+        ordinary_output.into(),
+        steer.clone(),
+        user.clone(),
+    ];
+    let expected = vec![first, assignment, steer, user];
+    for _ in 0..3 {
+        history = build_compacted_history(
+            Vec::new(),
+            &collect_annotated_user_messages(&history, &codex_protocol::AgentPath::root()),
+            &format!("{SUMMARY_PREFIX}\nThe orchard investigation is active."),
+        );
+        assert_eq!(&history[..history.len() - 1], &expected);
+        assert!(matches!(&history.last().unwrap().item,
+            ResponseItem::Message { content, .. }
+            if content_items_to_text(content).is_some_and(|text| is_summary_message(&text))));
+    }
+}
+
+/// A newer user correction gets the shared budget before an older handoff.
+#[test]
+fn local_compaction_budget_prefers_newer_user_over_delivery() {
+    let history = vec![
+        crate::saffron::compaction_requests::tests::admitted_delivery("Old task.", 2),
+        ResponseItemEnvelope::new(user_message("New task.")),
+    ];
+    let compacted = build_compacted_history_with_limit(
+        Vec::new(),
+        &collect_annotated_user_messages(&history, &codex_protocol::AgentPath::root()),
+        "summary",
+        approx_token_count("New task."),
+    );
+    assert_eq!(compacted.len(), 2);
+    assert_eq!(compacted[0], history[1]);
+}
+
+/// Copied instructions to a sibling and child reports are not this agent's task.
+#[test]
+fn local_compaction_omits_other_agents_requests_and_reports() {
+    let history = annotated(vec![
+        ResponseItem::AgentMessage {
+            id: None,
+            author: "/root".to_owned(),
+            recipient: "/root/vegetables".to_owned(),
+            content: vec![AgentMessageInputContent::InputText {
+                text: "Message Type: NEW_TASK\nInspect the vegetable export.".to_owned(),
+            }],
+            internal_chat_message_metadata_passthrough: None,
+        },
+        ResponseItem::AgentMessage {
+            id: None,
+            author: "/root/fruit/child".to_owned(),
+            recipient: "/root/fruit".to_owned(),
+            content: vec![AgentMessageInputContent::InputText {
+                text: "Message Type: FINAL_ANSWER\nInspection complete.".to_owned(),
+            }],
+            internal_chat_message_metadata_passthrough: None,
+        },
+    ]);
+    let inputs = collect_annotated_user_messages(
+        &history,
+        &codex_protocol::AgentPath::try_from("/root/fruit").unwrap(),
+    );
+    assert!(inputs.is_empty());
+}
+
 fn raw(items: Vec<ResponseItemEnvelope>) -> Vec<ResponseItem> {
     items
         .into_iter()
@@ -223,12 +331,12 @@ fn user_message(text: &str) -> ResponseItem {
     }
 }
 
-fn compacted_user_message<'a>(text: &str, original: &'a ResponseItem) -> CompactedUserMessage<'a> {
-    CompactedUserMessage {
+fn compacted_user_message<'a>(text: &str, original: &'a ResponseItem) -> CompactedInput<'a> {
+    CompactedInput::User(CompactedUserMessage {
         message: text.to_string(),
         original,
         harness_metadata: None,
-    }
+    })
 }
 
 #[test]
@@ -329,7 +437,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
         ResponseItemEnvelope::new(ResponseItem::Other),
     ];
 
-    let collected = collect_annotated_user_messages(&items);
+    let collected = collect_annotated_user_messages(&items, &codex_protocol::AgentPath::root());
 
     if !preserve_content {
         item = user_message(expected_text);
@@ -340,11 +448,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
     };
     assert_eq!(
         collected,
-        vec![CompactedUserMessage {
+        vec![CompactedInput::User(CompactedUserMessage {
             message: expected_text.to_owned(),
             original: &items[0].item,
             harness_metadata: items[0].metadata.as_ref(),
-        }]
+        })]
     );
     assert_eq!(
         build_compacted_history(Vec::new(), &collected, "summary"),
@@ -438,7 +546,10 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages() {
     original.metadata = Some(CodexHarnessMetadata::default());
     let history = super::build_compacted_history_with_limit(
         Vec::new(),
-        &collect_annotated_user_messages(std::slice::from_ref(&original)),
+        &collect_annotated_user_messages(
+            std::slice::from_ref(&original),
+            &codex_protocol::AgentPath::root(),
+        ),
         "SUMMARY",
         max_tokens,
     );
@@ -520,7 +631,10 @@ fn build_compacted_history_preserves_user_message_passthrough_metadata() {
     };
     let history = build_compacted_history(
         Vec::new(),
-        &collect_annotated_user_messages(std::slice::from_ref(&original)),
+        &collect_annotated_user_messages(
+            std::slice::from_ref(&original),
+            &codex_protocol::AgentPath::root(),
+        ),
         "summary text",
     );
 
