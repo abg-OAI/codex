@@ -13,8 +13,10 @@ projected Saffrodex tree needs.
 Every generated commit is defined by one `layers/NNNN-layer-slug/` directory.
 The four-digit prefix determines application order through ordinary lexical
 sorting; no separate series or order file exists.
-Each directory contains a required `COMMIT_EDITMSG` and an optional binary-safe
-tree delta in `patch`. Original commit authorship is not part of a layer.
+Each directory contains a required `COMMIT_EDITMSG`, an optional binary-safe
+`patch`, and optional complete added files under `overlay/`.
+Layers apply patch then overlay; `LAYERCTL.md` owns capture and collision rules.
+Original commit authorship is not part of a layer.
 Treat layer directories as generated artifacts:
 edit and review source in a hydrated projection,
 then use `layerctl layer add` or `layerctl layer refresh` to capture it.

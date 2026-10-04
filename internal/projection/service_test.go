@@ -236,6 +236,9 @@ func captureLayer(t *testing.T, directory, before, after string) layercommit.Cap
 func writeLayerDefinition(t *testing.T, root, id string, captured layercommit.Captured) {
 	t.Helper()
 	directory := filepath.Join(root, "layers", id)
+	if err := definition.WriteOverlay(directory, captured.Overlay); err != nil {
+		t.Fatal(err)
+	}
 	writeFile(t, filepath.Join(directory, "COMMIT_EDITMSG"), string(captured.Message))
 	if len(captured.Patch) > 0 {
 		writeFile(t, filepath.Join(directory, "patch"), string(captured.Patch))

@@ -45,8 +45,8 @@ func TestServiceCaptureAndApplyRoundTripAcceptedEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capture() error = %v", err)
 	}
-	if !bytes.Contains(captured.Patch, []byte("GIT binary patch")) {
-		t.Fatal("Capture() patch does not contain the binary delta")
+	if bytes.Contains(captured.Patch, []byte("binary.bin")) || len(captured.Overlay) != 4 {
+		t.Fatalf("additions not separated from patch: %s; overlay=%v", captured.Patch, captured.Overlay)
 	}
 	unit := writeLayer(t, t.TempDir(), "0001-feature", captured)
 	matches, err := service.Matches(t.Context(), unit, before, after)
@@ -87,7 +87,8 @@ func TestServiceCaptureAndApplyMessageOnlyCommit(t *testing.T) {
 func TestServiceApplyLeavesConflictsForResolution(t *testing.T) {
 	root, before := newRepository(t)
 	writeFile(t, filepath.Join(root, "text.txt"), []byte("layer\n"), 0o644)
-	gitRun(t, root, "add", "text.txt")
+	writeFile(t, filepath.Join(root, "new.txt"), []byte("addition survives conflict\n"), 0o644)
+	gitRun(t, root, "add", "-A")
 	gitRun(t, root, "commit", "-m", "Layer change")
 	after := gitOutput(t, root, "rev-parse", "HEAD")
 	git, err := gitrepo.Discover(t.Context(), root)
@@ -115,6 +116,9 @@ func TestServiceApplyLeavesConflictsForResolution(t *testing.T) {
 	if !hasConflicts {
 		t.Fatal("HasConflicts() = false, want true")
 	}
+	if got, err := os.ReadFile(filepath.Join(root, "new.txt")); err != nil || string(got) != "addition survives conflict\n" {
+		t.Fatalf("overlay during conflict = %q, %v", got, err)
+	}
 	writeFile(t, filepath.Join(root, "text.txt"), []byte("resolved\n"), 0o644)
 	gitRun(t, root, "add", "-A")
 	if err := service.Commit(t.Context(), root, unit); err != nil {
@@ -122,6 +126,69 @@ func TestServiceApplyLeavesConflictsForResolution(t *testing.T) {
 	}
 	if got := gitOutput(t, root, "show", "-s", "--format=%B", "HEAD"); got != "Layer change" {
 		t.Fatalf("resolved message = %q, want %q", got, "Layer change")
+	}
+}
+
+func TestServiceCapture_overlayTransitionsAndUnusualPaths(t *testing.T) {
+	root, _ := newRepository(t)
+	writeFile(t, filepath.Join(root, "directory", "old"), []byte("old"), 0o644)
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-m", "directory predecessor")
+	before := gitOutput(t, root, "rev-parse", "HEAD")
+	if err := os.RemoveAll(filepath.Join(root, "directory")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "directory"), []byte("now a file"), 0o644)
+	writeFile(t, filepath.Join(root, "space tab\tnewline\nname"), nil, 0o755)
+	if err := os.Remove(filepath.Join(root, "text.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("deleted.txt", filepath.Join(root, "text.txt")); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-m", "transitions")
+	after := gitOutput(t, root, "rev-parse", "HEAD")
+	git, err := gitrepo.Discover(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &layercommit.Service{Git: git}
+	captured, err := service.Capture(t.Context(), layercommit.CaptureRequest{Before: before, After: after})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(captured.Overlay) != 2 || !bytes.Contains(captured.Patch, []byte("text.txt")) {
+		t.Fatalf("incorrect transition ownership: %+v", captured)
+	}
+	unit := writeLayer(t, t.TempDir(), "0001-transition", captured)
+	if matches, err := service.Matches(t.Context(), unit, before, after); err != nil || !matches {
+		t.Fatalf("transition replay = %v, %v", matches, err)
+	}
+}
+
+func TestServiceApply_rejectsOverlappingRepresentations(t *testing.T) {
+	root, before := newRepository(t)
+	writeFile(t, filepath.Join(root, "text.txt"), []byte("changed"), 0o644)
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "-m", "change")
+	git, err := gitrepo.Discover(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &layercommit.Service{Git: git}
+	captured, err := service.Capture(t.Context(), layercommit.CaptureRequest{Before: before, After: "HEAD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured.Overlay = []definition.OverlayEntry{{Path: "text.txt", Mode: "100644", Data: []byte("overlap")}}
+	unit := writeLayer(t, t.TempDir(), "0001-invalid", captured)
+	gitRun(t, root, "switch", "--detach", before)
+	if err := service.Apply(t.Context(), root, unit); err == nil || !strings.Contains(err.Error(), "overlaps") {
+		t.Fatalf("Apply overlapping layer = %v", err)
+	}
+	if got := gitOutput(t, root, "status", "--porcelain"); got != "" {
+		t.Fatalf("invalid definition changed worktree: %s", got)
 	}
 }
 
@@ -144,7 +211,7 @@ func writeLayer(t *testing.T, root, id string, captured layercommit.Captured) de
 	directory := filepath.Join(root, id)
 	messagePath := filepath.Join(directory, "COMMIT_EDITMSG")
 	writeFile(t, messagePath, captured.Message, 0o644)
-	unit := definition.Unit{ID: id, Directory: directory, MessagePath: messagePath}
+	unit := definition.Unit{ID: id, Directory: directory, MessagePath: messagePath, Overlay: captured.Overlay}
 	if len(captured.Patch) > 0 {
 		unit.PatchPath = filepath.Join(directory, "patch")
 		writeFile(t, unit.PatchPath, captured.Patch, 0o644)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
+	"github.com/abg-OAI/codex/layerctl/internal/layercommit"
 	"github.com/abg-OAI/codex/layerctl/internal/projection"
 )
 
@@ -205,7 +206,8 @@ func (s *Service) process(ctx context.Context, statePath string, state *advanceS
 			if inspectErr != nil {
 				return errors.Join(err, inspectErr)
 			}
-			if !hasConflicts {
+			var collision *layercommit.OverlayCollisionError
+			if !hasConflicts && !errors.As(err, &collision) {
 				state.ApplyingHead = ""
 				if writeErr := writeState(statePath, *state); writeErr != nil {
 					return errors.Join(err, writeErr)

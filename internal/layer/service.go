@@ -1,5 +1,5 @@
 // Package layer captures accepted projection commits as canonical Saffrodex
-// layer patches.
+// layer definitions.
 package layer
 
 import (
@@ -157,6 +157,13 @@ func (s *Service) writeLayer(ctx context.Context, id, before, after string, repl
 		if err := os.WriteFile(temporaryUnit.PatchPath, captured.Patch, 0o644); err != nil {
 			return fmt.Errorf("write temporary layer patch: %w", err)
 		}
+	}
+	if err := definition.WriteOverlay(temporaryPath, captured.Overlay); err != nil {
+		return fmt.Errorf("write temporary layer overlay: %w", err)
+	}
+	temporaryUnit, err = definition.LoadUnit(id, temporaryPath)
+	if err != nil {
+		return fmt.Errorf("read captured layer %q: %w", id, err)
 	}
 	matches, err := layers.Matches(ctx, temporaryUnit, before, after)
 	if err != nil {

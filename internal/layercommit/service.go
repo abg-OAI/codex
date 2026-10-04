@@ -1,6 +1,6 @@
 // Package layercommit translates between accepted Git commits and canonical
-// Saffrodex layer definitions. A layer owns an exact commit message and an
-// optional binary-safe tree diff; callers own ordering and lifecycle policy.
+// Saffrodex layer definitions. A layer owns a commit message, a patch and
+// additive overlay; callers own layer ordering and lifecycle policy.
 package layercommit
 
 import (
@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/abg-OAI/codex/layerctl/internal/definition"
 	"github.com/abg-OAI/codex/layerctl/internal/gitrepo"
@@ -18,11 +20,12 @@ type Service struct {
 	Git *gitrepo.Repository // required
 }
 
-// Captured is the canonical representation of one generated commit. Patch is
-// empty when Before and After have the same tree.
+// Captured separates complete added files from the remaining binary-safe delta.
+// Together Patch and Overlay reproduce the accepted tree from its predecessor.
 type Captured struct {
 	Message []byte
 	Patch   []byte
+	Overlay []definition.OverlayEntry
 }
 
 // CaptureRequest selects the predecessor and accepted endpoint for one layer.
@@ -31,13 +34,51 @@ type CaptureRequest struct {
 	After  string
 }
 
-// Capture returns After's exact commit message and the tree delta from Before
-// to After. Git plumbing owns the diff semantics and binary representation.
+// Capture preserves After's commit message and separates its additions from
+// inherited changes. Git owns tree comparison and binary patch representation.
 func (s *Service) Capture(ctx context.Context, req CaptureRequest) (Captured, error) {
 	message, err := commitMessage(s.Git, ctx, s.Git.Root, req.After)
 	if err != nil {
 		return Captured{}, err
 	}
+	before, err := s.treeEntries(ctx, req.Before)
+	if err != nil {
+		return Captured{}, err
+	}
+	after, err := s.treeEntries(ctx, req.After)
+	if err != nil {
+		return Captured{}, err
+	}
+	var overlay []definition.OverlayEntry
+	var removals bytes.Buffer
+	for _, entry := range after {
+		if _, exists := before[entry.Path]; exists || entry.Mode == "160000" {
+			continue
+		}
+		data, err := s.Git.Bytes(ctx, s.Git.Root, "cat-file", "blob", entry.Object)
+		if err != nil {
+			return Captured{}, err
+		}
+		addition := definition.OverlayEntry{Path: entry.Path, Mode: entry.Mode, Data: data}
+		if err := addition.Validate(); err != nil {
+			return Captured{}, err
+		}
+		overlay = append(overlay, addition)
+		fmt.Fprintf(&removals, "0 %040d\t%s%c", 0, entry.Path, 0)
+	}
+	slices.SortFunc(overlay, func(a, b definition.OverlayEntry) int { return strings.Compare(a.Path, b.Path) })
+	residual, err := s.editTree(ctx, req.After, removals.Bytes())
+	if err != nil {
+		return Captured{}, err
+	}
+	patch, err := s.diff(ctx, req.Before, residual)
+	if err != nil {
+		return Captured{}, err
+	}
+	return Captured{Message: message, Patch: patch, Overlay: overlay}, nil
+}
+
+func (s *Service) diff(ctx context.Context, before, after string) ([]byte, error) {
 	patch, err := s.Git.Bytes(
 		ctx,
 		s.Git.Root,
@@ -55,31 +96,65 @@ func (s *Service) Capture(ctx context.Context, req CaptureRequest) (Captured, er
 		"--diff-algorithm=myers",
 		"--src-prefix=a/",
 		"--dst-prefix=b/",
-		req.Before,
-		req.After,
+		before,
+		after,
 	)
 	if err != nil {
-		return Captured{}, fmt.Errorf("diff layer trees: %w", err)
+		return nil, fmt.Errorf("diff layer trees: %w", err)
 	}
-	return Captured{Message: message, Patch: patch}, nil
+	return patch, nil
 }
 
-// Apply applies unit's optional tree diff and creates its generated commit.
+// Apply applies the patch followed by its disjoint overlay and commits once.
+// Git stages clean changes during conflicts; callers retain the worktree for
+// resolution. Overlay collisions require refresh, including identical additions.
 func (s *Service) Apply(ctx context.Context, worktree string, unit definition.Unit) error {
-	if unit.PatchPath != "" {
-		if err := s.Git.Run(
-			ctx,
-			worktree,
-			"-c", "rerere.enabled=false",
-			"apply",
-			"--3way",
-			"--index",
-			"--whitespace=nowarn",
-			"--",
-			unit.PatchPath,
-		); err != nil {
+	patch, err := s.applicationPatch(ctx, unit)
+	if err != nil {
+		return err
+	}
+	predecessor, err := s.Git.Output(ctx, worktree, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	entries, err := s.treeEntries(ctx, predecessor)
+	if err != nil {
+		return err
+	}
+	var collisions []string
+	for _, entry := range unit.Overlay {
+		for path := range entries {
+			if path == entry.Path || strings.HasPrefix(path, entry.Path+"/") || strings.HasPrefix(entry.Path, path+"/") {
+				collisions = append(collisions, entry.Path)
+				break
+			}
+		}
+	}
+	if len(patch) != 0 {
+		// A single Git application includes the patch followed by disjoint
+		// additions. Git stages clean additions even when inherited edits
+		// conflict, so continuation cannot omit a pending overlay phase.
+		_, err = s.Git.Invoke(ctx, worktree, gitrepo.Invocation{
+			Arguments: []string{"-c", "rerere.enabled=false", "apply", "--3way", "--index", "--whitespace=nowarn", "-"},
+			Stdin:     patch,
+		})
+		if err != nil {
+			if len(collisions) != 0 {
+				return &OverlayCollisionError{Paths: collisions, Cause: err}
+			}
 			return err
 		}
+	}
+	// Successful application has already removed structural blockers through
+	// the patch. Same-leaf additions still need ownership reconciliation.
+	var inherited []string
+	for _, entry := range unit.Overlay {
+		if _, exists := entries[entry.Path]; exists {
+			inherited = append(inherited, entry.Path)
+		}
+	}
+	if len(inherited) != 0 {
+		return &OverlayCollisionError{Paths: inherited}
 	}
 	return s.Commit(ctx, worktree, unit)
 }
