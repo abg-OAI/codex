@@ -1,0 +1,9 @@
+Add attributed messaging between loaded root threads
+
+Expose saffron.send_message_to_thread for loaded roots in the caller's
+app-server process. Start idle destinations or steer active turns while
+preserving destination settings and runtime-derived sender identity.
+
+Present incoming messages with saved sender attribution in live and
+reconstructed client history. Keep the original tool output unchanged
+for core persistence and model input.

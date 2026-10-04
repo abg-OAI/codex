@@ -622,10 +622,10 @@ index 8c0cfcfd0406f80967cebb44d5cb66fdd2e590da..3918976caebf361510bff12218596991
  /// In production builds this value should remain at its default (`false`) and
 diff --git a/codex-rs/core/src/unified_exec/process_manager/interaction.rs b/codex-rs/core/src/unified_exec/process_manager/interaction.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..48703e1e17e967453c9fbc5c0f870c85511515d2
+index 0000000000000000000000000000000000000000..a58d1fdddf20b87522485067c75aa5e5c97a8be5
 --- /dev/null
 +++ b/codex-rs/core/src/unified_exec/process_manager/interaction.rs
-@@ -0,0 +1,470 @@
+@@ -0,0 +1,471 @@
 +//! Serialized interactions with stored unified-exec processes.
 +//!
 +//! This module is the lifecycle boundary for consumers that need to wait on or
@@ -828,7 +828,8 @@ index 0000000000000000000000000000000000000000..48703e1e17e967453c9fbc5c0f870c85
 +            tokio::pin!(output_published);
 +            let has_output = {
 +                let output = self.output.output_buffer.lock().await;
-+                let has_output = output.retained_bytes() > 0 || output.omitted_bytes() > 0;
++                let has_output =
++                    output.pending.retained_bytes() > 0 || output.pending.omitted_bytes() > 0;
 +                output_published.as_mut().enable();
 +                has_output
 +            };
@@ -946,7 +947,7 @@ index 0000000000000000000000000000000000000000..48703e1e17e967453c9fbc5c0f870c85
 +            } else {
 +                Some(self.process_id)
 +            };
-+            let output = std::mem::take(&mut *output);
++            let output = std::mem::take(&mut output.pending);
 +            let outcome = ProcessInteractionOutcome {
 +                process_id,
 +                exit_code,

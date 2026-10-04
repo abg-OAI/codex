@@ -1445,7 +1445,7 @@ index fb84c33a839e9e9793eba989ccec08235b000756..b644ca996d792e9a7f913cec3295cf5e
  fn reservation_drop_releases_slot() {
      let registry = Arc::new(AgentRegistry::default());
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 46ec84dd9206006f1f4a067d9bdf1d8ba5a73839..20aeb8939acf8240183bbef666bcfdcf6173355d 100644
+index 2cc9350085ea88684b0062391a8f002100b0f370..1af8cf548461cd4f69edfcc47ce375f4ca1bdb3c 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -319,6 +319,17 @@ impl CodexThread {
@@ -2671,26 +2671,6 @@ index 1667105ab808fb5e6ca16bf636d09018e189d341..65f738e51660016666205e48b26dbb0e
                      {
                          Some(communication.content)
                      }
-diff --git a/codex-rs/core/tests/suite/agent_control_tests.rs b/codex-rs/core/tests/suite/agent_control_tests.rs
-index f47635a98fc06d143437bcf1430bcb937062c382..67b689841e65613aeded8e0ea26afb6c5e77db7e 100644
---- a/codex-rs/core/tests/suite/agent_control_tests.rs
-+++ b/codex-rs/core/tests/suite/agent_control_tests.rs
-@@ -152,6 +152,7 @@ impl AgentControl for TestAgentControl {
-
-     fn check_turn_admission(
-         &self,
-+        _thread_id: ThreadId,
-         _version: MultiAgentVersion,
-         _source: &SessionSource,
-     ) -> CodexResult<()> {
-@@ -160,6 +161,7 @@ impl AgentControl for TestAgentControl {
-
-     fn admit_turn(
-         &self,
-+        _thread_id: ThreadId,
-         _version: MultiAgentVersion,
-         _source: &SessionSource,
-     ) -> Option<AgentExecutionGuard> {
 diff --git a/codex-rs/core/tests/suite/compact_remote.rs b/codex-rs/core/tests/suite/compact_remote.rs
 index 76032f34efb953dd22c3f47517937743a68173ce..e1f2272c688d0c2c6aea0225fd36f127ab336e2a 100644
 --- a/codex-rs/core/tests/suite/compact_remote.rs

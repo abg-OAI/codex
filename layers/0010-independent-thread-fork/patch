@@ -1649,7 +1649,7 @@ index 0000000000000000000000000000000000000000..9b539a7625efcc9e71e5beddc73c0f9e
 +    )
 +}
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
-index 988be7d758dfde506aff555db95ea2491b9957d6..755414c1c70bfa4d65202f54d08b072bd13068e8 100644
+index c57f447d5d0e67de466ea218d84b19ddae86be21..a7b88419e11add01b0bd11ce8c52b7186f14f650 100644
 --- a/codex-rs/core/src/saffron/mod.rs
 +++ b/codex-rs/core/src/saffron/mod.rs
 @@ -7,6 +7,7 @@
@@ -1660,7 +1660,7 @@ index 988be7d758dfde506aff555db95ea2491b9957d6..755414c1c70bfa4d65202f54d08b072b
  mod goal_edit;
  pub(crate) mod goal_resume;
  pub(crate) mod goal_scheduler;
-@@ -47,4 +48,5 @@ pub(crate) fn register_tools(
+@@ -48,4 +49,5 @@ pub(crate) fn register_tools(
 
      goal_edit::register_root_if_available(session, turn_context, registry);
      goal_resume::register_root_if_available(session, turn_context, registry);
