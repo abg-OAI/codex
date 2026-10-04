@@ -11,6 +11,7 @@ mod goal_edit;
 pub(crate) mod goal_resume;
 pub(crate) mod goal_scheduler;
 pub(crate) mod goal_supervisor;
+pub(crate) mod request_account;
 pub(crate) mod saved_thread_persistence;
 mod storage;
 pub(crate) mod subagent_completion;
