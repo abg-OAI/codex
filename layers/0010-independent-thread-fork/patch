@@ -80,7 +80,7 @@ index f658d6742b158fbc5abbf6a8e1a78dba890466e1..74a5697ee526d7587f9e798e43703e0a
      };
      if prev_entry.is_some() {
 diff --git a/codex-rs/core/src/tools/handlers/mod.rs b/codex-rs/core/src/tools/handlers/mod.rs
-index bd58aeda593820ecb1222e0f97802e5a9d2a7870..415855e3de532527aba361cc98793d0dfe25de00 100644
+index 710c089b8a5481b6a69b19047d677e7f19bf419c..e6e54dc828ef64f45e11a459d0442af761df174b 100644
 --- a/codex-rs/core/src/tools/handlers/mod.rs
 +++ b/codex-rs/core/src/tools/handlers/mod.rs
 @@ -1,7 +1,7 @@

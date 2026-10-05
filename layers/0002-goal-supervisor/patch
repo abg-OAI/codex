@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index e7c700939b9f21d7963617f46569e0cc39c79d86..7ed418de72d1ce38f1e1684797a1b40cef7241a8 100644
+index 295d1f826b19efa6e781761ca0c3d8bba6dd0d8a..474e2173adc20da18dd355a0a6b5e7b89bb35fcc 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -3040,6 +3040,7 @@ dependencies = [
@@ -1194,7 +1194,7 @@ index 5ace22c811bc97df2bf0546b461ba12102406cda..8eee2e54ad49706718c3fe29cadcf719
              |item| matches!(item, TurnInput::InterAgentCommunication(mail) if mail.trigger_turn),
          ) {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 5cfb1f3513af629435c30c51053629907d869abb..9161c1d6227d235463b5f98b646a81802803a0e2 100644
+index 16300cd066e889457bc69b17667b82597ad0c07f..8545e9fa563cd41f4433297d23a2e8740bf290fa 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -150,6 +150,7 @@ pub(crate) fn build_tool_router(
