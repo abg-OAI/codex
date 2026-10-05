@@ -1,8 +1,10 @@
-//! Optional Desktop sidebar placement through tools advertised by the client.
+//! Optional Desktop sidebar placement through the client request transport.
 //!
 //! Desktop owns section membership and host routing. Native thread-store sections
 //! are not a substitute for that state. Each request is bounded; a timeout leaves
 //! placement unconfirmed and never cancels the independently running fork.
+//! Saved registrations select legacy tool spelling, not current availability.
+//! Desktop may reject any request; this adapter never changes the tool catalog.
 
 use std::time::Duration;
 
@@ -40,7 +42,7 @@ pub(super) enum Outcome {
         /// Whether this invocation created the destination before moving.
         created: bool,
     },
-    /// Placement was not requested or required capabilities were absent.
+    /// Placement was not requested or Desktop supplied no source membership or host.
     Skipped {
         /// Why no move was attempted.
         reason: String,
@@ -69,14 +71,8 @@ pub(super) async fn place(
         };
     }
     let tools = &invocation.turn.dynamic_tools;
-    let (Some(list), Some(move_tool)) = (
-        advertised_tool(tools, "list_threads"),
-        advertised_tool(tools, "move_thread_to_sidebar_section"),
-    ) else {
-        return Outcome::Skipped {
-            reason: "Desktop list and move capabilities are not available".to_string(),
-        };
-    };
+    let list = desktop_tool(tools, "list_threads");
+    let move_tool = desktop_tool(tools, "move_thread_to_sidebar_section");
     let listing: Listing = match request(invocation, list, json!({"limit": 50}), "list").await {
         Ok(listing) => listing,
         Err(reason) => return Outcome::Failed { reason },
@@ -174,8 +170,7 @@ async fn named_destination(
     if let Some(section) = found {
         return Ok((section.section_id.clone(), false));
     }
-    let create = advertised_tool(&invocation.turn.dynamic_tools, "create_sidebar_section")
-        .ok_or_else(|| "Desktop section creation capability is not available".to_string())?;
+    let create = desktop_tool(&invocation.turn.dynamic_tools, "create_sidebar_section");
     let section: Section = request(invocation, create, json!({"name": name}), "create").await?;
     if section.name != name || section.section_id.is_empty() {
         return Err("Desktop did not confirm the requested section creation; inspect sections before retrying".to_string());
@@ -183,22 +178,25 @@ async fn named_destination(
     Ok((section.section_id, true))
 }
 
-/// Resolves only the supported app tool names in the advertised dynamic catalog.
-fn advertised_tool(tools: &[DynamicToolSpec], name: &str) -> Option<ToolName> {
+/// Uses an advertised spelling when present, otherwise the namespaced handler.
+///
+/// Registrations can outlive the client's catalog. Missing registrations do not
+/// establish handler availability; the bounded request obtains the client result.
+fn desktop_tool(tools: &[DynamicToolSpec], name: &str) -> ToolName {
     for tool in tools {
         match tool {
             DynamicToolSpec::Namespace(namespace) if namespace.name == "codex_app" => {
                 if namespace.tools.iter().any(|tool| matches!(tool, DynamicToolNamespaceTool::Function(function) if function.name == name)) {
-                    return Some(ToolName::namespaced("codex_app", name));
+                    return ToolName::namespaced("codex_app", name);
                 }
             }
             DynamicToolSpec::Function(function) if function.name == format!("codex_app__{name}") => {
-                return Some(ToolName::new(None, function.name.clone()));
+                return ToolName::new(None, function.name.clone());
             }
             _ => {}
         }
     }
-    None
+    ToolName::namespaced("codex_app", name)
 }
 
 /// Calls the existing client transport, completing pending bookkeeping on timeout.
@@ -371,7 +369,7 @@ mod tests {
         assert!(decode::<Listing>(response).is_err());
     }
 
-    /// Advertised capabilities alone permit the real dynamic request transport.
+    /// Namespaced registrations retain client routing and move confirmation.
     #[test_case::test_case(true, "inherited"; "confirmed")]
     #[test_case::test_case(false, "failed"; "rejected")]
     #[tokio::test]
@@ -509,17 +507,17 @@ mod tests {
         );
     }
 
-    /// A missing name creates a destination even when the caller has no section.
-    #[test_case::test_case(true; "move_confirmed")]
-    #[test_case::test_case(false; "move_rejected_after_creation")]
+    /// Missing registrations do not prevent explicit creation and placement.
+    #[test_case::test_case(&["list_threads", "create_sidebar_section", "move_thread_to_sidebar_section"][..], true; "advertised")]
+    #[test_case::test_case(&[][..], true; "no_registrations")]
+    #[test_case::test_case(&["list_threads"][..], true; "list_only")]
+    #[test_case::test_case(&[][..], false; "move_rejected_after_creation")]
     #[tokio::test]
-    async fn explicit_missing_section_is_created_before_placement(move_succeeds: bool) {
-        let (invocation, events) = desktop_session(&[
-            "list_threads",
-            "create_sidebar_section",
-            "move_thread_to_sidebar_section",
-        ])
-        .await;
+    async fn explicit_missing_section_is_created_before_placement(
+        advertised: &[&str],
+        move_succeeds: bool,
+    ) {
+        let (invocation, events) = desktop_session(advertised).await;
         let fork = ThreadId::new();
         let client = async {
             reply_to_desktop(&invocation, &events, "list_threads", json!({"limit": 50}), json!({
@@ -576,12 +574,7 @@ mod tests {
     #[test_case::test_case(true, "Different"; "creation_mismatch")]
     #[tokio::test]
     async fn unconfirmed_creation_does_not_move(success: bool, returned_name: &str) {
-        let (invocation, events) = desktop_session(&[
-            "list_threads",
-            "create_sidebar_section",
-            "move_thread_to_sidebar_section",
-        ])
-        .await;
+        let (invocation, events) = desktop_session(&[]).await;
         let fork = ThreadId::new();
         let client = async {
             reply_to_desktop(&invocation, &events, "list_threads", json!({"limit": 50}), json!({
@@ -626,34 +619,63 @@ mod tests {
         }
     }
 
-    /// Missing creation support does not turn an explicit destination into inheritance.
+    /// A missing catalog still permits inheritance through the client transport.
+    #[test_case::test_case(&[][..], "source"; "no_registrations")]
+    #[test_case::test_case(&["list_threads"][..], "source"; "list_only")]
+    #[test_case::test_case(&[][..], "wrong"; "mismatched_move_receipt")]
     #[tokio::test]
-    async fn missing_creation_capability_reports_failure() {
-        let (invocation, events) =
-            desktop_session(&["list_threads", "move_thread_to_sidebar_section"]).await;
+    async fn missing_registrations_do_not_skip_inheritance(
+        advertised: &[&str],
+        returned_section: &str,
+    ) {
+        let (invocation, events) = desktop_session(advertised).await;
         let fork = ThreadId::new();
-        let client = reply_to_desktop(
-            &invocation,
-            &events,
-            "list_threads",
-            json!({"limit": 50}),
-            json!({
-                "threads": [{"id": invocation.session.thread_id(), "kind": "codex", "hostId": "remote"}],
-                "sections": [{"sectionId": "source", "name": "Source", "itemKeys": [format!("codex:thread:local:{}", invocation.session.thread_id())]}],
-            }),
-            true,
-        );
+        let client = async {
+            reply_to_desktop(
+                &invocation,
+                &events,
+                "list_threads",
+                json!({"limit": 50}),
+                json!({
+                    "threads": [{"id": invocation.session.thread_id(), "kind": "codex", "hostId": "remote"}],
+                    "sections": [{"sectionId": "source", "name": "Source", "itemKeys": [format!("codex:thread:local:{}", invocation.session.thread_id())]}],
+                }),
+                true,
+            )
+            .await;
+            let placement = json!({"threadId": fork, "hostId": "remote", "sectionId": "source"});
+            let receipt =
+                json!({"threadId": fork, "hostId": "remote", "sectionId": returned_section});
+            reply_to_desktop(
+                &invocation,
+                &events,
+                "move_thread_to_sidebar_section",
+                placement,
+                receipt,
+                true,
+            )
+            .await;
+        };
         let (outcome, ()) = tokio::time::timeout(Duration::from_secs(5), async {
-            tokio::join!(place(&invocation, fork, true, Some("Research")), client)
+            tokio::join!(place(&invocation, fork, true, None), client)
         })
         .await
         .unwrap();
-        assert_eq!(
-            outcome,
-            Outcome::Failed {
-                reason: "Desktop section creation capability is not available".to_string()
-            }
-        );
+        if returned_section == "source" {
+            assert_eq!(
+                outcome,
+                Outcome::Inherited {
+                    section_id: "source".to_string()
+                }
+            );
+        } else {
+            assert!(matches!(outcome, Outcome::Failed { .. }));
+        }
+        while let Ok(event) = events.try_recv() {
+            assert!(
+                !matches!(event.msg, EventMsg::ItemStarted(event) if matches!(event.item, TurnItem::DynamicToolCall(_)))
+            );
+        }
     }
 
     /// Opens an active source turn with the supplied Desktop capabilities.
@@ -712,7 +734,17 @@ mod tests {
             let TurnItem::DynamicToolCall(call) = event.item else {
                 continue;
             };
-            assert_eq!(call.tool, format!("codex_app__{tool}"));
+            let legacy_name = format!("codex_app__{tool}");
+            let legacy_advertised = invocation.turn.dynamic_tools.iter().any(|spec| {
+                matches!(spec, DynamicToolSpec::Function(function) if function.name == legacy_name)
+            });
+            if legacy_advertised {
+                assert_eq!(call.namespace, None);
+                assert_eq!(call.tool, legacy_name);
+            } else {
+                assert_eq!(call.namespace.as_deref(), Some("codex_app"));
+                assert_eq!(call.tool, tool);
+            }
             assert_eq!(call.arguments, arguments);
             invocation
                 .session
@@ -730,7 +762,7 @@ mod tests {
         }
     }
 
-    /// A stalled Desktop request ends at its deadline and records a terminal item.
+    /// Without registrations or a client response, placement ends at its deadline.
     #[tokio::test]
     async fn timed_out_request_finishes_pending_dynamic_call() {
         let (session, turn, events) =
@@ -750,14 +782,11 @@ mod tests {
             },
         };
         tokio::time::pause();
-        let result = request::<Listing>(
-            &invocation,
-            ToolName::namespaced("codex_app", "list_threads"),
-            json!({}),
-            "list",
-        )
-        .await;
-        assert!(result.err().unwrap().contains("outcome is unconfirmed"));
+        let result = place(&invocation, ThreadId::new(), true, None).await;
+        let Outcome::Failed { reason } = result else {
+            panic!("unconfirmed placement must report failure, got {result:?}");
+        };
+        assert!(reason.contains("outcome is unconfirmed"));
         loop {
             let event = events.try_recv().unwrap();
             if let EventMsg::ItemCompleted(event) = event.msg

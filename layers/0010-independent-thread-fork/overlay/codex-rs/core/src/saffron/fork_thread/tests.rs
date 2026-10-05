@@ -15,9 +15,7 @@ use codex_history::RolloutItem;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider::create_model_provider;
-use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
@@ -116,19 +114,7 @@ fn fork_runs_from_completed_history_without_a_goal(
         turn.config = Arc::new(config.clone());
         turn.history_mode = history_mode;
         turn.sub_id = "unfinished".to_string();
-        if placement_fails {
-            turn.dynamic_tools = ["list_threads", "move_thread_to_sidebar_section"]
-                .into_iter()
-                .map(|name| {
-                    DynamicToolSpec::Function(DynamicToolFunctionSpec {
-                        name: format!("codex_app__{name}"),
-                        description: name.to_string(),
-                        input_schema: json!({"type": "object"}),
-                        defer_loading: false,
-                    })
-                })
-                .collect();
-        }
+        assert!(turn.dynamic_tools.is_empty());
         let state = init_state_db(&config).await.expect("test state database");
         let auth = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
         let manager = Arc::new(ThreadManager::new(
@@ -173,10 +159,9 @@ fn fork_runs_from_completed_history_without_a_goal(
             )
             .await?;
         let mut created = manager.subscribe_thread_created();
-        let mut arguments = json!({"prompt": "new-assignment-marker", "title": "Independent test"});
+        let mut arguments = json!({"prompt": "new-assignment-marker", "title": "Independent test", "inherit_section": false});
         if placement_fails {
             arguments["section"] = json!("Research");
-            arguments["inherit_section"] = json!(false);
         }
         let invocation = tool_invocation(&source, turn, arguments);
         let expected_model = invocation.step_context.settings.model_info.slug.clone();

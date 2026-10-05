@@ -103,7 +103,7 @@ struct Args {
     prompt: String,
     /// Optional persistent title for locating the new thread.
     title: Option<String>,
-    /// Inherit Desktop placement when advertised capabilities permit it.
+    /// Request inheritance of the caller's Desktop sidebar section.
     #[serde(default = "inherit_section_by_default")]
     inherit_section: bool,
     /// Named Desktop destination, created if absent; overrides inheritance.
