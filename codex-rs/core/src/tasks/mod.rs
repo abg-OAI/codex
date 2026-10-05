@@ -275,6 +275,11 @@ impl Session {
         input: Vec<TurnInput>,
         task: T,
     ) {
+        crate::saffron::goal_supervisor::claim_root_continuation(
+            self,
+            crate::saffron::goal_supervisor::ContinuationOwner::RootTurn,
+        )
+        .await;
         self.abort_all_tasks(TurnAbortReason::Replaced).await;
         self.clear_connector_selection().await;
         self.start_task(turn_context, input, task).await;
@@ -335,6 +340,7 @@ impl Session {
         let turn = active.get_or_insert_with(ActiveTurn::default);
         debug_assert!(turn.task.is_none());
         let agent_execution_guard = self.services.agent_control.admit_turn(
+            self.thread_id,
             turn_context.multi_agent_version,
             &turn_context.session_source,
         );
@@ -468,6 +474,11 @@ impl Session {
             let active_turn = active_turn.get_or_insert_with(ActiveTurn::default);
             Arc::clone(&active_turn.turn_state)
         };
+        crate::saffron::goal_supervisor::claim_root_continuation(
+            self,
+            crate::saffron::goal_supervisor::ContinuationOwner::RootTurn,
+        )
+        .await;
 
         self.services
             .models_manager
@@ -485,6 +496,10 @@ impl Session {
         }
         let (input, mut start_options) =
             self.input_queue.get_pending_input(&self.active_turn).await;
+        if start_options.turn_trigger.is_none() {
+            start_options.turn_trigger =
+                crate::saffron::goal_supervisor::active_goal_turn_trigger(self).await;
+        }
         if !input.iter().any(
             |item| matches!(item, TurnInput::InterAgentCommunication(mail) if mail.trigger_turn),
         ) {
