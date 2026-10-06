@@ -1,0 +1,3 @@
+Require scoped authorization for child delegation
+
+Select child-specific delegation guidance before inherited mode hints. Spawned children work directly unless the user, parent or applicable instructions explicitly assign scoped work requiring further delegation. Root policy and tool availability remain unchanged.
