@@ -4,7 +4,8 @@ Host-delivered assignments use standalone tool-output envelopes.
 Compaction previously discarded them while retaining older user text,
 so a completed or superseded request could remain the visible task.
 
-Retain admitted deliveries and instructions from the receiving agent's
+Retain admitted Desktop deliveries, native Saffron messages, and instructions
+from the receiving agent's
 ancestors alongside ordinary user inputs in source order.
 Preserve their protocol identities and admission metadata across
 checkpoints and rollout replay, and exempt admitted input from generic
