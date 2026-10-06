@@ -1,0 +1,72 @@
+diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
+index 306854319fd5d952186206a9c87a7ceeb8574df8..be2c37671ce574eb1cac73fc2ffb00316c715630 100644
+--- a/codex-rs/core/src/saffron/mod.rs
++++ b/codex-rs/core/src/saffron/mod.rs
+@@ -6,6 +6,7 @@
+ //! only the integration points that upstream registration needs.
+
+ pub(crate) mod await_exec;
++pub(crate) mod child_delegation;
+ pub(crate) mod compaction_requests;
+ pub(crate) mod fork_thread;
+ mod goal_edit;
+diff --git a/codex-rs/core/src/session/multi_agents.rs b/codex-rs/core/src/session/multi_agents.rs
+index 9cec8ae35abbbd78222703d6d8840f9d4f693066..2d4b6339a043af843418bc8d8edc9e622da79a11 100644
+--- a/codex-rs/core/src/session/multi_agents.rs
++++ b/codex-rs/core/src/session/multi_agents.rs
+@@ -80,6 +80,9 @@ pub(crate) fn effective_multi_agent_mode(step_context: &StepContext) -> Option<M
+     if turn_context.multi_agent_version != MultiAgentVersion::V2 {
+         return None;
+     }
++    if let Some(mode) = crate::saffron::child_delegation::mode(&turn_context.session_source) {
++        return Some(mode);
++    }
+
+     let multi_agent_messages =
+         ResolvedModelMessages::from_model(&settings.model_info).multi_agent();
+@@ -119,3 +122,45 @@ pub(crate) fn effective_multi_agent_mode(step_context: &StepContext) -> Option<M
+         SessionSource::Internal(_) | SessionSource::SubAgent(_) => None,
+     }
+ }
++
++#[cfg(test)]
++mod saffron_tests {
++    use super::*;
++    use crate::session::tests::make_session_and_context;
++    use codex_protocol::ThreadId;
++    use std::sync::Arc;
++
++    /// Child mode wins over custom hints; roots retain their configured policy.
++    #[tokio::test]
++    async fn child_delegation_does_not_inherit_root_mode() {
++        let (_session, mut turn) = make_session_and_context().await;
++        turn.multi_agent_version = MultiAgentVersion::V2;
++        Arc::make_mut(&mut turn.config)
++            .multi_agent_v2
++            .multi_agent_mode_hint_text = Some("Delegate every independent task.".to_owned());
++        let mut turn = Arc::new(turn);
++        let root = StepContext::for_test(Arc::clone(&turn));
++        assert_eq!(
++            effective_multi_agent_mode(&root),
++            Some(MultiAgentMode::Custom(
++                "Delegate every independent task.".to_owned()
++            ))
++        );
++        drop(root);
++        Arc::get_mut(&mut turn).unwrap().session_source =
++            SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++                parent_thread_id: ThreadId::new(),
++                depth: 1,
++                agent_path: None,
++                agent_nickname: None,
++                agent_role: None,
++            });
++        let child = StepContext::for_test(turn);
++        let Some(MultiAgentMode::Custom(text)) = effective_multi_agent_mode(&child) else {
++            panic!("child must receive delegation guidance");
++        };
++        assert!(text.contains("your parent"));
++        assert!(text.contains("explicitly"));
++        assert!(!text.contains("Delegate every independent task."));
++    }
++}
