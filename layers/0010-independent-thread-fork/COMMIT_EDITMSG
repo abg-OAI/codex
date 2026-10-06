@@ -17,3 +17,7 @@ Creation and moving are separate effects, so retain the saved thread
 and report any unconfirmed placement without retrying the fork.
 Return the saved thread ID when submission fails so callers can recover
 without creating a duplicate fork.
+
+Deliver the initial assignment as attributed Saffron tool output using the
+parent session identity. Preserve it under the existing chronological
+compaction budget without promoting agent text to human instructions.

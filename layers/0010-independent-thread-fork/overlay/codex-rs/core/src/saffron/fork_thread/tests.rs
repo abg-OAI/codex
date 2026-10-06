@@ -149,6 +149,16 @@ fn fork_runs_from_completed_history_without_a_goal(
             ])
             .await?;
         source.thread.flush_rollout().await?;
+        source
+            .thread
+            .update_thread_metadata(
+                ThreadMetadataPatch {
+                    name: Some(Some("Parent inspection".to_owned())),
+                    ..Default::default()
+                },
+                true,
+            )
+            .await?;
         let goal = state
             .thread_goals()
             .replace_thread_goal(
@@ -237,11 +247,80 @@ fn fork_runs_from_completed_history_without_a_goal(
         })
         .await??;
         fork.flush_rollout().await?;
-        let stored = fork.read_thread(true, false).await?;
+        let stored = fork
+            .read_thread(true, history_mode == ThreadHistoryMode::Legacy)
+            .await?;
         assert_eq!(stored.forked_from_id, Some(source.thread_id));
         assert_eq!(stored.name.as_deref(), Some("Independent test"));
         assert!(stored.rollout_path.is_some());
-        let request = response.single_request().body_json().to_string();
+        let request = response.single_request().body_json();
+        let input = request["input"].as_array().unwrap();
+        let assignment_items: Vec<_> = input
+            .iter()
+            .filter(|item| item.to_string().contains("new-assignment-marker"))
+            .collect();
+        assert_eq!(assignment_items.len(), 1);
+        let assignment = assignment_items[0];
+        assert_eq!(assignment["type"], "function_call_output");
+        assert_eq!(assignment["namespace"], "saffron");
+        assert_eq!(assignment["name"], "fork_thread");
+        assert!(
+            assignment
+                .get("call_id")
+                .is_none_or(serde_json::Value::is_null)
+        );
+        let attributed: serde_json::Value =
+            serde_json::from_str(assignment["output"].as_str().unwrap())?;
+        assert_eq!(
+            attributed,
+            json!({
+                "source_thread_id": source.thread_id,
+                "source_thread_name": "Parent inspection",
+                "input": "new-assignment-marker"
+            })
+        );
+        if history_mode == ThreadHistoryMode::Legacy {
+            let saved = stored.history.as_ref().expect("legacy persisted history");
+            let saved_input: Vec<_> = saved
+                .items
+                .iter()
+                .filter_map(|item| {
+                    if let RolloutItem::ResponseItem(envelope) = item {
+                        Some(&envelope.item)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert!(saved_input.iter().any(|item| {
+                let ResponseItem::FunctionCallOutput {
+                    name: Some(name),
+                    namespace: Some(namespace),
+                    call_id: None,
+                    output,
+                    ..
+                } = item
+                else {
+                    return false;
+                };
+                name == "fork_thread"
+                    && namespace == "saffron"
+                    && serde_json::to_value(output)
+                        .unwrap()
+                        .to_string()
+                        .contains("new-assignment-marker")
+            }));
+            assert!(!saved_input.iter().any(|item| {
+                let ResponseItem::Message { role, content, .. } = item else {
+                    return false;
+                };
+                role == "user"
+                    && serde_json::to_string(content)
+                        .unwrap()
+                        .contains("new-assignment-marker")
+            }));
+        }
+        let request = request.to_string();
         assert!(request.contains("completed-history-marker"));
         assert!(request.contains("new-assignment-marker"));
         assert!(!request.contains("unfinished-history-marker"));

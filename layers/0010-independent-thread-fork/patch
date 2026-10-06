@@ -23,6 +23,19 @@ index b7ca243467560ecd8a767f3b8a4a626ea085a208..f44b073f53b0f3a942612afb464324ac
  /// Installs Saffrodex-owned model guidance that accompanies goal tools.
  pub fn install_saffron_goal_guidance(
      builder: &mut codex_extension_api::ExtensionRegistryBuilder<config::Config>,
+diff --git a/codex-rs/core/src/saffron/compaction_requests.rs b/codex-rs/core/src/saffron/compaction_requests.rs
+index 10f16b0b58a01281d8ef1b541e9a040d075717b9..3d4f7cb22111e102ada3c303c6a46d7c6d6e8585 100644
+--- a/codex-rs/core/src/saffron/compaction_requests.rs
++++ b/codex-rs/core/src/saffron/compaction_requests.rs
+@@ -94,7 +94,7 @@ pub(crate) fn is_delivery(item: &ResponseItem, metadata: Option<&CodexHarnessMet
+     else {
+         return false;
+     };
+-    if namespace == "saffron" && name == "send_message_to_thread" {
++    if namespace == "saffron" && matches!(name.as_str(), "send_message_to_thread" | "fork_thread") {
+         return true;
+     }
+     name == "send_message_to_thread"
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
 index 0e5b94605cafe76a6c7fe66b8627aa905dd16dd4..e548b2f1503cf3cf31fa705c73e46c3b20a91435 100644
 --- a/codex-rs/core/src/saffron/mod.rs
@@ -92,3 +105,41 @@ index 710c089b8a5481b6a69b19047d677e7f19bf419c..e6e54dc828ef64f45e11a459d0442af7
  pub(crate) mod extension_tools;
  mod get_context_remaining;
  pub(crate) mod get_context_remaining_spec;
+diff --git a/codex-rs/core/tests/saffron_compaction_retention.rs b/codex-rs/core/tests/saffron_compaction_retention.rs
+index 09eff960f528d7e757381d012243f791dc4e0b79..2ff625381b7687e37cc4809318a8e945c0679fdd 100644
+--- a/codex-rs/core/tests/saffron_compaction_retention.rs
++++ b/codex-rs/core/tests/saffron_compaction_retention.rs
+@@ -16,10 +16,12 @@ use serde_json::json;
+ use wiremock::MockServer;
+
+ /// Admitted agent messages retain attribution through compaction and cold resume.
+-#[test_case::test_case(false; "local")]
+-#[test_case::test_case(true; "remote")]
++#[test_case::test_case(false, "send_message_to_thread"; "local_message")]
++#[test_case::test_case(true, "send_message_to_thread"; "remote_message")]
++#[test_case::test_case(false, "fork_thread"; "local_assignment")]
++#[test_case::test_case(true, "fork_thread"; "remote_assignment")]
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+-async fn saffron_delivery_survives_compaction_and_resume(remote: bool) -> Result<()> {
++async fn saffron_delivery_survives_compaction_and_resume(remote: bool, tool: &str) -> Result<()> {
+     use codex_core::TurnInput;
+     use codex_core::TurnInputRequest;
+     use codex_protocol::models::FunctionCallOutputPayload;
+@@ -71,7 +73,7 @@ async fn saffron_delivery_survives_compaction_and_resume(remote: bool) -> Result
+             ResponseItem::FunctionCallOutput {
+                 id: None,
+                 call_id: None,
+-                name: Some("send_message_to_thread".to_owned()),
++                name: Some(tool.to_owned()),
+                 namespace: Some("saffron".to_owned()),
+                 output: FunctionCallOutputPayload::from_text(body.clone()),
+                 internal_chat_message_metadata_passthrough: None,
+@@ -105,7 +107,7 @@ async fn saffron_delivery_survives_compaction_and_resume(remote: bool) -> Result
+             .filter(|item| {
+                 item["type"] == "function_call_output"
+                     && item["namespace"] == "saffron"
+-                    && item["name"] == "send_message_to_thread"
++                    && item["name"] == tool
+             })
+             .collect();
+         assert_eq!(deliveries.len(), 1, "delivery in request {index}");

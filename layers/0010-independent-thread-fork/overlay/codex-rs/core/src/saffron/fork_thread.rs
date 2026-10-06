@@ -19,8 +19,9 @@ use codex_extension_api::ThreadStartInput;
 use codex_history::InitialHistory;
 use codex_history::ResumedHistory;
 use codex_protocol::ThreadId;
+use codex_protocol::models::FunctionCallOutputPayload;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::ThreadHistoryMode;
-use codex_protocol::user_input::UserInput;
 use codex_thread_store::ForkBoundary;
 use codex_thread_store::PrepareForkParams;
 use codex_thread_store::ThreadMetadataPatch;
@@ -37,6 +38,7 @@ use serde::Serialize;
 
 use crate::StartIfIdleSubmission;
 use crate::ThreadManager;
+use crate::TurnInput;
 use crate::TurnInputRequest;
 use crate::config::Config;
 use crate::function_tool::FunctionCallError;
@@ -115,6 +117,19 @@ fn inherit_section_by_default() -> bool {
     true
 }
 
+/// Agent assignment with sender identity taken from the running parent session.
+///
+/// Saved as standalone tool output so replay preserves attribution without
+/// promoting the parent's interpretation to a human instruction.
+#[derive(Serialize)]
+struct Assignment {
+    source_thread_id: ThreadId,
+    /// A missing display name does not prevent assignment delivery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_thread_name: Option<String>,
+    input: String,
+}
+
 /// Creation survives later failures; the ID always identifies that saved fork.
 #[derive(Serialize)]
 struct Outcome {
@@ -183,6 +198,11 @@ impl Handler {
             .await
             .map_err(invalid)?;
         source.flush_rollout().await.map_err(invalid)?;
+        let source_thread_name = source
+            .read_thread(true, false)
+            .await
+            .ok()
+            .and_then(|thread| thread.name);
         let mut config = turn.config.as_ref().clone();
         let settings = &invocation.step_context.settings;
         config.ephemeral = false;
@@ -265,12 +285,24 @@ impl Handler {
                     .await
                     .map_err(|error| error.to_string())?;
             }
+            let assignment = ResponseItem::FunctionCallOutput {
+                id: None,
+                call_id: None,
+                name: Some("fork_thread".to_owned()),
+                namespace: Some("saffron".to_owned()),
+                output: FunctionCallOutputPayload::from_text(
+                    serde_json::to_string(&Assignment {
+                        source_thread_id: session.thread_id(),
+                        source_thread_name,
+                        input: args.prompt,
+                    })
+                    .map_err(|error| error.to_string())?,
+                ),
+                internal_chat_message_metadata_passthrough: None,
+            };
             let submitted = fork
                 .thread
-                .start_turn_if_idle(TurnInputRequest::user_input(vec![UserInput::Text {
-                    text: args.prompt,
-                    text_elements: Vec::new(),
-                }]))
+                .start_turn_if_idle(TurnInputRequest::new(TurnInput::ResponseItem(assignment)))
                 .await
                 .map_err(|error| error.to_string())?;
             match submitted {

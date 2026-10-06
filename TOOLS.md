@@ -30,6 +30,8 @@ process.
 
 Starts a persistent independent root from the calling root's completed history.
 The current unfinished turn is excluded; `prompt` supplies the new assignment.
+The assignment arrives as attributed `saffron.fork_thread` output, not as a
+human user message. Sender identity comes from the calling thread.
 The fork inherits model settings, working directory, and permissions,
 but does not inherit or automatically create a goal.
 Execution belongs to the host and does not wait for Desktop placement.
