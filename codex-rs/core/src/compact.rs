@@ -16,6 +16,7 @@ use crate::hook_runtime::run_post_compact_hooks;
 use crate::hook_runtime::run_pre_compact_hooks;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CompactionTurnMetadata;
+use crate::saffron::compaction_requests::CompactedInput;
 use crate::session::RequestEffortUsage;
 use crate::session::session::Session;
 use crate::session::step_context::StepContext;
@@ -349,7 +350,11 @@ async fn run_compact_task_inner_impl(
         get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default()
     };
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
-    let user_messages = collect_annotated_user_messages(history_items);
+    let agent_path = turn_context
+        .session_source
+        .get_agent_path()
+        .unwrap_or_else(codex_protocol::AgentPath::root);
+    let user_messages = collect_annotated_user_messages(history_items, &agent_path);
 
     let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
     if let Some(summary_item) = new_history.last_mut() {
@@ -530,19 +535,39 @@ pub(crate) struct CompactedUserMessage<'a> {
 }
 
 #[cfg(test)]
-pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<CompactedUserMessage<'_>> {
+/// Collects ordinary user input for compaction tests.
+pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<CompactedInput<'_>> {
     items
         .iter()
-        .filter_map(|item| compacted_user_message(item, /*harness_metadata*/ None))
+        .filter_map(|item| {
+            compacted_user_message(item, /*harness_metadata*/ None).map(CompactedInput::User)
+        })
         .collect()
 }
 
-pub(crate) fn collect_annotated_user_messages(
-    items: &[ResponseItemEnvelope],
-) -> Vec<CompactedUserMessage<'_>> {
+/// Collects ordinary user input and admitted requests in source history order.
+/// Parent instructions must address the supplied agent, including on rollout replay.
+pub(crate) fn collect_annotated_user_messages<'a>(
+    items: &'a [ResponseItemEnvelope],
+    agent_path: &codex_protocol::AgentPath,
+) -> Vec<CompactedInput<'a>> {
     items
         .iter()
-        .filter_map(|envelope| compacted_user_message(&envelope.item, envelope.metadata.as_ref()))
+        .filter_map(|envelope| {
+            if crate::saffron::compaction_requests::is_request(
+                &envelope.item,
+                envelope.metadata.as_ref(),
+                agent_path,
+            ) {
+                Some(CompactedInput::Request {
+                    item: &envelope.item,
+                    metadata: envelope.metadata.as_ref(),
+                })
+            } else {
+                compacted_user_message(&envelope.item, envelope.metadata.as_ref())
+                    .map(CompactedInput::User)
+            }
+        })
         .collect()
 }
 
@@ -636,9 +661,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
     compacted_history
 }
 
+/// Retains recent input under the local token budget and appends the summary last.
 pub(crate) fn build_compacted_history(
     initial_context: Vec<ResponseItemEnvelope>,
-    user_messages: &[CompactedUserMessage<'_>],
+    user_messages: &[CompactedInput<'_>],
     summary_text: &str,
 ) -> Vec<ResponseItemEnvelope> {
     build_compacted_history_with_limit(
@@ -649,9 +675,10 @@ pub(crate) fn build_compacted_history(
     )
 }
 
+/// Shares one chronological budget across ordinary user input and admitted requests.
 fn build_compacted_history_with_limit(
     mut history: Vec<ResponseItemEnvelope>,
-    user_messages: &[CompactedUserMessage<'_>],
+    user_messages: &[CompactedInput<'_>],
     summary_text: &str,
     max_tokens: usize,
 ) -> Vec<ResponseItemEnvelope> {
@@ -662,6 +689,26 @@ fn build_compacted_history_with_limit(
             if remaining == 0 {
                 break;
             }
+            let message = match message {
+                CompactedInput::User(message) => message,
+                CompactedInput::Request { item, metadata } => {
+                    let tokens =
+                        usize::try_from(crate::context_manager::estimate_item_token_count(item))
+                            .unwrap_or(usize::MAX)
+                            .max(1);
+                    let envelope = ResponseItemEnvelope {
+                        item: (*item).clone(),
+                        metadata: metadata.cloned(),
+                    };
+                    if let Some(retained) =
+                        crate::saffron::compaction_requests::retain(envelope, remaining)
+                    {
+                        selected_messages.push(retained);
+                    }
+                    remaining = remaining.saturating_sub(tokens);
+                    continue;
+                }
+            };
             let tokens = approx_token_count(&message.message);
             let ResponseItem::Message {
                 id,
