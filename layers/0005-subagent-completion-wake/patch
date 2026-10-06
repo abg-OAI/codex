@@ -1858,7 +1858,7 @@ index de46d6a1d641a60d3556891620143055be7c97a8..60ed99d4e4ed718c4f686a7c0963fdb3
      async fn input_queue_uses_unambiguous_trigger_parent_and_first_root() {
          let (parent, peer, root, root2) = (Some("a"), Some("b"), Some("r"), Some("s"));
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index e48f7d8ad63ee5fe1e479fa4d616e7d2a9a20dc8..56e44b98fee8058bba1da75cdd30fa1cecd0919f 100644
+index 8248a67d42d0c945e8bb0421c8167f3fe2a249d2..d9256c9e566e80e58260b3dd9ca5a4bb4ad91ed5 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -2387,6 +2387,10 @@ impl Session {
@@ -1881,10 +1881,10 @@ index e48f7d8ad63ee5fe1e479fa4d616e7d2a9a20dc8..56e44b98fee8058bba1da75cdd30fa1c
                  &self.services.rollout_thread_trace,
              )
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 2319e3f7ae2b4db7dbd2893ea3344d2db378acff..85a48a378a70c14415e8fdd048e28db40bd6c300 100644
+index 8d16c6b9fc235cbfe0ad0fb03e60a47ddc1010f4..221a6dac0d0c4e6ccedd252289e9961d783ed901 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -666,6 +666,20 @@ impl Session {
+@@ -665,6 +665,20 @@ impl Session {
          self.services.agent_control.identity()
      }
 

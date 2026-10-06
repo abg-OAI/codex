@@ -1098,7 +1098,7 @@ index 32f1a7a73d74a7f2067bcee9fd93955b0261e28d..9bb4d55c239e29b5d391187271b46e55
          sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
              .await;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index dea3a06f0da8a82905aeec82cf83240af7f885e8..e48f7d8ad63ee5fe1e479fa4d616e7d2a9a20dc8 100644
+index 7b14f934c972ac163040c7371f715b9943a954b0..8248a67d42d0c945e8bb0421c8167f3fe2a249d2 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -2227,6 +2227,7 @@ impl Session {

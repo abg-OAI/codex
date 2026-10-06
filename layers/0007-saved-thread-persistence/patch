@@ -553,7 +553,7 @@ index 16219ce249a5a7c47e9fb2e75b91bcaa8a6def49..d282432da95b96dd5c4cdd29367c0790
          startup_prewarm.abort().await;
      }
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 56e44b98fee8058bba1da75cdd30fa1cecd0919f..402dffe68a1fe952014392866138a3a3b41acda8 100644
+index d9256c9e566e80e58260b3dd9ca5a4bb4ad91ed5..17032ff34db0c16e94ff2784fcb141db0fd5fec2 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -251,6 +251,7 @@ mod mcp_prewarm;
@@ -657,27 +657,27 @@ index 56e44b98fee8058bba1da75cdd30fa1cecd0919f..402dffe68a1fe952014392866138a3a3
          drop(boundary);
          self.send_raw_response_items(turn_context, items).await;
      }
-@@ -4036,8 +4053,9 @@ impl Session {
-         // A new history window needs a full checkpoint, even when it contains only
-         // extension metadata and model-visible context will be rebuilt on the next turn.
-         let mut world_state_item = None;
+@@ -4034,8 +4051,9 @@ impl Session {
+         // overtaking the current settings snapshot while its checkpoint is written.
+         let _settings_guard = thread_settings::acquire_persistence_lock(self).await;
+         let world_state_item = WorldStateItem::full(world_state_baseline.clone().into_object());
 -        let compacted_item = {
 +        let (compacted_item, persistence) = {
              let mut state = self.state.lock().await;
 +            let persistence = self.persistence_repair.state.lock().await;
-             let snapshot = world_state_baseline.or_else(|| {
-                 let previous = state.history.world_state_checkpoint()?;
-                 let mut retained = serde_json::Map::new();
-@@ -4079,7 +4097,7 @@ impl Session {
-                 world_state_item = Some(WorldStateItem::full(snapshot.clone().into_object()));
-                 state.history.set_world_state_baseline(snapshot);
-             }
+             // Goal edits are published outside the running task. Keep edits accepted after
+             // the compaction input snapshot, in their original order, after its replacement.
+             let replacement_goal_ids = crate::context::UserGoalUpdate::message_ids(
+@@ -4065,7 +4083,7 @@ impl Session {
+             );
+             state.reasoning_effort_pin = ReasoningEffortPin::Compacted;
+             state.history.set_world_state_baseline(world_state_baseline);
 -            CompactedItem {
 +            let compacted_item = CompactedItem {
                  message: metadata.message,
                  replacement_history: Some(replacement_history),
                  guardian_history: state.history.guardian_history_checkpoint(),
-@@ -4099,7 +4117,8 @@ impl Session {
+@@ -4085,7 +4103,8 @@ impl Session {
                      last_started_turn_id: state.last_started_turn_id.clone(),
                      previous_turn_settings: state.previous_turn_settings(),
                  }),
@@ -686,11 +686,11 @@ index 56e44b98fee8058bba1da75cdd30fa1cecd0919f..402dffe68a1fe952014392866138a3a3
 +            (compacted_item, persistence)
          };
 
-         let mut rollout_items = vec![RolloutItem::Compacted(compacted_item)];
-@@ -4114,13 +4133,14 @@ impl Session {
-         rollout_items.push(RolloutItem::EventMsg(
-             thread_settings::applied_event(self).await,
-         ));
+         let rollout_items = [
+@@ -4095,13 +4114,14 @@ impl Session {
+             // The frozen turn context must not override current settings in persisted metadata.
+             RolloutItem::EventMsg(thread_settings::applied_event(self).await),
+         ];
 -        if self.persist_rollout_items(&rollout_items).await
 +        if self.persist_rollout_items_locked(&rollout_items).await
              && let Some(revision) = mcp_revision
@@ -703,7 +703,7 @@ index 56e44b98fee8058bba1da75cdd30fa1cecd0919f..402dffe68a1fe952014392866138a3a3
          {
              let mut state = self.state.lock().await;
              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
-@@ -4481,6 +4501,11 @@ impl Session {
+@@ -4462,6 +4482,11 @@ impl Session {
 
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
@@ -715,7 +715,7 @@ index 56e44b98fee8058bba1da75cdd30fa1cecd0919f..402dffe68a1fe952014392866138a3a3
          if let Some(live_thread) = self.live_thread()
              && let Err(e) = live_thread.append_items(items).await
          {
-@@ -4687,12 +4712,13 @@ impl Session {
+@@ -4668,12 +4693,13 @@ impl Session {
          }
          // Persist one `TurnContextItem` per real user turn so resume/lazy replay can recover the
          // latest durable baseline even when this turn emitted no model-visible context diffs.
@@ -732,10 +732,10 @@ index 56e44b98fee8058bba1da75cdd30fa1cecd0919f..402dffe68a1fe952014392866138a3a3
          Ok(world_state)
      }
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 85a48a378a70c14415e8fdd048e28db40bd6c300..6c54c8079b8aa41b2da2bd4d73eba9a573228625 100644
+index 221a6dac0d0c4e6ccedd252289e9961d783ed901..ac74c3c01e5093d730b1975a3f60f46d4356035a 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -91,6 +91,9 @@ pub(crate) struct Session {
+@@ -90,6 +90,9 @@ pub(crate) struct Session {
      pub(crate) realtime_history: Option<Mutex<crate::realtime_history::RealtimeHistoryState>>,
      pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
      pub(crate) async_hook_results: async_channel::Receiver<HookCompletedEvent>,
@@ -745,7 +745,7 @@ index 85a48a378a70c14415e8fdd048e28db40bd6c300..6c54c8079b8aa41b2da2bd4d73eba9a5
      pub(crate) input_queue: InputQueue,
      pub(crate) services: SessionServices,
      pub(super) git_enrichment_policy: GitEnrichmentPolicy,
-@@ -1856,6 +1859,7 @@ impl Session {
+@@ -1855,6 +1858,7 @@ impl Session {
                  .then(|| Mutex::new(Default::default())),
                  active_turn: Mutex::new(None),
                  async_hook_results,
@@ -754,10 +754,10 @@ index 85a48a378a70c14415e8fdd048e28db40bd6c300..6c54c8079b8aa41b2da2bd4d73eba9a5
                  services,
                  git_enrichment_policy,
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 1c6bfab19034174ee11b1995ea375549fe2c1035..aa19e4d4098d4e2a04798765f958b5093ae81238 100644
+index 8e13dbf102466ef98ce6e04bcd450f1760860c16..f2ba204039ad2f532882543a86ee86d0ccb43dea 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -6997,6 +6997,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
+@@ -6983,6 +6983,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
          realtime_history: None,
          active_turn: Mutex::new(None),
          async_hook_results,
@@ -765,7 +765,7 @@ index 1c6bfab19034174ee11b1995ea375549fe2c1035..aa19e4d4098d4e2a04798765f958b509
          input_queue: super::input_queue::InputQueue::new(),
          services,
          git_enrichment_policy: GitEnrichmentPolicy::Fresh,
-@@ -9263,6 +9264,7 @@ where
+@@ -9249,6 +9250,7 @@ where
          realtime_history: None,
          active_turn: Mutex::new(None),
          async_hook_results,
