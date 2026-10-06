@@ -375,6 +375,38 @@ impl CodexThread {
             .await
     }
 
+    /// Lets Saffron replace root-goal continuation with an ephemeral supervisor.
+    ///
+    /// Returns `false` for threads outside Saffron's root-thread scope so the
+    /// goal extension can retain its ordinary continuation behavior.
+    pub async fn start_saffron_goal_supervisor_checkin(
+        &self,
+        goal: &codex_state::ThreadGoal,
+    ) -> Result<bool, String> {
+        crate::saffron::goal_supervisor::start_checkin(&self.session, goal)
+            .await
+            .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
+    }
+
+    /// Clears supervisor state after a goal becomes inactive.
+    pub async fn stop_saffron_goal_supervisor(&self) {
+        crate::saffron::goal_supervisor::stop(&self.session).await;
+    }
+    /// Returns whether process-local work requires this idle thread to remain loaded.
+    ///
+    /// An embedding that unloads idle threads must honor this signal so a
+    /// deferred core task is not discarded before its durable state changes.
+    #[doc(hidden)]
+    pub async fn should_retain_while_idle(&self) -> bool {
+        crate::saffron::goal_supervisor::should_retain_while_idle(&self.session).await
+    }
+
+    /// Returns whether the settled snooze can be reconstructed after unloading.
+    #[doc(hidden)]
+    pub async fn has_reconstructible_saffron_goal_snooze(&self) -> bool {
+        crate::saffron::goal_supervisor::has_reconstructible_snooze(&self.session).await
+    }
+
     #[doc(hidden)]
     pub async fn ensure_rollout_materialized(&self) {
         self.session
@@ -1245,6 +1277,10 @@ impl CodexThread {
         let multi_agent_version = self
             .multi_agent_version()
             .unwrap_or_else(|| config.multi_agent_version_from_features());
-        control.check_turn_admission(multi_agent_version, &self.session_source)
+        control.check_turn_admission(
+            self.session.thread_id,
+            multi_agent_version,
+            &self.session_source,
+        )
     }
 }
