@@ -6,8 +6,11 @@ Keep execution under the host thread manager so the fork can continue
 after its caller stops, and preserve inherited settings and permissions.
 
 Desktop owns sidebar membership, including remote-host routing.
-Use its advertised capabilities after assignment submission,
-and report placement separately from execution.
+Request placement through its handlers after assignment submission,
+preserving advertised spellings and using namespaced handler names
+when saved registrations are absent.
+The client can reject requests; report placement separately from execution
+without changing the saved tool catalog.
 An explicit section name overrides inheritance and creates the destination
 when absent; otherwise inherit the caller's section by default.
 Creation and moving are separate effects, so retain the saved thread

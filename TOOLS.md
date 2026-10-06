@@ -61,10 +61,12 @@ Names are matched case-sensitively after trimming surrounding whitespace;
 blank names are rejected before creating a fork.
 A unique matching section is reused; an absent name creates a new section.
 Duplicate names report failure without selecting or creating a destination.
-Placement uses the caller's advertised Desktop list and move tools,
-plus the creation tool only when a named destination is absent.
-Absent capabilities skip placement; a timeout reports an unconfirmed outcome.
-If creation is needed but unavailable or fails, placement reports failure.
+Placement requests Desktop list and move handlers,
+plus the creation handler only when a named destination is absent.
+It preserves advertised tool spellings when available and otherwise uses
+namespaced handler names without changing the caller's tool catalog.
+The client may reject a request; a timeout reports an unconfirmed outcome.
+Each request waits at most 60 seconds, and either condition reports failure.
 Creation and moving are separate effects: a section may remain after a failed
 move, and requests are not retried automatically.
 Explicit placement never falls back to the caller's section.
