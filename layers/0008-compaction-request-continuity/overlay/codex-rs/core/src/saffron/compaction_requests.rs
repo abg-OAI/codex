@@ -77,10 +77,12 @@ pub(crate) fn is_request(
                 || text.starts_with("Message Type: MESSAGE\n"))
 }
 
-/// Recognizes standalone messaging input by its persisted host admission record.
+/// Recognizes native Saffron input or a delivery with host admission metadata.
 ///
 /// Paired tool results, quoted delivery text, and inherited sender snapshots do
-/// not establish this identity. No lookup of the current turn is needed on resume.
+/// not establish this identity. Native Saffron deliveries already have distinct
+/// standalone output names, including in history saved before this selector.
+/// No lookup of the current turn is needed on resume.
 pub(crate) fn is_delivery(item: &ResponseItem, metadata: Option<&CodexHarnessMetadata>) -> bool {
     let ResponseItem::FunctionCallOutput {
         id: Some(id),
@@ -92,6 +94,9 @@ pub(crate) fn is_delivery(item: &ResponseItem, metadata: Option<&CodexHarnessMet
     else {
         return false;
     };
+    if namespace == "saffron" && name == "send_message_to_thread" {
+        return true;
+    }
     name == "send_message_to_thread"
         && matches!(namespace.as_str(), "codex_app" | "codex_tui")
         && metadata
@@ -265,6 +270,28 @@ pub(crate) mod tests {
             &paired_output.item,
             paired_output.metadata.as_ref()
         ));
+    }
+
+    /// Native delivery identity survives replay without sender snapshot metadata.
+    #[test]
+    fn native_delivery_excludes_paired_outputs_and_other_tools() {
+        let mut delivery = admitted_delivery("Inspect the orchard export.", 2).item;
+        if let ResponseItem::FunctionCallOutput { namespace, .. } = &mut delivery {
+            *namespace = Some("saffron".to_owned());
+        }
+        assert!(is_delivery(&delivery, None));
+        let restored: ResponseItem =
+            serde_json::from_str(&serde_json::to_string(&delivery).unwrap()).unwrap();
+        assert!(is_delivery(&restored, None));
+        if let ResponseItem::FunctionCallOutput { call_id, .. } = &mut delivery {
+            *call_id = Some("paired_call".to_owned());
+        }
+        assert!(!is_delivery(&delivery, None));
+        if let ResponseItem::FunctionCallOutput { call_id, name, .. } = &mut delivery {
+            *call_id = None;
+            *name = Some("await_exec".to_owned());
+        }
+        assert!(!is_delivery(&delivery, None));
     }
 
     /// Parent instructions are addressed to this agent; reports are not requests.
