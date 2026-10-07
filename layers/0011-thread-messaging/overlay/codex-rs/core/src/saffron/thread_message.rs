@@ -208,8 +208,8 @@ impl Handler {
             .await
             .map_err(invalid)?;
         let (status, turn_id) = match submitted {
-            TurnInputSubmission::Started { turn_id } => (Delivery::Started, turn_id),
-            TurnInputSubmission::Steered { turn_id } => (Delivery::Steered, turn_id),
+            TurnInputSubmission::Started { turn_id, .. } => (Delivery::Started, turn_id),
+            TurnInputSubmission::Steered { turn_id, .. } => (Delivery::Steered, turn_id),
             TurnInputSubmission::NotSubmitted { reason } => {
                 return Err(invalid(format!("message was not submitted: {reason:?}")));
             }

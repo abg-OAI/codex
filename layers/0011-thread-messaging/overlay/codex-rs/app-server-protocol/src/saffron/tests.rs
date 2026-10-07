@@ -53,6 +53,7 @@ fn live_and_replayed_message_keep_identity_and_commentary() {
     };
     let turns = build_turns_from_rollout_items(&[
         RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+            turn_attribution: None,
             turn_id: "receiving-turn".into(),
             root_turn_id: None,
             trace_id: None,
