@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index 83f9774074a1adfcaf1a7ab8db4f751e7cfe61cc..b69b806185d3cd340e37ddfe98e2d2608bc5b3f2 100644
+index f4db71b6882fdece78909298fbefa4e3b92f3392..5be3385b37e8376be527e1018d43f2aa32e4c8dd 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
-@@ -16,6 +16,7 @@ use crate::hook_runtime::run_post_compact_hooks;
+@@ -19,6 +19,7 @@ use crate::hook_runtime::run_post_compact_hooks;
  use crate::hook_runtime::run_pre_compact_hooks;
  use crate::responses_metadata::CodexResponsesMetadata;
  use crate::responses_metadata::CompactionTurnMetadata;
@@ -10,7 +10,7 @@ index 83f9774074a1adfcaf1a7ab8db4f751e7cfe61cc..b69b806185d3cd340e37ddfe98e2d260
  use crate::session::RequestEffortUsage;
  use crate::session::session::Session;
  use crate::session::step_context::StepContext;
-@@ -349,7 +350,11 @@ async fn run_compact_task_inner_impl(
+@@ -381,7 +382,11 @@ async fn run_compact_task_inner_impl(
          get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default()
      };
      let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
@@ -23,7 +23,7 @@ index 83f9774074a1adfcaf1a7ab8db4f751e7cfe61cc..b69b806185d3cd340e37ddfe98e2d260
 
      let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
      if let Some(summary_item) = new_history.last_mut() {
-@@ -530,19 +535,39 @@ pub(crate) struct CompactedUserMessage<'a> {
+@@ -564,19 +569,39 @@ pub(crate) struct CompactedUserMessage<'a> {
  }
 
  #[cfg(test)]
@@ -69,7 +69,7 @@ index 83f9774074a1adfcaf1a7ab8db4f751e7cfe61cc..b69b806185d3cd340e37ddfe98e2d260
          .collect()
  }
 
-@@ -636,9 +661,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
+@@ -670,9 +695,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
      compacted_history
  }
 
@@ -81,7 +81,7 @@ index 83f9774074a1adfcaf1a7ab8db4f751e7cfe61cc..b69b806185d3cd340e37ddfe98e2d260
      summary_text: &str,
  ) -> Vec<ResponseItemEnvelope> {
      build_compacted_history_with_limit(
-@@ -649,9 +675,10 @@ pub(crate) fn build_compacted_history(
+@@ -683,9 +709,10 @@ pub(crate) fn build_compacted_history(
      )
  }
 
@@ -93,7 +93,7 @@ index 83f9774074a1adfcaf1a7ab8db4f751e7cfe61cc..b69b806185d3cd340e37ddfe98e2d260
      summary_text: &str,
      max_tokens: usize,
  ) -> Vec<ResponseItemEnvelope> {
-@@ -662,6 +689,26 @@ fn build_compacted_history_with_limit(
+@@ -696,6 +723,26 @@ fn build_compacted_history_with_limit(
              if remaining == 0 {
                  break;
              }
@@ -161,10 +161,10 @@ index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62
  fn rewritten_output_preserves_harness_metadata() {
      let envelope = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420de991512 100644
+index 6a061086b1d325a58280e2dd13274fbb904f3c11..635a7f670f2aba3f6ea491756f5957538e21ae57 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
-@@ -310,6 +310,10 @@ async fn run_remote_compact_task_inner_impl(
+@@ -309,6 +309,10 @@ async fn run_remote_compact_task_inner_impl(
          } else {
              RetainedImageBudget::Disabled
          },
@@ -175,7 +175,7 @@ index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420
      );
      analytics_details.retained_image_count = Some(retained_images);
      let (new_window_number, new_window_ids) = sess.advance_auto_compact_window().await;
-@@ -490,12 +494,14 @@ async fn collect_compaction_output(
+@@ -491,12 +495,14 @@ async fn collect_compaction_output(
      })
  }
 
@@ -190,7 +190,7 @@ index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420
  ) -> (Vec<ResponseItemEnvelope>, usize) {
      debug_assert_eq!(prompt_input.len(), prompt_input_metadata.len());
      let prompt_input = prompt_input
-@@ -505,12 +511,23 @@ fn build_v2_compacted_history(
+@@ -506,12 +512,23 @@ fn build_v2_compacted_history(
          .collect::<Vec<_>>();
      let retained = v2_history_item_groups(prompt_input)
          .filter(|group| {
@@ -217,7 +217,7 @@ index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420
      let retained_image_count = retained
          .iter()
          .map(|envelope| retained_input_image_count(&envelope.item))
-@@ -603,13 +620,16 @@ pub(crate) fn truncate_retained_messages_for_remote_compaction(
+@@ -604,13 +621,16 @@ pub(crate) fn truncate_retained_messages_for_remote_compaction(
      items: Vec<ResponseItemEnvelope>,
      max_tokens: usize,
  ) -> Vec<ResponseItemEnvelope> {
@@ -235,7 +235,7 @@ index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420
  ) -> Vec<ResponseItemEnvelope> {
      let mut remaining = max_tokens;
      let mut truncated_reversed = Vec::with_capacity(items.len());
-@@ -622,6 +642,13 @@ fn truncate_retained_messages(
+@@ -623,6 +643,13 @@ fn truncate_retained_messages(
              continue;
          }
 
@@ -249,7 +249,7 @@ index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420
          let client_developer = is_client_authored_developer_message(&group.source);
          let charge_images = image_budget == RetainedImageBudget::Enabled && !client_developer;
          let notice_tokens = group
-@@ -660,12 +687,19 @@ fn truncate_retained_messages(
+@@ -661,12 +688,19 @@ fn truncate_retained_messages(
                  // the remaining budget with older messages in that case.
                  remaining = 0;
              }
@@ -270,7 +270,7 @@ index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420
                  continue;
              };
              if client_developer {
-@@ -694,7 +728,7 @@ fn truncate_retained_messages(
+@@ -695,7 +729,7 @@ fn truncate_retained_messages(
              }
              truncated_reversed.push(truncated_item);
              remaining = 0;
@@ -279,7 +279,7 @@ index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420
              remaining = 0;
          }
      }
-@@ -803,6 +837,7 @@ mod tests {
+@@ -804,6 +838,7 @@ mod tests {
              output,
              /*retain_client_developer_messages*/ false,
              RetainedImageBudget::Disabled,
@@ -287,7 +287,7 @@ index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420
          )
      }
 
-@@ -881,6 +916,57 @@ mod tests {
+@@ -882,6 +917,57 @@ mod tests {
          );
      }
 
@@ -345,7 +345,7 @@ index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420
      #[test]
      fn build_v2_compacted_history_preserves_retained_metadata_sidecar() {
          let retained = message("user", "keep", /*phase*/ None);
-@@ -921,6 +1007,7 @@ mod tests {
+@@ -922,6 +1008,7 @@ mod tests {
                  output.clone(),
                  enabled,
                  RetainedImageBudget::Disabled,
@@ -353,7 +353,7 @@ index e20b0a7f5cf5f6d4c5f8bc701facfb785aa900c0..2c3365972c53ee0690fc1f91a9135420
              );
              let mut expected = vec![
                  ResponseItemEnvelope {
-@@ -946,6 +1033,126 @@ mod tests {
+@@ -947,6 +1034,126 @@ mod tests {
          }
      }
 
@@ -511,10 +511,10 @@ index ea37694606b2c07d3ebbdee70da7c3467fc0b529..b60647c99b418b07cacae08e7f7069b6
              truncate_retained_messages_for_remote_compaction(vec![source.clone()], max_tokens),
          );
 diff --git a/codex-rs/core/src/compact_tests.rs b/codex-rs/core/src/compact_tests.rs
-index a407ffcb33d27b6ecbf814f9b2323db1e2db49ad..462f703043e9f8270efd513d548b32a42247d824 100644
+index 28051a77c36c3c1dd644ca61c3d90f81972de62d..5b78fbc6c66f72f0e263b8ef423180334e335e47 100644
 --- a/codex-rs/core/src/compact_tests.rs
 +++ b/codex-rs/core/src/compact_tests.rs
-@@ -209,6 +209,114 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
+@@ -213,6 +213,114 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
      items.into_iter().map(ResponseItemEnvelope::new).collect()
  }
 
@@ -629,7 +629,7 @@ index a407ffcb33d27b6ecbf814f9b2323db1e2db49ad..462f703043e9f8270efd513d548b32a4
  fn raw(items: Vec<ResponseItemEnvelope>) -> Vec<ResponseItem> {
      items
          .into_iter()
-@@ -228,12 +336,12 @@ fn user_message(text: &str) -> ResponseItem {
+@@ -232,12 +340,12 @@ fn user_message(text: &str) -> ResponseItem {
      }
  }
 
@@ -645,7 +645,7 @@ index a407ffcb33d27b6ecbf814f9b2323db1e2db49ad..462f703043e9f8270efd513d548b32a4
  }
 
  #[test]
-@@ -334,7 +442,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+@@ -338,7 +446,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
          ResponseItemEnvelope::new(ResponseItem::Other),
      ];
 
@@ -654,7 +654,7 @@ index a407ffcb33d27b6ecbf814f9b2323db1e2db49ad..462f703043e9f8270efd513d548b32a4
 
      if !preserve_content {
          item = user_message(expected_text);
-@@ -345,11 +453,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+@@ -349,11 +457,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
      };
      assert_eq!(
          collected,
@@ -668,7 +668,7 @@ index a407ffcb33d27b6ecbf814f9b2323db1e2db49ad..462f703043e9f8270efd513d548b32a4
      );
      assert_eq!(
          build_compacted_history(Vec::new(), &collected, "summary"),
-@@ -443,7 +551,10 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages() {
+@@ -447,7 +555,10 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages() {
      original.metadata = Some(CodexHarnessMetadata::default());
      let history = super::build_compacted_history_with_limit(
          Vec::new(),
@@ -680,7 +680,7 @@ index a407ffcb33d27b6ecbf814f9b2323db1e2db49ad..462f703043e9f8270efd513d548b32a4
          "SUMMARY",
          max_tokens,
      );
-@@ -525,7 +636,10 @@ fn build_compacted_history_preserves_user_message_passthrough_metadata() {
+@@ -529,7 +640,10 @@ fn build_compacted_history_preserves_user_message_passthrough_metadata() {
      };
      let history = build_compacted_history(
          Vec::new(),
@@ -693,10 +693,10 @@ index a407ffcb33d27b6ecbf814f9b2323db1e2db49ad..462f703043e9f8270efd513d548b32a4
      );
 
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
-index 1ecb4173f8473b8fdee3cd83e5e1bb553fe0b169..011712d89224ee13e11078a7785a8667dc9e2392 100644
+index 38ef4a59c012ae5ac3bc40330ea81b7314458c04..9b5be2d76838c80812950a051f08070a2b8185aa 100644
 --- a/codex-rs/core/src/context_manager/history.rs
 +++ b/codex-rs/core/src/context_manager/history.rs
-@@ -610,6 +610,9 @@ impl ContextManager {
+@@ -611,6 +611,9 @@ impl ContextManager {
      ) -> Vec<ResponseItemEnvelope> {
          self.normalize_history(input_modalities);
          Arc::unwrap_or_clone(self.items)
@@ -706,7 +706,7 @@ index 1ecb4173f8473b8fdee3cd83e5e1bb553fe0b169..011712d89224ee13e11078a7785a8667
      }
 
      /// Iterates over raw response items without exposing their history envelopes.
-@@ -659,6 +662,7 @@ impl ContextManager {
+@@ -671,6 +674,7 @@ impl ContextManager {
          let items_tokens = self
              .items
              .iter()
@@ -715,7 +715,7 @@ index 1ecb4173f8473b8fdee3cd83e5e1bb553fe0b169..011712d89224ee13e11078a7785a8667
              .fold(0i64, i64::saturating_add);
 
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index 52d417afaac9288c8bd7e0a7463d7c486501b43e..f8dd0958d4ffb74b227ab319c444c78d582ee768 100644
+index c5551b632048455dfda3263d48f498832c52f334..d509ffe08f1f59acc611c1d65c12025fccb4dcf6 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
 @@ -52,6 +52,82 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
@@ -814,10 +814,10 @@ index ce13be03f1986a62708aa751fef7e5d35d633a67..0e5b94605cafe76a6c7fe66b8627aa90
  pub(crate) mod goal_resume;
  pub(crate) mod goal_scheduler;
 diff --git a/codex-rs/core/src/session/rollout_reconstruction.rs b/codex-rs/core/src/session/rollout_reconstruction.rs
-index ab20e5b30ef4a363d12d12ee9d5c1375b985a825..fe017f0d7be8b3ee85cc9cb072bfc411650ddd12 100644
+index 4ca5ce14981f4207e336ed7c7bfed27990cdb43f..7c027b71f121992d8c1b5c7a19eb8bb9a353f872 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction.rs
-@@ -445,8 +445,13 @@ impl Session {
+@@ -521,8 +521,13 @@ impl Session {
                          // prompt shape.
                          // TODO(ccunningham): if we drop support for None replacement_history compaction items,
                          // we can get rid of this second loop entirely and just build `history` directly in the first loop.
@@ -834,10 +834,10 @@ index ab20e5b30ef4a363d12d12ee9d5c1375b985a825..fe017f0d7be8b3ee85cc9cb072bfc411
                              Vec::new(),
                              &user_messages,
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index 7b280be1205f785b8770729b0976ec8109bd0d12..cf29043d70cd63d048bf5c47255268e508390501 100644
+index 879115d3d08a709b5a6384c5601954cb3759b5e6..0f4d2a492ee53da7b1e2bd03eaa4263be6f05ff4 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-@@ -1422,6 +1422,65 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
+@@ -1455,6 +1455,65 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
      assert_eq!(reconstructed.window_id, Some(initial_window_id));
  }
 
@@ -904,10 +904,10 @@ index 7b280be1205f785b8770729b0976ec8109bd0d12..cf29043d70cd63d048bf5c47255268e5
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index 5fb8de42908c2a52cb3230d330710846c5904277..a830a4114c6ae59a92b05cbfe4ee23242e582fe2 100644
+index 41b99f95a047534ffc61030bf09f0afbf853bd19..624552eb5bc5a96c5d154c58fc5352767c9d1a8f 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
-@@ -61,6 +61,11 @@ pub struct ResponseItemEnvelope {
+@@ -62,6 +62,11 @@ pub struct ResponseItemEnvelope {
  ///
  #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
  pub struct CodexHarnessMetadata {

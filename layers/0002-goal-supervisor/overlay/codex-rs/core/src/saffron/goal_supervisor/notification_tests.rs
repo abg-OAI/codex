@@ -50,6 +50,7 @@ async fn supervisor_failure_does_not_queue_a_parent_completion_message() {
         .send_event(
             turn.as_ref(),
             EventMsg::TurnComplete(TurnCompleteEvent {
+                root_turn_id: None,
                 turn_id: turn.sub_id.clone(),
                 started_at: None,
                 last_agent_message: None,

@@ -306,7 +306,7 @@ impl Handler {
                 .await
                 .map_err(|error| error.to_string())?;
             match submitted {
-                StartIfIdleSubmission::Started { turn_id } => Ok(turn_id),
+                StartIfIdleSubmission::Started { turn_id, .. } => Ok(turn_id),
                 other => Err(format!("initial assignment was not started: {other:?}")),
             }
         }

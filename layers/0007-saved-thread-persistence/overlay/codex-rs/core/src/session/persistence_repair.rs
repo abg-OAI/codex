@@ -229,6 +229,7 @@ impl Session {
                 if existing_turns.insert(turn_id.clone()) {
                     presentation_items.push(RolloutItem::EventMsg(EventMsg::TurnStarted(
                         TurnStartedEvent {
+                            turn_attribution: None,
                             turn_id: turn_id.clone(),
                             root_turn_id: None,
                             trace_id: None,
@@ -322,6 +323,7 @@ impl Session {
             resume_metadata: Some(CompactionResumeMetadata {
                 multi_agent_version: self.multi_agent_version(),
                 last_started_turn_id: state.last_started_turn_id.clone(),
+                turn_attribution: state.turn_attribution.clone(),
                 previous_turn_settings: state.previous_turn_settings(),
             }),
         };

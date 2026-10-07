@@ -11,10 +11,10 @@ index eb2b76de07971fdc13c8a470415aa70a8a6cf120..1432f4667b508a31655ba5759169fadc
  mod schema_fixtures;
  #[cfg(test)]
 diff --git a/codex-rs/app-server-protocol/src/protocol/v2/item.rs b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
-index 04f68a3351c765d6c2be8d492b1a3cded43a22bb..2396a13d6394e6065aae34adc11b1ada88561f27 100644
+index 65d283827023b33f55c715dc755d8b73cb7ed5b3..9fc4261aa47546908dc9488a04df17b2ece31128 100644
 --- a/codex-rs/app-server-protocol/src/protocol/v2/item.rs
 +++ b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
-@@ -899,12 +899,7 @@ impl From<CoreTurnItem> for ThreadItem {
+@@ -903,12 +903,7 @@ impl From<CoreTurnItem> for ThreadItem {
                      questions: agent.questions,
                  }
              }
@@ -41,7 +41,7 @@ index 15effd88bfee2f17124ce1f671b7c228afcfaebe..55e89e45868b324cbb8aa19575304789
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index f44b073f53b0f3a942612afb464324ac08455338..b13cce1b99d798b49f8217761f99a799c8e55883 100644
+index 088805adbbc07a687e7d87a93161277b9e89f2f7..ceccc51c38790217f961c7c409cd756f43dadbd9 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -137,6 +137,7 @@ pub(crate) use skills::skills_load_input_from_config;
