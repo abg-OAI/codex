@@ -21,6 +21,7 @@ use codex_history::ResumedHistory;
 use codex_protocol::ThreadId;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_thread_store::ForkBoundary;
 use codex_thread_store::PrepareForkParams;
@@ -105,6 +106,8 @@ struct Args {
     prompt: String,
     /// Optional persistent title for locating the new thread.
     title: Option<String>,
+    /// Override for the fork; omission inherits the caller's effective effort.
+    reasoning_effort: Option<ReasoningEffort>,
     /// Request inheritance of the caller's Desktop sidebar section.
     #[serde(default = "inherit_section_by_default")]
     inherit_section: bool,
@@ -208,7 +211,9 @@ impl Handler {
         config.ephemeral = false;
         config.model = Some(settings.model_info.slug.clone());
         config.model_provider = turn.provider.info().clone();
-        config.model_reasoning_effort = settings.effective_reasoning_effort();
+        config.model_reasoning_effort = args
+            .reasoning_effort
+            .or_else(|| settings.effective_reasoning_effort());
         config.model_reasoning_summary = Some(settings.reasoning_summary);
         config.service_tier = settings.service_tier.clone();
         config.developer_instructions = turn.developer_instructions.clone();
@@ -344,12 +349,13 @@ impl ToolExecutor<ToolInvocation> for Handler {
             description: "Saffron extensions for independent thread and task coordination.".to_string(),
             tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
                 name: "fork_thread".to_string(),
-                description: "Start an independent persistent root thread with this thread's completed history, excluding the current turn. Supply its assignment in prompt. The fork inherits model, working directory and permissions, but no goal. It runs independently without a completion notification to this thread. Desktop placement is best effort: section overrides inherit_section and creates the named section if absent; otherwise inheritance defaults to true. Placement failure never undoes the fork. If status is created_not_started, recover using the returned thread_id instead of forking again.".to_string(),
+                description: "Start an independent persistent root thread with this thread's completed history, excluding the current turn. Supply its assignment in prompt. The fork inherits model, working directory and permissions, but no goal. Reasoning effort is inherited unless reasoning_effort is supplied. It runs independently without a completion notification to this thread. Desktop placement is best effort: section overrides inherit_section and creates the named section if absent; otherwise inheritance defaults to true. Placement failure never undoes the fork. If status is created_not_started, recover using the returned thread_id instead of forking again.".to_string(),
                 strict: false,
                 defer_loading: None,
                 parameters: JsonSchema::object(BTreeMap::from([
                     ("prompt".to_string(), JsonSchema::string(Some("The new thread's assignment.".to_string()))),
                     ("title".to_string(), JsonSchema::string(Some("Optional persistent thread title.".to_string()))),
+                    ("reasoning_effort".to_string(), JsonSchema::string(Some("Reasoning effort for the fork's inherited model, such as low, medium, high, or xhigh. Use a value supported by that model. Omit to inherit the caller's effective effort.".to_string()))),
                     ("inherit_section".to_string(), JsonSchema::boolean(Some("Inherit the caller's Desktop sidebar section when available; defaults to true.".to_string()))),
                     ("section".to_string(), JsonSchema::string(Some("Desktop section name, matched case-sensitively after trimming surrounding whitespace. Overrides inherit_section, reuses a unique matching section or creates one when absent. Duplicate names leave placement unconfirmed.".to_string()))),
                 ]), Some(vec!["prompt".to_string()]), Some(false.into())),

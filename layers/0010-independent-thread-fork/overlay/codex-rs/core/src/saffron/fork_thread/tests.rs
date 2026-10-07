@@ -6,6 +6,8 @@ use crate::build_models_manager;
 use crate::init_state_db;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
+use crate::session::tests::update_selected_settings_for_test;
+use crate::session::tests::update_turn_settings_for_test;
 use crate::thread_manager::NewThread;
 use crate::thread_manager::thread_store_from_config;
 use crate::tools::context::ToolCallSource;
@@ -42,6 +44,7 @@ fn arguments_preserve_the_approved_defaults() {
     let args: Args = serde_json::from_value(json!({"prompt": "inspect"})).unwrap();
     assert!(args.inherit_section);
     assert!(args.title.is_none());
+    assert!(args.reasoning_effort.is_none());
     assert!(args.section.is_none());
     let args: Args =
         serde_json::from_value(json!({"prompt": "inspect", "inherit_section": false})).unwrap();
@@ -54,6 +57,53 @@ fn arguments_preserve_the_approved_defaults() {
     assert!(serde_json::from_value::<Args>(json!({"title": "missing assignment"})).is_err());
     assert!(
         serde_json::from_value::<Args>(json!({"prompt": "inspect", "thread_id": "other"})).is_err()
+    );
+}
+
+/// The model can discover the override without supplying it for ordinary forks.
+#[test]
+fn spec_exposes_optional_reasoning_effort() {
+    let handler = Handler {
+        host: Arc::new(ForkHost {
+            manager: Weak::new(),
+        }),
+    };
+    let spec = serde_json::to_value(handler.spec()).unwrap();
+    let parameters = &spec["tools"][0]["parameters"];
+    assert_eq!(
+        parameters["properties"]["reasoning_effort"]["type"],
+        "string"
+    );
+    assert_eq!(parameters["required"], json!(["prompt"]));
+}
+
+/// Effort overrides use the native open string contract and reject malformed inputs.
+#[test]
+fn reasoning_effort_arguments_follow_the_native_contract() {
+    let args: Args = serde_json::from_value(json!({
+        "prompt": "inspect", "reasoning_effort": "low"
+    }))
+    .unwrap();
+    assert_eq!(args.reasoning_effort, Some(ReasoningEffort::Low));
+    let args: Args = serde_json::from_value(json!({
+        "prompt": "inspect", "reasoning_effort": "future-effort"
+    }))
+    .unwrap();
+    assert_eq!(
+        args.reasoning_effort,
+        Some(ReasoningEffort::Custom("future-effort".to_string()))
+    );
+    assert!(
+        serde_json::from_value::<Args>(json!({
+            "prompt": "inspect", "reasoning_effort": ""
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<Args>(json!({
+            "prompt": "inspect", "reasoning_effort": 5
+        }))
+        .is_err()
     );
 }
 
@@ -87,12 +137,15 @@ async fn blank_section_is_rejected_before_creation() {
 }
 
 /// Both persistence formats must exclude the unfinished turn and keep root identity.
-#[test_case::test_case(ThreadHistoryMode::Legacy, false; "legacy")]
-#[test_case::test_case(ThreadHistoryMode::Paginated, false; "paginated")]
-#[test_case::test_case(ThreadHistoryMode::Legacy, true; "failed_placement")]
+#[test_case::test_case(ThreadHistoryMode::Legacy, false, None; "legacy")]
+#[test_case::test_case(ThreadHistoryMode::Paginated, false, None; "paginated")]
+#[test_case::test_case(ThreadHistoryMode::Legacy, true, None; "failed_placement")]
+#[test_case::test_case(ThreadHistoryMode::Legacy, false, Some(ReasoningEffort::Low); "legacy_effort_override")]
+#[test_case::test_case(ThreadHistoryMode::Paginated, false, Some(ReasoningEffort::Low); "paginated_effort_override")]
 fn fork_runs_from_completed_history_without_a_goal(
     history_mode: ThreadHistoryMode,
     placement_fails: bool,
+    reasoning_effort: Option<ReasoningEffort>,
 ) -> anyhow::Result<()> {
     run_test_with_large_stack("independent fork", move || async move {
         let server = MockServer::start().await;
@@ -106,7 +159,13 @@ fn fork_runs_from_completed_history_without_a_goal(
         )
         .await;
         let (_fixture, mut turn) = make_session_and_context().await;
+        update_turn_settings_for_test(&mut turn, |settings| {
+            update_selected_settings_for_test(settings, |selected| {
+                selected.collaboration_mode.settings.reasoning_effort = Some(ReasoningEffort::High);
+            });
+        });
         let mut config = turn.config.as_ref().clone();
+        config.model_reasoning_effort = Some(ReasoningEffort::High);
         config.ephemeral = false;
         config.model_provider.base_url = Some(server.uri());
         config.model_provider.supports_websockets = false;
@@ -173,7 +232,18 @@ fn fork_runs_from_completed_history_without_a_goal(
         if placement_fails {
             arguments["section"] = json!("Research");
         }
+        if let Some(effort) = &reasoning_effort {
+            arguments["reasoning_effort"] = json!(effort);
+        }
         let invocation = tool_invocation(&source, turn, arguments);
+        let inherited_effort = invocation
+            .step_context
+            .settings
+            .effective_reasoning_effort();
+        if let Some(effort) = &reasoning_effort {
+            assert_ne!(Some(effort), inherited_effort.as_ref());
+        }
+        let expected_effort = reasoning_effort.or(inherited_effort);
         let expected_model = invocation.step_context.settings.model_info.slug.clone();
         let expected_policy = invocation.step_context.settings.approval_policy();
         let expected_cwd = invocation.turn.config.cwd.clone();
@@ -228,6 +298,7 @@ fn fork_runs_from_completed_history_without_a_goal(
         assert_eq!(settings.parent_thread_id, None);
         assert!(!settings.session_source.is_non_root_agent());
         assert_eq!(settings.model, expected_model);
+        assert_eq!(settings.reasoning_effort, expected_effort);
         assert_eq!(settings.approval_policy, expected_policy);
         assert_eq!(settings.cwd(), &expected_cwd);
         assert!(!settings.ephemeral);
@@ -253,7 +324,9 @@ fn fork_runs_from_completed_history_without_a_goal(
         assert_eq!(stored.forked_from_id, Some(source.thread_id));
         assert_eq!(stored.name.as_deref(), Some("Independent test"));
         assert!(stored.rollout_path.is_some());
+        assert_eq!(stored.reasoning_effort, expected_effort);
         let request = response.single_request().body_json();
+        assert_eq!(request["reasoning"]["effort"], json!(expected_effort));
         let input = request["input"].as_array().unwrap();
         let assignment_items: Vec<_> = input
             .iter()

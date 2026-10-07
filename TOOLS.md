@@ -34,6 +34,7 @@ The assignment arrives as attributed `saffron.fork_thread` output, not as a
 human user message. Sender identity comes from the calling thread.
 The fork inherits model settings, working directory, and permissions,
 but does not inherit or automatically create a goal.
+`reasoning_effort` can override the inherited effort without changing the model.
 Execution belongs to the host and does not wait for Desktop placement.
 The tool returns submission and placement outcomes without waiting for the fork
 to finish, and does not send a subagent completion notification.
@@ -44,6 +45,9 @@ to finish, and does not send a subagent completion notification.
   "prompt": string,
   // Optional persistent name for the new thread.
   "title": string?,
+  // Effort supported by the inherited model, such as "low", "high", or "xhigh".
+  // Omit to inherit the caller's effective effort.
+  "reasoning_effort": string?,
   // Inherit the caller's Desktop sidebar section when available. Defaults true.
   "inherit_section": bool?,
   // Named destination; overrides inherit_section and creates it if absent.
