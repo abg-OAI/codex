@@ -611,6 +611,9 @@ impl ContextManager {
     ) -> Vec<ResponseItemEnvelope> {
         self.normalize_history(input_modalities);
         Arc::unwrap_or_clone(self.items)
+            .into_iter()
+            .filter(|item| !crate::saffron::compaction_requests::is_retired_annotation(item))
+            .collect()
     }
 
     /// Iterates over raw response items without exposing their history envelopes.
@@ -671,6 +674,7 @@ impl ContextManager {
         let items_tokens = self
             .items
             .iter()
+            .filter(|item| !crate::saffron::compaction_requests::is_retired_annotation(item))
             .map(|envelope| estimate_item_token_count(&envelope.item))
             .fold(0i64, i64::saturating_add);
 
