@@ -747,7 +747,7 @@ index d8befedd40d89c9ff728d9f057a99982672dfd27..f9a8458fedc00f9e4a388626cb7bd265
          let teardown = membership.into_teardown_guard("child_spawn_cleanup", Some(child));
          let edge_write = self.edge_write.take();
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 801d4d9f4b7ca4fd7a4823c8bc0c41504f693f81..c14541ec893824d3657c42ede9b93dcdea982571 100644
+index 801d4d9f4b7ca4fd7a4823c8bc0c41504f693f81..51ebc2cb30f2678b5ac382a04ca42f4d92da721d 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
 @@ -136,6 +136,11 @@ impl LocalAgentControl {
@@ -762,6 +762,14 @@ index 801d4d9f4b7ca4fd7a4823c8bc0c41504f693f81..c14541ec893824d3657c42ede9b93dcd
  async fn test_config_with_cli_overrides(
      mut cli_overrides: Vec<(String, TomlValue)>,
  ) -> (TempDir, Config) {
+@@ -741,6 +746,7 @@ async fn spawn_failure_context_survives_manager_and_fork_errors() {
+                 fork_mode: Some(SpawnAgentForkMode::FullHistory),
+                 ..Default::default()
+             },
++            AgentListingVisibility::Listed,
+         )
+         .await
+         .expect_err("fork requires a parent spawn call id");
 diff --git a/codex-rs/core/src/agent/registry.rs b/codex-rs/core/src/agent/registry.rs
 index 7c21422c267877119779fbfe993d26510b7e19c1..24beea6627470edbc4a97d438de44974f7d94849 100644
 --- a/codex-rs/core/src/agent/registry.rs

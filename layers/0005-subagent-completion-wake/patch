@@ -545,7 +545,7 @@ index bde1229086d49937263bb80b5cd83e3edf446984..463fddf599b1168a3bd9e4a5adb2f7eb
                      context,
                      start_options,
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index c14541ec893824d3657c42ede9b93dcdea982571..fa2a2b2510195b28062fff2e30b3dcf07668d47e 100644
+index 51ebc2cb30f2678b5ac382a04ca42f4d92da721d..6391bea1d1767ddaf1d83e43b67761c70f65270f 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
 @@ -26,7 +26,13 @@ use crate::context::SubagentNotification;
@@ -609,7 +609,7 @@ index c14541ec893824d3657c42ede9b93dcdea982571..fa2a2b2510195b28062fff2e30b3dcf0
  impl AgentControlHarness {
      async fn new() -> Self {
          let (home, config) = test_config().await;
-@@ -971,6 +1010,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
+@@ -972,6 +1011,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
          Op::InterAgentCommunication {
              communication: communication.clone(),
              start_options: Default::default(),
@@ -617,7 +617,7 @@ index c14541ec893824d3657c42ede9b93dcdea982571..fa2a2b2510195b28062fff2e30b3dcf0
          },
      );
      let captured = harness
-@@ -1003,6 +1043,315 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
+@@ -1004,6 +1044,315 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
      ));
  }
 
@@ -933,7 +933,7 @@ index c14541ec893824d3657c42ede9b93dcdea982571..fa2a2b2510195b28062fff2e30b3dcf0
  #[tokio::test]
  async fn ensure_v2_agent_loaded_reloads_registered_unloaded_agent() {
      check_v2_agent_reload(V2ReloadRoute::Sender).await;
-@@ -1289,6 +1638,7 @@ async fn check_v2_agent_reload(route: V2ReloadRoute) {
+@@ -1290,6 +1639,7 @@ async fn check_v2_agent_reload(route: V2ReloadRoute) {
          Op::InterAgentCommunication {
              communication,
              start_options: Default::default(),
@@ -941,7 +941,7 @@ index c14541ec893824d3657c42ede9b93dcdea982571..fa2a2b2510195b28062fff2e30b3dcf0
          },
      );
      let captured = harness
-@@ -4124,6 +4474,446 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
+@@ -4125,6 +4475,448 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
      assert!(!has_subagent_notification(root_history.raw_items()));
  }
 
@@ -989,6 +989,7 @@ index c14541ec893824d3657c42ede9b93dcdea982571..fa2a2b2510195b28062fff2e30b3dcf0
 +        .send_event(
 +            worker_turn.as_ref(),
 +            EventMsg::TurnComplete(TurnCompleteEvent {
++                root_turn_id: None,
 +                turn_id: worker_turn.sub_id.clone(),
 +                started_at: None,
 +                last_agent_message: Some("done".to_string()),
@@ -1080,6 +1081,7 @@ index c14541ec893824d3657c42ede9b93dcdea982571..fa2a2b2510195b28062fff2e30b3dcf0
 +        .send_event(
 +            worker_turn.as_ref(),
 +            EventMsg::TurnComplete(TurnCompleteEvent {
++                root_turn_id: None,
 +                turn_id: worker_turn.sub_id.clone(),
 +                started_at: None,
 +                last_agent_message: Some("done".to_string()),
@@ -1388,7 +1390,7 @@ index c14541ec893824d3657c42ede9b93dcdea982571..fa2a2b2510195b28062fff2e30b3dcf0
  #[tokio::test]
  async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
      let harness = AgentControlHarness::new().await;
-@@ -4191,6 +4981,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
+@@ -4192,6 +4984,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
