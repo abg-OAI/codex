@@ -191,14 +191,23 @@ impl V2Residency {
             let eviction = tokio::spawn(async move {
                 let _residency_guard = residency_guard;
                 candidate_thread.ensure_rollout_materialized().await;
-                if let Err(err) = candidate_thread.shutdown_and_wait().await {
-                    teardown
-                        .record_shutdown_failure("stop_resident", CodexErrKind::from(&err).into());
-                    warn!(
-                        "failed to shut down v2 resident thread before unloading {candidate_thread_id}: {err}"
-                    );
-                    teardown.complete();
-                    return false;
+                match candidate_thread.request_shutdown_if_idle().await {
+                    Ok(true) => candidate_thread.wait_until_terminated().await,
+                    Ok(false) => {
+                        residency.touch(candidate_thread_id);
+                        teardown.complete();
+                        return false;
+                    }
+                    Err(err) => {
+                        teardown
+                            .record_shutdown_failure("stop_resident", CodexErrKind::from(&err).into());
+                        warn!(
+                            "failed to shut down v2 resident thread before unloading {candidate_thread_id}: {err}"
+                        );
+                        residency.touch(candidate_thread_id);
+                        teardown.complete();
+                        return false;
+                    }
                 }
                 // The submission loop has stopped and the residency guard excludes senders.
                 // Preserve unread queue-only mail before dropping the session that held it.
@@ -306,6 +315,7 @@ async fn is_unloadable(thread: &CodexThread) -> bool {
             .input_queue
             .has_trigger_turn_mailbox_items()
             .await
+        && !thread.should_retain_while_idle().await
 }
 
 #[cfg(test)]
