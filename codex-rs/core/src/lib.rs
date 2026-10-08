@@ -135,6 +135,14 @@ mod skills;
 pub(crate) use skills::maybe_emit_implicit_skill_invocation;
 pub(crate) use skills::skills_load_input_from_config;
 mod saffron;
+
+/// Installs Saffrodex-owned model guidance that accompanies goal tools.
+pub fn install_saffron_goal_guidance(
+    builder: &mut codex_extension_api::ExtensionRegistryBuilder<config::Config>,
+) {
+    saffron::goal_supervisor::guidance::install(builder);
+}
+
 mod stream_events_utils;
 pub mod test_support;
 mod unified_exec;
@@ -148,6 +156,9 @@ pub use codex_prompts as review_prompts;
 mod thread_manager;
 pub(crate) mod web_search;
 pub(crate) mod windows_sandbox_read_grants;
+pub use saffron::goal_scheduler::GoalActivator as SaffronGoalActivator;
+pub use saffron::goal_scheduler::GoalSchedule as SaffronGoalSchedule;
+pub use saffron::goal_scheduler::GoalSchedulerHandle as SaffronGoalSchedulerHandle;
 pub use thread_manager::AgentTreeShutdown;
 pub use thread_manager::AgentTreeShutdownFailure;
 pub use thread_manager::AgentTreeShutdownFailureReason;
