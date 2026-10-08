@@ -738,6 +738,19 @@ pub(super) async fn submission_loop(
                     false
                 }
                 Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
+                Op::ShutdownAfterTurn {
+                    expected_turn_id,
+                    reply,
+                } => {
+                    if !sess.can_shutdown_after_turn(&expected_turn_id).await {
+                        let _ = reply.send(false);
+                        false
+                    } else if reply.send(true).is_ok() {
+                        shutdown(&sess, sub.id.clone()).await
+                    } else {
+                        false
+                    }
+                }
                 Op::ShutdownIfIdle { reply } => {
                     let should_shutdown = sess.is_idle_for_shutdown().await;
                     // A successful reply hands teardown ownership to the unload caller.

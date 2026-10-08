@@ -121,6 +121,7 @@ mod review;
 mod rollout_compress;
 mod rollout_migration;
 mod safety_check_downgrade;
+mod saffron_archive_self;
 mod saffron_goal_guidance;
 mod saffron_goal_supervisor;
 mod saffron_goal_supervisor_history;

@@ -167,6 +167,7 @@ pub(crate) struct MessageProcessor {
     remote_control_processor: RemoteControlRequestProcessor,
     search_processor: SearchRequestProcessor,
     saffron_goal_scheduler: Option<SaffronGoalSchedulerHandle>,
+    self_archive_stop: CancellationToken,
     thread_goal_processor: ThreadGoalRequestProcessor,
     thread_queue_processor: ThreadQueueRequestProcessor,
     thread_processor: ThreadRequestProcessor,
@@ -328,6 +329,7 @@ impl MessageProcessor {
         let extension_event_sink =
             app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
         let mut queue_service = None;
+        let (self_archive_sender, self_archive_receiver) = tokio::sync::mpsc::unbounded_channel();
         let thread_manager = Arc::new_cyclic(|thread_manager| {
             queue_service = queue_store.map(|queue| {
                 Arc::new(QueuedItemService::new(
@@ -344,6 +346,7 @@ impl MessageProcessor {
                 session_source,
                 environment_manager,
                 thread_extensions(ThreadExtensionDependencies {
+                    self_archive_sender: Some(self_archive_sender),
                     event_sink: Arc::clone(&extension_event_sink),
                     auth_manager: auth_manager.clone(),
                     state_db: state_db.clone(),
@@ -531,6 +534,8 @@ impl MessageProcessor {
             turn_cost_worker.as_ref().map(TurnCostWorker::handle),
             config_warnings,
         );
+        let self_archive_stop =
+            thread_processor.start_saffron_archive_worker(self_archive_receiver);
         let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
             && config.features.enabled(codex_features::Feature::Goals)
         {
@@ -632,6 +637,7 @@ impl MessageProcessor {
             remote_control_processor,
             search_processor,
             saffron_goal_scheduler,
+            self_archive_stop,
             thread_goal_processor,
             thread_queue_processor,
             thread_processor,
@@ -642,6 +648,7 @@ impl MessageProcessor {
     }
 
     pub(crate) fn clear_runtime_references(&self) {
+        self.self_archive_stop.cancel();
         self.account_processor.clear_external_auth();
         self.apps_processor.shutdown();
         self.models_refresh_worker.shutdown();
@@ -871,6 +878,7 @@ impl MessageProcessor {
     }
 
     pub(crate) async fn drain_background_tasks(&self) {
+        self.self_archive_stop.cancel();
         self.models_refresh_worker.shutdown();
         if let Some(worker) = &self.turn_cost_worker {
             worker.shutdown();

@@ -779,6 +779,13 @@ pub enum Op {
         reply: oneshot::Sender<bool>,
     },
 
+    /// Shut down after a successfully persisted turn, unless newer work won admission.
+    /// Unlike idle eviction, explicit completion ignores passive runtime retention.
+    ShutdownAfterTurn {
+        expected_turn_id: String,
+        reply: oneshot::Sender<bool>,
+    },
+
     /// Execute a user-initiated one-off shell command (triggered by "!cmd").
     ///
     /// The command string is executed using the user's default shell and may
@@ -989,6 +996,7 @@ impl Op {
             Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
             Self::Shutdown => "shutdown",
             Self::ShutdownIfIdle { .. } => "shutdown_if_idle",
+            Self::ShutdownAfterTurn { .. } => "shutdown_after_turn",
             Self::RunUserShellCommand { .. } => "run_user_shell_command",
         }
     }

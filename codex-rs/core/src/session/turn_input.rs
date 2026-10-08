@@ -207,6 +207,7 @@ impl PreparedTurnInputSettings {
     /// Applies only persistent settings after steering succeeds. The active
     /// turn keeps its existing context; subsequent turns see the update.
     async fn apply_steered(self, session: &Session, submission_id: String) -> CodexResult<()> {
+        crate::saffron::archive_self::cancel(session);
         let Some(thread_settings_update) = self.thread_settings_update else {
             return Ok(());
         };
@@ -667,6 +668,8 @@ impl Session {
     ) {
         let mut state = self.state.lock().await;
         state.last_started_turn_id = Some(turn_id.to_owned());
+        state.last_completed_turn_id = None;
+        crate::saffron::archive_self::cancel(self);
         if let Some(attribution) = attribution {
             state.turn_attribution = Some(attribution);
         }
