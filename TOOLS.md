@@ -25,6 +25,29 @@ process.
 }
 ```
 
+`saffron.archive_self`
+----------------------
+
+Schedules archival of the calling conversation after its current turn finishes
+successfully and the final response is saved.
+It takes no target ID and requires a saved root in a running app-server.
+Desktop does not need to be open.
+
+```cpp
+{}
+```
+
+The response is `{"status":"scheduled"}`, not confirmation of archival.
+Finish the final response normally after calling the tool.
+Interruption, failed completion, accepted steering, a newer turn, or server
+restart cancels the pending request.
+Native archival also archives spawned descendants; independent forks remain
+unchanged.
+The usual archive notification confirms completion.
+An archive failure reports a warning and leaves the saved conversation available;
+it may need to be reopened if shutdown already completed.
+Use only when the user has requested archival.
+
 `saffron.fork_thread`
 ---------------------
 

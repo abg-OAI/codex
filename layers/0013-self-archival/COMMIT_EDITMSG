@@ -1,0 +1,13 @@
+Add native self-archival after turn completion
+
+Threads cannot use Desktop archive tools while Desktop is closed.
+Add `saffron.archive_self({})` for saved roots hosted by app-server.
+It returns `scheduled`, then lets the current turn finish and save its
+final response before handing archival to the host.
+
+Conditional shutdown rejects a request if newer work won admission.
+Interruption and steering cancel pending requests, and a pending
+handoff suppresses goal continuation without changing the goal status.
+The host drains final notifications and uses native archival for storage
+and spawned descendants; independent forks are unaffected.
+Requests are transient and are not replayed after a server restart.
