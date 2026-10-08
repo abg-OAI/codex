@@ -80,6 +80,9 @@ pub(crate) fn effective_multi_agent_mode(step_context: &StepContext) -> Option<M
     if turn_context.multi_agent_version != MultiAgentVersion::V2 {
         return None;
     }
+    if let Some(mode) = crate::saffron::child_delegation::mode(&turn_context.session_source) {
+        return Some(mode);
+    }
 
     let multi_agent_messages =
         ResolvedModelMessages::from_model(&settings.model_info).multi_agent();
@@ -117,5 +120,47 @@ pub(crate) fn effective_multi_agent_mode(step_context: &StepContext) -> Option<M
         | SessionSource::Custom(_)
         | SessionSource::Unknown => Some(multi_agent_mode),
         SessionSource::Internal(_) | SessionSource::SubAgent(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod saffron_tests {
+    use super::*;
+    use crate::session::tests::make_session_and_context;
+    use codex_protocol::ThreadId;
+    use std::sync::Arc;
+
+    /// Child mode wins over custom hints; roots retain their configured policy.
+    #[tokio::test]
+    async fn child_delegation_does_not_inherit_root_mode() {
+        let (_session, mut turn) = make_session_and_context().await;
+        turn.multi_agent_version = MultiAgentVersion::V2;
+        Arc::make_mut(&mut turn.config)
+            .multi_agent_v2
+            .multi_agent_mode_hint_text = Some("Delegate every independent task.".to_owned());
+        let mut turn = Arc::new(turn);
+        let root = StepContext::for_test(Arc::clone(&turn));
+        assert_eq!(
+            effective_multi_agent_mode(&root),
+            Some(MultiAgentMode::Custom(
+                "Delegate every independent task.".to_owned()
+            ))
+        );
+        drop(root);
+        Arc::get_mut(&mut turn).unwrap().session_source =
+            SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: ThreadId::new(),
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            });
+        let child = StepContext::for_test(turn);
+        let Some(MultiAgentMode::Custom(text)) = effective_multi_agent_mode(&child) else {
+            panic!("child must receive delegation guidance");
+        };
+        assert!(text.contains("your parent"));
+        assert!(text.contains("explicitly"));
+        assert!(!text.contains("Delegate every independent task."));
     }
 }
