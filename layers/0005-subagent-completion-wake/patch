@@ -2225,7 +2225,7 @@ index 4521237045d578a7f69782f009a9320599eaec8b..b74f9bcf5e7c5e100f87b182e27da97b
                  .await?;
          }
 diff --git a/codex-rs/core/tests/suite/pending_input.rs b/codex-rs/core/tests/suite/pending_input.rs
-index c2e5d100134c261a89778b064755f5a3e0cf7fd1..1e427211905c74de67600d6249285867953dffd0 100644
+index e8ae9aa96c88e14a78265284279ef898a533d79f..46fdc4dec90823844a07b83c27bad14214052e90 100644
 --- a/codex-rs/core/tests/suite/pending_input.rs
 +++ b/codex-rs/core/tests/suite/pending_input.rs
 @@ -398,6 +398,7 @@ async fn enqueue_queue_only_agent_mail(codex: &CodexThread, text: &str) {
@@ -2236,7 +2236,7 @@ index c2e5d100134c261a89778b064755f5a3e0cf7fd1..1e427211905c74de67600d6249285867
          })
          .await
          .expect("submit queue-only agent mail");
-@@ -2246,6 +2247,7 @@ async fn terminal_compaction_error_does_not_retry_pending_input(
+@@ -2255,6 +2256,7 @@ async fn terminal_compaction_error_does_not_retry_pending_input(
                          /*trigger_turn*/ true,
                      ),
                      start_options: Default::default(),

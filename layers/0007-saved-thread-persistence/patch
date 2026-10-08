@@ -301,10 +301,10 @@ index 463fddf599b1168a3bd9e4a5adb2f7eb4fa7201e..e36d225cc678014ab96eb2a3c7b4e45e
                      self.touch_loaded_v2_residency(&state, thread_id).await;
                      return Ok(());
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index fa2a2b2510195b28062fff2e30b3dcf07668d47e..15ce9bdf8da10ed2d86db91669bcdb5624b2e586 100644
+index 6391bea1d1767ddaf1d83e43b67761c70f65270f..9bf6db669bdd2226f1dd71f1144a0d4923b5a135 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -2137,6 +2137,122 @@ async fn v2_reload_preserves_shared_instructions_after_root_unloads(
+@@ -2138,6 +2138,122 @@ async fn v2_reload_preserves_shared_instructions_after_root_unloads(
      );
  }
 
