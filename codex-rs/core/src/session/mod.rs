@@ -256,6 +256,7 @@ mod mcp_prewarm;
 mod mcp_refresh;
 mod mcp_runtime;
 pub(crate) mod multi_agents;
+mod persistence_repair;
 mod plugin_selection;
 mod realtime_history;
 mod retained_context;
@@ -1435,7 +1436,12 @@ impl Session {
     }
 
     pub(crate) fn state_db(&self) -> Option<state_db::StateDbHandle> {
-        self.services.state_db.clone()
+        self.services.state_db.clone().or_else(|| {
+            self.persistence_repair
+                .repaired
+                .get()
+                .and_then(|persistence| persistence.state_db.clone())
+        })
     }
 
     pub(crate) fn live_thread_for_persistence(
@@ -1447,7 +1453,12 @@ impl Session {
     }
 
     pub(crate) fn live_thread(&self) -> Option<&LiveThread> {
-        self.services.live_thread.as_ref()
+        self.services.live_thread.as_ref().or_else(|| {
+            self.persistence_repair
+                .repaired
+                .get()
+                .map(|persistence| &persistence.live_thread)
+        })
     }
 
     pub(crate) async fn set_thread_memory_mode(
@@ -3549,8 +3560,9 @@ impl Session {
             .iter()
             .map(|envelope| envelope.item.clone())
             .collect::<Vec<_>>();
-        {
+        let persistence = {
             let mut state = self.state.lock().await;
+            let persistence = self.persistence_repair.state.lock().await;
             state
                 .current_time_reminder
                 .note_recorded_items(&response_items);
@@ -3590,7 +3602,8 @@ impl Session {
             state
                 .history
                 .record_annotated_items(&mut items, model_info.truncation_policy.into());
-        }
+            persistence
+        };
         for image in image_preparations {
             self.services
                 .analytics_events_client
@@ -3601,13 +3614,14 @@ impl Session {
         }
         let rollout_items: Vec<RolloutItem> =
             items.into_iter().map(RolloutItem::ResponseItem).collect();
-        if self.persist_rollout_items(&rollout_items).await
+        if self.persist_rollout_items_locked(&rollout_items).await
             && let Some(revision) = mcp_revision
         {
             self.services
                 .executed_tool_calls
                 .mark_mcp_attribution_persisted(revision);
         }
+        drop(persistence);
         if turn_context.config.memories.disable_on_external_context
             && let Some(item) = response_items
                 .iter()
@@ -3933,21 +3947,24 @@ impl Session {
         for mut recording in pending {
             let _ = recording.changed().await;
         }
-        {
+        let persistence = {
             let mut state = self.state.lock().await;
+            let persistence = self.persistence_repair.state.lock().await;
             state.current_time_reminder.note_recorded_items(items);
             state.history.record_annotated_items(
                 std::slice::from_mut(&mut response_item),
                 model_info.truncation_policy.into(),
             );
-        }
-        self.persist_rollout_items(&[
+            persistence
+        };
+        self.persist_rollout_items_locked(&[
             RolloutItem::InterAgentCommunicationMetadata {
                 trigger_turn: communication.trigger_turn,
             },
             RolloutItem::ResponseItem(response_item),
         ])
         .await;
+        drop(persistence);
         drop(boundary);
         self.send_raw_response_items(turn_context, items).await;
     }
@@ -4058,8 +4075,9 @@ impl Session {
         // overtaking the current settings snapshot while its checkpoint is written.
         let _settings_guard = thread_settings::acquire_persistence_lock(self).await;
         let world_state_item = WorldStateItem::full(world_state_baseline.clone().into_object());
-        let compacted_item = {
+        let (compacted_item, persistence) = {
             let mut state = self.state.lock().await;
+            let persistence = self.persistence_repair.state.lock().await;
             // Goal edits are published outside the running task. Keep edits accepted after
             // the compaction input snapshot, in their original order, after its replacement.
             let replacement_goal_ids = crate::context::UserGoalUpdate::message_ids(
@@ -4089,7 +4107,7 @@ impl Session {
             );
             state.reasoning_effort_pin = ReasoningEffortPin::Compacted;
             state.history.set_world_state_baseline(world_state_baseline);
-            CompactedItem {
+            let compacted_item = CompactedItem {
                 message: metadata.message,
                 replacement_history: Some(replacement_history),
                 guardian_history: state.history.guardian_history_checkpoint(),
@@ -4110,7 +4128,8 @@ impl Session {
                     turn_attribution: state.turn_attribution.clone(),
                     previous_turn_settings: state.previous_turn_settings(),
                 }),
-            }
+            };
+            (compacted_item, persistence)
         };
 
         let rollout_items = [
@@ -4120,13 +4139,14 @@ impl Session {
             // The frozen turn context must not override current settings in persisted metadata.
             RolloutItem::EventMsg(thread_settings::applied_event(self).await),
         ];
-        if self.persist_rollout_items(&rollout_items).await
+        if self.persist_rollout_items_locked(&rollout_items).await
             && let Some(revision) = mcp_revision
         {
             self.services
                 .executed_tool_calls
                 .mark_mcp_attribution_persisted(revision);
         }
+        drop(persistence);
         {
             let mut state = self.state.lock().await;
             state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
@@ -4495,6 +4515,11 @@ impl Session {
 
     #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
     pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
+        let _persistence = self.persistence_repair.state.lock().await;
+        self.persist_rollout_items_locked(items).await
+    }
+
+    async fn persist_rollout_items_locked(&self, items: &[RolloutItem]) -> bool {
         if let Some(live_thread) = self.live_thread()
             && let Err(e) = live_thread.append_items(items).await
         {
@@ -4704,12 +4729,13 @@ impl Session {
         }
         // Persist one `TurnContextItem` per real user turn so resume/lazy replay can recover the
         // latest durable baseline even when this turn emitted no model-visible context diffs.
-        self.persist_rollout_items(&[RolloutItem::TurnContext(turn_context_item.clone())])
+        let mut state = self.state.lock().await;
+        let _persistence = self.persistence_repair.state.lock().await;
+        self.persist_rollout_items_locked(&[RolloutItem::TurnContext(turn_context_item.clone())])
             .await;
 
         // Advance the persisted-settings baseline even when this turn emitted no model-visible
         // context items.
-        let mut state = self.state.lock().await;
         state.set_reference_context_item(Some(turn_context_item));
         Ok(())
     }
