@@ -166,4 +166,4 @@ jobs:
             --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
             -p codex-app-server \
             --test all \
-            saffron_goal_supervisor
+            -E 'test(saffron_goal_supervisor) or test(saffron_archive_self)'

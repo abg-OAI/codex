@@ -1,0 +1,342 @@
+diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
+index 55e89e45868b324cbb8aa19575304789cdb2eac5..eb432bf24a057fbb1d128f99e8768082cdcb73c4 100644
+--- a/codex-rs/app-server/src/extensions.rs
++++ b/codex-rs/app-server/src/extensions.rs
+@@ -37,6 +37,8 @@ pub(crate) struct ThreadExtensionDependencies {
+     pub(crate) state_db: Option<StateDbHandle>,
+     pub(crate) analytics_events_client: AnalyticsEventsClient,
+     pub(crate) thread_manager: Weak<ThreadManager>,
++    pub(crate) self_archive_sender:
++        Option<tokio::sync::mpsc::UnboundedSender<codex_core::SaffronArchiveRequest>>,
+     pub(crate) goal_service: Arc<GoalService>,
+     pub(crate) environment_manager: Arc<EnvironmentManager>,
+     pub(crate) executor_skill_provider: Arc<dyn codex_skills_extension::SkillProvider>,
+@@ -56,6 +58,7 @@ pub(crate) fn thread_extensions(
+         state_db,
+         analytics_events_client,
+         thread_manager,
++        self_archive_sender,
+         goal_service,
+         environment_manager,
+         executor_skill_provider,
+@@ -75,6 +78,9 @@ pub(crate) fn thread_extensions(
+     codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
+     codex_core::install_saffron_fork_thread(&mut builder, thread_manager.clone());
+     codex_core::install_saffron_thread_message(&mut builder, thread_manager.clone());
++    if let Some(sender) = self_archive_sender {
++        codex_core::install_saffron_archive_self(&mut builder, sender);
++    }
+     if let Some(state_db) = state_db {
+         codex_goal_extension::install_with_backend(
+             &mut builder,
+diff --git a/codex-rs/app-server/src/mcp_refresh.rs b/codex-rs/app-server/src/mcp_refresh.rs
+index ac965523fb227f4c2beb832828a41bdf480e9be1..5e2a2e0c60ac0d7312b888c8969c38d9a1d2ca3d 100644
+--- a/codex-rs/app-server/src/mcp_refresh.rs
++++ b/codex-rs/app-server/src/mcp_refresh.rs
+@@ -477,6 +477,7 @@ enabled = false
+                 SessionSource::Exec,
+                 Arc::clone(&environment_manager),
+                 thread_extensions(ThreadExtensionDependencies {
++                    self_archive_sender: None,
+                     event_sink: Arc::new(NoopExtensionEventSink),
+                     auth_manager: auth_manager.clone(),
+                     state_db: Some(state_db.clone()),
+diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
+index bc0692ed1ea1fb6e6e4e10d1bcc06b66cabb72ac..aefaf76648992dbee085efc47533656b59a9562e 100644
+--- a/codex-rs/app-server/src/message_processor.rs
++++ b/codex-rs/app-server/src/message_processor.rs
+@@ -167,6 +167,7 @@ pub(crate) struct MessageProcessor {
+     remote_control_processor: RemoteControlRequestProcessor,
+     search_processor: SearchRequestProcessor,
+     saffron_goal_scheduler: Option<SaffronGoalSchedulerHandle>,
++    self_archive_stop: CancellationToken,
+     thread_goal_processor: ThreadGoalRequestProcessor,
+     thread_queue_processor: ThreadQueueRequestProcessor,
+     thread_processor: ThreadRequestProcessor,
+@@ -328,6 +329,7 @@ impl MessageProcessor {
+         let extension_event_sink =
+             app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
+         let mut queue_service = None;
++        let (self_archive_sender, self_archive_receiver) = tokio::sync::mpsc::unbounded_channel();
+         let thread_manager = Arc::new_cyclic(|thread_manager| {
+             queue_service = queue_store.map(|queue| {
+                 Arc::new(QueuedItemService::new(
+@@ -344,6 +346,7 @@ impl MessageProcessor {
+                 session_source,
+                 environment_manager,
+                 thread_extensions(ThreadExtensionDependencies {
++                    self_archive_sender: Some(self_archive_sender),
+                     event_sink: Arc::clone(&extension_event_sink),
+                     auth_manager: auth_manager.clone(),
+                     state_db: state_db.clone(),
+@@ -531,6 +534,8 @@ impl MessageProcessor {
+             turn_cost_worker.as_ref().map(TurnCostWorker::handle),
+             config_warnings,
+         );
++        let self_archive_stop =
++            thread_processor.start_saffron_archive_worker(self_archive_receiver);
+         let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
+             && config.features.enabled(codex_features::Feature::Goals)
+         {
+@@ -632,6 +637,7 @@ impl MessageProcessor {
+             remote_control_processor,
+             search_processor,
+             saffron_goal_scheduler,
++            self_archive_stop,
+             thread_goal_processor,
+             thread_queue_processor,
+             thread_processor,
+@@ -642,6 +648,7 @@ impl MessageProcessor {
+     }
+
+     pub(crate) fn clear_runtime_references(&self) {
++        self.self_archive_stop.cancel();
+         self.account_processor.clear_external_auth();
+         self.apps_processor.shutdown();
+         self.models_refresh_worker.shutdown();
+@@ -871,6 +878,7 @@ impl MessageProcessor {
+     }
+
+     pub(crate) async fn drain_background_tasks(&self) {
++        self.self_archive_stop.cancel();
+         self.models_refresh_worker.shutdown();
+         if let Some(worker) = &self.turn_cost_worker {
+             worker.shutdown();
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index 40972d8649c6ab5928408ccbeedfa2edae131697..84ec183d0d2c193faf7315a4e89752b22f186926 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -6379,6 +6379,7 @@ fn build_thread_from_loaded_snapshot(
+     )
+ }
+
++mod saffron_archive_self;
+ mod saffron_goal_scheduler;
+
+ #[cfg(test)]
+diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
+index 3f879e0b47aa488435fdc729afec6d428091175a..4ef0f1ae5e55bb665833eab3d1d2c6f32e8352d1 100644
+--- a/codex-rs/app-server/tests/suite/v2/mod.rs
++++ b/codex-rs/app-server/tests/suite/v2/mod.rs
+@@ -121,6 +121,7 @@ mod review;
+ mod rollout_compress;
+ mod rollout_migration;
+ mod safety_check_downgrade;
++mod saffron_archive_self;
+ mod saffron_goal_guidance;
+ mod saffron_goal_supervisor;
+ mod saffron_goal_supervisor_history;
+diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
+index ded7ed824273112bd539a1437dd5cfcda9f60c5f..c60486b41b108323a5fb6385037adc2dcad13888 100644
+--- a/codex-rs/core/src/codex_thread.rs
++++ b/codex-rs/core/src/codex_thread.rs
+@@ -331,6 +331,18 @@ impl CodexThread {
+         reply_rx.await.map_err(|_| CodexErr::InternalAgentDied)
+     }
+
++    /// Commits shutdown only if this successfully persisted turn is still the latest work.
++    /// Acceptance does not mean teardown has finished; await `wait_until_terminated` next.
++    pub async fn request_shutdown_after_turn(&self, expected_turn_id: String) -> CodexResult<bool> {
++        let (reply, receiver) = oneshot::channel();
++        self.submit(Op::ShutdownAfterTurn {
++            expected_turn_id,
++            reply,
++        })
++        .await?;
++        receiver.await.map_err(|_| CodexErr::InternalAgentDied)
++    }
++
+     /// Wait until the underlying session loop has terminated.
+     pub async fn wait_until_terminated(&self) {
+         self.io.session_loop_termination.clone().await;
+@@ -395,6 +407,9 @@ impl CodexThread {
+         &self,
+         goal: &codex_state::ThreadGoal,
+     ) -> Result<bool, String> {
++        if crate::saffron::archive_self::pending(&self.session) {
++            return Ok(true);
++        }
+         crate::saffron::goal_supervisor::start_checkin(&self.session, goal)
+             .await
+             .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
+diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
+index ceccc51c38790217f961c7c409cd756f43dadbd9..7c7824560b502da5aca31a399fdd0371812b8ff6 100644
+--- a/codex-rs/core/src/lib.rs
++++ b/codex-rs/core/src/lib.rs
+@@ -136,6 +136,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+ pub(crate) use skills::skills_load_input_from_config;
+ mod saffron;
+
++pub use saffron::archive_self::ArchiveRequest as SaffronArchiveRequest;
++pub use saffron::archive_self::install as install_saffron_archive_self;
+ pub use saffron::fork_thread::install as install_saffron_fork_thread;
+ pub use saffron::thread_message::install as install_saffron_thread_message;
+
+diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
+index be2c37671ce574eb1cac73fc2ffb00316c715630..190e770b5a8695fce40fbb2acf4d03d3aa411aa7 100644
+--- a/codex-rs/core/src/saffron/mod.rs
++++ b/codex-rs/core/src/saffron/mod.rs
+@@ -5,6 +5,7 @@
+ //! Saffron modules compose those primitives into complete features and export
+ //! only the integration points that upstream registration needs.
+
++pub(crate) mod archive_self;
+ pub(crate) mod await_exec;
+ pub(crate) mod child_delegation;
+ pub(crate) mod compaction_requests;
+@@ -51,4 +52,5 @@ pub(crate) fn register_tools(
+     goal_resume::register_root_if_available(session, turn_context, registry);
+     fork_thread::register(session, turn_context, registry);
+     thread_message::register(session, turn_context, registry);
++    archive_self::register(session, turn_context, registry);
+ }
+diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
+index 0d83d93ff06c0fd4259157daeb24c44beea9b46b..bb3164947f941e3c7ee27c7eb65594d484c2da00 100644
+--- a/codex-rs/core/src/session/handlers.rs
++++ b/codex-rs/core/src/session/handlers.rs
+@@ -738,6 +738,19 @@ pub(super) async fn submission_loop(
+                     false
+                 }
+                 Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
++                Op::ShutdownAfterTurn {
++                    expected_turn_id,
++                    reply,
++                } => {
++                    if !sess.can_shutdown_after_turn(&expected_turn_id).await {
++                        let _ = reply.send(false);
++                        false
++                    } else if reply.send(true).is_ok() {
++                        shutdown(&sess, sub.id.clone()).await
++                    } else {
++                        false
++                    }
++                }
+                 Op::ShutdownIfIdle { reply } => {
+                     let should_shutdown = sess.is_idle_for_shutdown().await;
+                     // A successful reply hands teardown ownership to the unload caller.
+diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
+index 2d27a4893b142b9627526e0b3d5bb9328b5bad7d..6bf3a83248920907aebcb12afe1bc0bf98a143c2 100644
+--- a/codex-rs/core/src/session/mod.rs
++++ b/codex-rs/core/src/session/mod.rs
+@@ -237,6 +237,7 @@ use codex_protocol::error::Result as CodexResult;
+ use codex_protocol::exec_output::StreamOutput;
+
+ mod code_mode_warning;
++mod completion_shutdown;
+ mod config_refresh;
+ pub(crate) mod context_window;
+ mod daemon_recovery;
+diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
+index 70b98375bafaccb951e09e47a4f2ea9bc0bbd87d..e23a6b799ac81564be575e9595bbb5b98030b5ca 100644
+--- a/codex-rs/core/src/session/session.rs
++++ b/codex-rs/core/src/session/session.rs
+@@ -673,7 +673,8 @@ impl Session {
+     }
+
+     pub(crate) async fn should_retain_while_idle(&self) -> bool {
+-        crate::saffron::goal_supervisor::should_retain_while_idle(self).await
++        crate::saffron::archive_self::pending(self)
++            || crate::saffron::goal_supervisor::should_retain_while_idle(self).await
+             || crate::saffron::subagent_completion::is_retained(self, self.thread_id)
+     }
+
+diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
+index 2ca726e6349fad0ab874a75a810c8ab511b6b260..166820bd531f6e503184d43faaa7a020d41715cb 100644
+--- a/codex-rs/core/src/session/turn_input.rs
++++ b/codex-rs/core/src/session/turn_input.rs
+@@ -207,6 +207,7 @@ impl PreparedTurnInputSettings {
+     /// Applies only persistent settings after steering succeeds. The active
+     /// turn keeps its existing context; subsequent turns see the update.
+     async fn apply_steered(self, session: &Session, submission_id: String) -> CodexResult<()> {
++        crate::saffron::archive_self::cancel(session);
+         let Some(thread_settings_update) = self.thread_settings_update else {
+             return Ok(());
+         };
+@@ -667,6 +668,8 @@ impl Session {
+     ) {
+         let mut state = self.state.lock().await;
+         state.last_started_turn_id = Some(turn_id.to_owned());
++        state.last_completed_turn_id = None;
++        crate::saffron::archive_self::cancel(self);
+         if let Some(attribution) = attribution {
+             state.turn_attribution = Some(attribution);
+         }
+diff --git a/codex-rs/core/src/state/session.rs b/codex-rs/core/src/state/session.rs
+index 53857e1cc2c719ef7a5616471e180247d00e88b8..2a0955221300fcfa095c7a6ec828b1b4115028f3 100644
+--- a/codex-rs/core/src/state/session.rs
++++ b/codex-rs/core/src/state/session.rs
+@@ -86,6 +86,8 @@ pub(crate) struct SessionState {
+     /// Latest task admitted in this runtime, retained across completion and history edits.
+     /// Cleared by standalone settings changes to invalidate pending continuation.
+     pub(crate) last_started_turn_id: Option<String>,
++    /// Successful terminal persistence in this runtime; invalidated by a new task.
++    pub(crate) last_completed_turn_id: Option<String>,
+     /// Latest regular turn, retained across completion, settings changes, and compaction.
+     pub(crate) turn_attribution: Option<TurnAttribution>,
+     /// Runtime accounting state for the active auto-compaction window.
+@@ -133,6 +135,7 @@ impl SessionState {
+             additional_context: AdditionalContextStore::default(),
+             previous_turn_settings: None,
+             last_started_turn_id: None,
++            last_completed_turn_id: None,
+             turn_attribution: None,
+             auto_compact_window: AutoCompactWindow::new_with_ids(auto_compact_window_ids),
+             reasoning_effort_pin: ReasoningEffortPin::Unset,
+diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
+index 2aeb1e536c124438333b186c8160fe8fdb0c9f7c..c8da37a4bb8f4b921ba4c09383f9da0e0307084b 100644
+--- a/codex-rs/core/src/tasks/mod.rs
++++ b/codex-rs/core/src/tasks/mod.rs
+@@ -940,15 +940,24 @@ impl Session {
+         }
+         drop(agent_execution_guard);
+         drop(ancestor_turn_retention_guard);
+-        if cleared_active_turn {
++        let archival_handoff = crate::saffron::archive_self::finish(
++            self,
++            &turn_context,
++            cleared_active_turn && idle_cause == ThreadIdleCause::Completed,
++        )
++        .await;
++        if cleared_active_turn && !archival_handoff {
+             self.emit_thread_idle_lifecycle_if_idle(idle_cause).await;
+         }
+         // Private reviewers already flushed the terminal event before delivering it.
+         // Other buffering writers still need a barrier for the terminal event.
+-        if !saved_guardian_completion && let Err(err) = self.flush_rollout().await {
++        if !saved_guardian_completion
++            && !archival_handoff
++            && let Err(err) = self.flush_rollout().await
++        {
+             warn!("failed to flush rollout after emitting terminal turn event: {err}");
+         }
+-        if cleared_active_turn {
++        if cleared_active_turn && !archival_handoff {
+             self.maybe_start_turn_for_pending_work().await;
+         }
+     }
+diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
+index 8d0128ee40a85de3b93c1594925b52edc062d7a0..eedad3ee2bdfab7ddb9e30854b572178d91066d6 100644
+--- a/codex-rs/protocol/src/protocol.rs
++++ b/codex-rs/protocol/src/protocol.rs
+@@ -779,6 +779,13 @@ pub enum Op {
+         reply: oneshot::Sender<bool>,
+     },
+
++    /// Shut down after a successfully persisted turn, unless newer work won admission.
++    /// Unlike idle eviction, explicit completion ignores passive runtime retention.
++    ShutdownAfterTurn {
++        expected_turn_id: String,
++        reply: oneshot::Sender<bool>,
++    },
++
+     /// Execute a user-initiated one-off shell command (triggered by "!cmd").
+     ///
+     /// The command string is executed using the user's default shell and may
+@@ -989,6 +996,7 @@ impl Op {
+             Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
+             Self::Shutdown => "shutdown",
+             Self::ShutdownIfIdle { .. } => "shutdown_if_idle",
++            Self::ShutdownAfterTurn { .. } => "shutdown_after_turn",
+             Self::RunUserShellCommand { .. } => "run_user_shell_command",
+         }
+     }
