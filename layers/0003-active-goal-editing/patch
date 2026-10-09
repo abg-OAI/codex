@@ -275,7 +275,7 @@ index e2e556ee6128e6bc726bd3b8c21ed2728f489e4f..68eae1e06eedb40295321ec442cbc680
 +yourself. Do not create sub-agents. After any optional edit, call exactly one
 +supervisor action. After the action returns, end your turn.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index abfef2018496e08e4324fe391577a3599c8b876d..7339452fadfa0aa8ba900b7a2a3bfc102bed7dcf 100644
+index acc2df00323b399d665c187cdb851412aad8124f..557de50e9251ba85ba0b06aaaa0b499e5dbbef48 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -95,7 +95,8 @@ enum IdleDisposition {
@@ -504,10 +504,10 @@ index d3dfa5a32bb3fc33c5eba5c846a996a8c918ae11..63957c93264bc3f05a964c6af88e8e69
 +    goal_edit::register_root_if_available(session, turn_context, registry);
  }
 diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
-index 5ae36f8b1168d66ba5de721af6df77d9f0a539c7..cc04db88792b1a3654c183bffb9832b9a3061db3 100644
+index cff7792c93dd3c897d437abf0838488e349157bf..e4b01178b4565aa604b806fec877d7dad62f5a50 100644
 --- a/codex-rs/state/src/lib.rs
 +++ b/codex-rs/state/src/lib.rs
-@@ -90,6 +90,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
+@@ -94,6 +94,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
  pub use runtime::SqliteIntegrityCheck;
  pub use runtime::SqliteQueueStore;
  pub use runtime::ThreadFilterOptions;
@@ -516,17 +516,17 @@ index 5ae36f8b1168d66ba5de721af6df77d9f0a539c7..cc04db88792b1a3654c183bffb9832b9
  pub use runtime::collect_runtime_db_backups;
  pub use runtime::is_sqlite_corruption_error;
 diff --git a/codex-rs/state/src/runtime.rs b/codex-rs/state/src/runtime.rs
-index a145dfc4519dc0cd4078d82361b3c379407891bf..db892c8803b65b896047668611eec0e6a8f751b0 100644
+index 92f2736423cacb8fea6bf9829e427c0287ff1902..eb363b95850dde7d97cbc8070f075cf8633cac79 100644
 --- a/codex-rs/state/src/runtime.rs
 +++ b/codex-rs/state/src/runtime.rs
-@@ -68,6 +68,7 @@ pub use goals::GoalAccountingMode;
+@@ -69,6 +69,7 @@ pub use goals::GoalAccountingMode;
  pub use goals::GoalAccountingOutcome;
  pub use goals::GoalStore;
  pub use goals::GoalUpdate;
 +pub use goals::ThreadGoalRevision;
- pub use memories::MemoryStore;
- pub use queued_items::SqliteQueueStore;
- pub use recovery::backup_runtime_db_for_fresh_start;
+ pub use guardian_feedback::GuardianReviewRecord;
+ pub use guardian_feedback::MAX_GUARDIAN_REVIEW_BYTES;
+ pub use guardian_feedback::MAX_GUARDIAN_REVIEW_RECORDS;
 diff --git a/codex-rs/state/src/runtime/goals.rs b/codex-rs/state/src/runtime/goals.rs
 index 4d1987e23b8fbace0390b1f8f1224756e12f9c47..e2ac3a5ac005f9c3563ae9fa1a05630ad2cb6f80 100644
 --- a/codex-rs/state/src/runtime/goals.rs

@@ -32,7 +32,7 @@ impl ThreadRequestProcessor {
             .pending_thread_unloads
             .lock()
             .await
-            .contains(&thread_id)
+            .contains_key(&thread_id)
         {
             return Err(invalid_request(format!(
                 "thread {thread_id} is closing; retry goal recovery after it closes"
@@ -199,11 +199,11 @@ impl ThreadRequestProcessor {
                     .subscribed_connection_ids(thread_id)
                     .await
                     .is_empty()
-                    || pending_thread_unloads.contains(&thread_id)
+                    || pending_thread_unloads.contains_key(&thread_id)
                 {
                     return;
                 }
-                pending_thread_unloads.insert(thread_id);
+                pending_thread_unloads.insert(thread_id, tokio::sync::watch::channel(()).0);
             }
             super::super::thread_lifecycle::unload_thread_without_subscribers(
                 Arc::clone(&self.thread_manager),
