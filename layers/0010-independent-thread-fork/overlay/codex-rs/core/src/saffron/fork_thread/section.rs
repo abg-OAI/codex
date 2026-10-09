@@ -213,6 +213,7 @@ async fn request<T: DeserializeOwned>(
         call_id.clone(),
         tool,
         arguments,
+        invocation.cancellation_token.clone(),
     );
     tokio::pin!(future);
     let response = tokio::select! {

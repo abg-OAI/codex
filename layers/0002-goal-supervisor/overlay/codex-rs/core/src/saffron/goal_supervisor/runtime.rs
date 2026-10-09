@@ -750,6 +750,7 @@ async fn spawn_helper(
                 turn_trigger: None,
                 root_turn_id: None,
                 environments: None,
+                disabled_plugin_ids: None,
                 multi_agent_v2_usage_hints: None,
                 cyber_access_program: None,
             },

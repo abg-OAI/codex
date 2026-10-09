@@ -1,3 +1,18 @@
+diff --git a/codex-rs/core/src/agent/control/sender_context.rs b/codex-rs/core/src/agent/control/sender_context.rs
+index 184a5add1420541f9d40a1881ac80ab489e270ec..63e663902154860051a05d977ae330a6fc5e4671 100644
+--- a/codex-rs/core/src/agent/control/sender_context.rs
++++ b/codex-rs/core/src/agent/control/sender_context.rs
+@@ -98,6 +98,10 @@ impl LocalAgentRuntime {
+                                 ContextManager::reconstruct_rollout(
+                                     &stored.items,
+                                     meta.history_mode,
++                                    &meta
++                                        .source
++                                        .get_agent_path()
++                                        .unwrap_or_else(codex_protocol::AgentPath::root),
+                                     ContextManager::new(),
+                                     // Tool bodies are not sender authorization evidence.
+                                     TruncationPolicy::Bytes(0),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
 index f4db71b6882fdece78909298fbefa4e3b92f3392..5be3385b37e8376be527e1018d43f2aa32e4c8dd 100644
 --- a/codex-rs/core/src/compact.rs
@@ -814,10 +829,29 @@ index ce13be03f1986a62708aa751fef7e5d35d633a67..0e5b94605cafe76a6c7fe66b8627aa90
  pub(crate) mod goal_resume;
  pub(crate) mod goal_scheduler;
 diff --git a/codex-rs/core/src/session/rollout_reconstruction.rs b/codex-rs/core/src/session/rollout_reconstruction.rs
-index 4ca5ce14981f4207e336ed7c7bfed27990cdb43f..7c027b71f121992d8c1b5c7a19eb8bb9a353f872 100644
+index 7c8ae88b5dd59674df284c49c13cc4d99b614b54..edb32f7fbb809c180628ec264509ec6e31d16b56 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction.rs
-@@ -521,8 +521,13 @@ impl Session {
+@@ -194,6 +194,10 @@ impl Session {
+         ContextManager::reconstruct_rollout(
+             rollout_items,
+             turn_context.history_mode,
++            &turn_context
++                .session_source
++                .get_agent_path()
++                .unwrap_or_else(codex_protocol::AgentPath::root),
+             ContextManager::for_session(
+                 &turn_context.session_source,
+                 &turn_context.config.features,
+@@ -208,6 +212,7 @@ impl ContextManager {
+     pub(crate) fn reconstruct_rollout(
+         rollout_items: &[RolloutItem],
+         history_mode: ThreadHistoryMode,
++        agent_path: &codex_protocol::AgentPath,
+         mut history: Self,
+         truncation_policy: TruncationPolicy,
+     ) -> RolloutReconstruction {
+@@ -532,8 +537,10 @@ impl ContextManager {
                          // prompt shape.
                          // TODO(ccunningham): if we drop support for None replacement_history compaction items,
                          // we can get rid of this second loop entirely and just build `history` directly in the first loop.
@@ -825,22 +859,60 @@ index 4ca5ce14981f4207e336ed7c7bfed27990cdb43f..7c027b71f121992d8c1b5c7a19eb8bb9
 -                            compact::collect_annotated_user_messages(history.annotated_items());
 +                        let user_messages = compact::collect_annotated_user_messages(
 +                            history.annotated_items(),
-+                            &turn_context
-+                                .session_source
-+                                .get_agent_path()
-+                                .unwrap_or_else(codex_protocol::AgentPath::root),
++                            agent_path,
 +                        );
                          let rebuilt = compact::build_compacted_history(
                              Vec::new(),
                              &user_messages,
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index 879115d3d08a709b5a6384c5601954cb3759b5e6..0f4d2a492ee53da7b1e2bd03eaa4263be6f05ff4 100644
+index 879115d3d08a709b5a6384c5601954cb3759b5e6..afa87a0506d20fc43d80876754c275c79b0843e1 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-@@ -1455,6 +1455,65 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
+@@ -1455,6 +1455,106 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
      assert_eq!(reconstructed.window_id, Some(initial_window_id));
  }
 
++/// Legacy replay retains an ancestor assignment only for its receiving agent.
++#[test_case("/root/fruit", true; "receiving child")]
++#[test_case("/root/vegetables", false; "sibling child")]
++#[test_case("/root", false; "parent")]
++fn legacy_replay_scopes_assignments_to_receiver(agent_path: &str, retained: bool) {
++    let assignment = ResponseItemEnvelope::new(ResponseItem::AgentMessage {
++        id: None,
++        author: "/root".to_owned(),
++        recipient: "/root/fruit".to_owned(),
++        content: vec![codex_protocol::models::AgentMessageInputContent::InputText {
++            text: "Message Type: NEW_TASK\nPayload:\nInspect the orchard.".to_owned(),
++        }],
++        internal_chat_message_metadata_passthrough: None,
++    });
++    let rollout = vec![
++        RolloutItem::ResponseItem(assignment.clone()),
++        RolloutItem::Compacted(CompactedItem {
++            message: "The inspection is underway.".to_owned(),
++            replacement_history: None,
++            retained_context: None,
++            guardian_history: None,
++            mcp_resource_origins: None,
++            window_number: None,
++            first_window_id: None,
++            previous_window_id: None,
++            window_id: None,
++            compaction_response_id: None,
++            latest_token_usage_record: None,
++            resume_metadata: None,
++        }),
++    ];
++    let reconstructed = ContextManager::reconstruct_rollout(
++        &rollout,
++        ThreadHistoryMode::Legacy,
++        &AgentPath::try_from(agent_path).unwrap(),
++        ContextManager::new(),
++        codex_utils_output_truncation::TruncationPolicy::Bytes(10_000),
++    );
++    assert_eq!(reconstructed.history.contains(&assignment), retained);
++}
++
 +/// Persisted replacement history keeps delivery bodies and identity on cold replay.
 +#[tokio::test]
 +async fn compaction_delivery_survives_rollout_replay_and_next_compaction() {
@@ -904,10 +976,10 @@ index 879115d3d08a709b5a6384c5601954cb3759b5e6..0f4d2a492ee53da7b1e2bd03eaa4263b
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index 41b99f95a047534ffc61030bf09f0afbf853bd19..624552eb5bc5a96c5d154c58fc5352767c9d1a8f 100644
+index 5ce19f056a95abdfe6802ae95038f2657ca7b9ed..59bed1a18c1501f860966212436ea88754b557ae 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
-@@ -62,6 +62,11 @@ pub struct ResponseItemEnvelope {
+@@ -65,6 +65,11 @@ pub struct ResponseItemEnvelope {
  ///
  #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
  pub struct CodexHarnessMetadata {

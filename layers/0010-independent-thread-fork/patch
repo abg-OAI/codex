@@ -11,7 +11,7 @@ index defd306f86f0e55c469e3a01eccaa5cd2ef49867..15effd88bfee2f17124ce1f671b7c228
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 433ee3ec4f8d46a3e06e8b5c31ca0f5559c3731f..088805adbbc07a687e7d87a93161277b9e89f2f7 100644
+index 312b65b9e64934bc30e1b365d478e9d44953596a..521ee2c5cc7f43e8434f71bbace68d18e5129da2 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -136,6 +136,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
@@ -55,10 +55,10 @@ index 0e5b94605cafe76a6c7fe66b8627aa905dd16dd4..e548b2f1503cf3cf31fa705c73e46c3b
 +    fork_thread::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 5bb6c6c15d1207ba06bdf23e159fea81e2570d8e..2fc2b6f73ecc478bbcfb3a5828b7f37264114c3c 100644
+index cd963d9f72d300295b079c10baa2f0a346f51067..8cae1944c7c49352ca08970354970a05f8ca4230 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -929,6 +929,11 @@ impl ThreadManager {
+@@ -932,6 +932,11 @@ impl ThreadManager {
          self.state.thread_created_tx.subscribe()
      }
 
@@ -71,10 +71,10 @@ index 5bb6c6c15d1207ba06bdf23e159fea81e2570d8e..2fc2b6f73ecc478bbcfb3a5828b7f372
          let thread = self.state.get_thread(thread_id).await?;
          if !thread.has_persistence() && self.state.is_saved_target(thread_id) {
 diff --git a/codex-rs/core/src/tools/handlers/dynamic.rs b/codex-rs/core/src/tools/handlers/dynamic.rs
-index f658d6742b158fbc5abbf6a8e1a78dba890466e1..74a5697ee526d7587f9e798e43703e0a871bfccf 100644
+index 9e78325058546a3924b12fa8c9de938d6421fbcf..004cf7ecd093a3c64f35f49359ecee750e4ddd6f 100644
 --- a/codex-rs/core/src/tools/handlers/dynamic.rs
 +++ b/codex-rs/core/src/tools/handlers/dynamic.rs
-@@ -175,7 +175,7 @@ impl CoreToolRuntime for DynamicToolHandler {
+@@ -183,7 +183,7 @@ impl CoreToolRuntime for DynamicToolHandler {
      clippy::await_holding_invalid_type,
      reason = "active turn checks and dynamic tool response registration must remain atomic"
  )]
@@ -83,15 +83,6 @@ index f658d6742b158fbc5abbf6a8e1a78dba890466e1..74a5697ee526d7587f9e798e43703e0a
      session: &Session,
      turn_context: &TurnContext,
      call_id: String,
-@@ -193,7 +193,7 @@ async fn request_dynamic_tool(
-                 let mut ts = at.turn_state.lock().await;
-                 ts.insert_pending_dynamic_tool(call_id.clone(), tx_response)
-             }
--            None => None,
-+            None => return None,
-         }
-     };
-     if prev_entry.is_some() {
 diff --git a/codex-rs/core/src/tools/handlers/mod.rs b/codex-rs/core/src/tools/handlers/mod.rs
 index 710c089b8a5481b6a69b19047d677e7f19bf419c..e6e54dc828ef64f45e11a459d0442af761df174b 100644
 --- a/codex-rs/core/src/tools/handlers/mod.rs
