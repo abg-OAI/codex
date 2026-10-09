@@ -940,15 +940,24 @@ impl Session {
         }
         drop(agent_execution_guard);
         drop(ancestor_turn_retention_guard);
-        if cleared_active_turn {
+        let archival_handoff = crate::saffron::archive_self::finish(
+            self,
+            &turn_context,
+            cleared_active_turn && idle_cause == ThreadIdleCause::Completed,
+        )
+        .await;
+        if cleared_active_turn && !archival_handoff {
             self.emit_thread_idle_lifecycle_if_idle(idle_cause).await;
         }
         // Private reviewers already flushed the terminal event before delivering it.
         // Other buffering writers still need a barrier for the terminal event.
-        if !saved_guardian_completion && let Err(err) = self.flush_rollout().await {
+        if !saved_guardian_completion
+            && !archival_handoff
+            && let Err(err) = self.flush_rollout().await
+        {
             warn!("failed to flush rollout after emitting terminal turn event: {err}");
         }
-        if cleared_active_turn {
+        if cleared_active_turn && !archival_handoff {
             self.maybe_start_turn_for_pending_work().await;
         }
     }

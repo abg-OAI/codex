@@ -37,6 +37,8 @@ pub(crate) struct ThreadExtensionDependencies {
     pub(crate) state_db: Option<StateDbHandle>,
     pub(crate) analytics_events_client: AnalyticsEventsClient,
     pub(crate) thread_manager: Weak<ThreadManager>,
+    pub(crate) self_archive_sender:
+        Option<tokio::sync::mpsc::UnboundedSender<codex_core::SaffronArchiveRequest>>,
     pub(crate) goal_service: Arc<GoalService>,
     pub(crate) environment_manager: Arc<EnvironmentManager>,
     pub(crate) executor_skill_provider: Arc<dyn codex_skills_extension::SkillProvider>,
@@ -56,6 +58,7 @@ pub(crate) fn thread_extensions(
         state_db,
         analytics_events_client,
         thread_manager,
+        self_archive_sender,
         goal_service,
         environment_manager,
         executor_skill_provider,
@@ -75,6 +78,9 @@ pub(crate) fn thread_extensions(
     codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
     codex_core::install_saffron_fork_thread(&mut builder, thread_manager.clone());
     codex_core::install_saffron_thread_message(&mut builder, thread_manager.clone());
+    if let Some(sender) = self_archive_sender {
+        codex_core::install_saffron_archive_self(&mut builder, sender);
+    }
     if let Some(state_db) = state_db {
         codex_goal_extension::install_with_backend(
             &mut builder,
