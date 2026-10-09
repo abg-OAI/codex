@@ -1,9 +1,12 @@
-Add native self-archival after turn completion
+Add native terminal self-archival
 
 Threads cannot use Desktop archive tools while Desktop is closed.
-Add `saffron.archive_self({})` for saved roots hosted by app-server.
-It returns `scheduled`, then lets the current turn finish and save its
-final response before handing archival to the host.
+Add `saffron.archive_self` for saved roots hosted by app-server.
+An accepted call ends the requesting turn without another model request,
+saving an optional `final_message` as the closing assistant response.
+Further tool dispatch stops, active Code Mode cells terminate,
+and the host receives archival only after successful turn persistence.
+The `scheduled` receipt does not confirm that archival has completed.
 
 Conditional shutdown rejects a request if newer work won admission.
 Interruption and steering cancel pending requests, and a pending

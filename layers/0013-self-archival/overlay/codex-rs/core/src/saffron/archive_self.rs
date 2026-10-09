@@ -1,7 +1,8 @@
 //! Self-archival requests owned by a saved root's current turn.
 //!
-//! Core accepts the tool and checkpoints successful completion. The app-server
-//! receives a runtime-bound request and owns shutdown, storage and notifications.
+//! Core ends the requesting turn and checkpoints successful completion.
+//! The app-server receives a runtime-bound request and owns shutdown, storage
+//! and notifications.
 //! Requests are transient: interruption, steering, another turn or process exit
 //! cancels them. No archival work runs inside the caller's tool or shutdown hook.
 
@@ -41,6 +42,8 @@ use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolRegistry;
+
+pub(crate) mod terminal;
 
 /// Installs the tool only where the host can complete native archival.
 pub fn install(
@@ -193,6 +196,7 @@ pub(crate) async fn finish(session: &Session, turn: &TurnContext, succeeded: boo
         state,
     };
     if !succeeded
+        || !terminal::requested(turn)
         || session.is_interrupted()
         || session.input_queue.has_trigger_turn_mailbox_items().await
     {
@@ -238,7 +242,9 @@ struct Handler {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Args {}
+struct Args {
+    final_message: Option<String>,
+}
 
 impl Handler {
     async fn execute(
@@ -260,6 +266,8 @@ impl Handler {
                 "self-archival requires a saved root in a running app-server".into(),
             ));
         }
+        // Prepare before PostToolUse hooks so steering during those hooks can
+        // revoke the request. Only their acceptance signals terminal completion.
         *self
             .state
             .turn
@@ -283,10 +291,12 @@ impl ToolExecutor<ToolInvocation> for Handler {
             description: "Saffron extensions for independent thread and task coordination.".into(),
             tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
                 name: "archive_self".into(),
-                description: "Schedule archival of this conversation after your current turn finishes successfully. Use only when the user requested archival. Finish your final response normally; scheduled does not mean archived. Steering, a newer turn, interruption, failure, or server restart cancels the request. Requires a saved root thread and a running app-server, but not Desktop. Native archival also archives spawned descendants, not independent forks. Takes no thread ID.".into(),
+                description: "End this turn and request archival of this conversation. Use only when the user requested archival and the requested work is ready to stop. Supply optional final_message for the closing assistant response; no further model response is requested. Acceptance stops further tool dispatch and terminates active Code Mode cells, including the calling cell. Do not rely on code after this call running. The scheduled receipt is not confirmation of archival. Accepted steering, a newer turn, interruption, failure, or server restart can cancel archival. Requires a saved root and a running app-server, but not Desktop. Native archival also archives spawned descendants, not independent forks. Takes no thread ID.".into(),
                 strict: false,
                 defer_loading: None,
-                parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+                parameters: JsonSchema::object(BTreeMap::from([
+                    ("final_message".into(), JsonSchema::string(Some("Optional closing assistant message to save before archival. Do not claim archival has already succeeded.".into()))),
+                ]), None, Some(false.into())),
                 output_schema: None,
             })],
         })
@@ -300,7 +310,22 @@ impl ToolExecutor<ToolInvocation> for Handler {
     }
 }
 
-impl CoreToolRuntime for Handler {}
+impl CoreToolRuntime for Handler {
+    fn on_tool_result_accepted(&self, invocation: &ToolInvocation, _result: &dyn ToolOutput) {
+        // Hooks may reject the result, and newer input may arrive while they run.
+        // Only a still-owned, accepted request may terminate sampling.
+        if !self.state.matches(&invocation.turn.sub_id)
+            || invocation.cancellation_token.is_cancelled()
+        {
+            return;
+        }
+        if let ToolPayload::Function { arguments } = &invocation.payload
+            && let Ok(args) = serde_json::from_str::<Args>(arguments)
+        {
+            terminal::request(&invocation.turn, args.final_message);
+        }
+    }
+}
 
 #[cfg(test)]
 #[path = "archive_self/tests.rs"]

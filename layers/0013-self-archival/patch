@@ -240,6 +240,61 @@ index 9b55935776e81c9a12341391e263d78ea1c2fb01..0507961f626b81d82a245c8b4cce2e92
              || crate::saffron::subagent_completion::is_retained(self, self.thread_id)
      }
 
+diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
+index 632bb1a2946e4653cd4f32d77930bd472d72ea08..167df69c737ab6037cffb736abda5e80aa3613df 100644
+--- a/codex-rs/core/src/session/turn.rs
++++ b/codex-rs/core/src/session/turn.rs
+@@ -529,20 +529,41 @@ pub(crate) async fn run_turn(
+             .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
+             .await;
+
+-            run_sampling_request(
+-                Arc::clone(&sess),
+-                Arc::clone(&step_context),
+-                Arc::clone(&turn_context.extension_data),
+-                Arc::clone(&turn_diff_tracker),
+-                &mut client_session,
+-                sampling_request_input,
+-                cancellation_token.child_token(),
++            let execution = cancellation_token.child_token();
++            crate::saffron::archive_self::terminal::run_sampling(
++                &sess,
++                &turn_context,
++                execution.clone(),
++                run_sampling_request(
++                    Arc::clone(&sess),
++                    Arc::clone(&step_context),
++                    Arc::clone(&turn_context.extension_data),
++                    Arc::clone(&turn_diff_tracker),
++                    &mut client_session,
++                    sampling_request_input,
++                    execution,
++                ),
+             )
+             .await
+         }
+         .await;
+         match sampling_request_result {
+-            Ok((sampling_request_output, sampling_request_input)) => {
++            Ok(None) => {
++                if cancellation_token.is_cancelled() {
++                    return Err(CodexErr::TurnAborted);
++                }
++                if crate::saffron::archive_self::terminal::resume_if_revoked(&sess, &turn_context) {
++                    can_drain_pending_input = true;
++                    continue;
++                }
++                return crate::saffron::archive_self::terminal::complete(
++                    &sess,
++                    &step_context,
++                    &cancellation_token,
++                )
++                .await;
++            }
++            Ok(Some((sampling_request_output, sampling_request_input))) => {
+                 guardian_budget_compacted = false;
+                 let SamplingRequestResult {
+                     needs_follow_up: model_needs_follow_up,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
 index d4e78ec55ae4d42a81b99d3332054c882bd7d52e..638244c99818372f9c5184e3eee1cb152235e6e5 100644
 --- a/codex-rs/core/src/session/turn_input.rs
@@ -314,6 +369,18 @@ index 2aeb1e536c124438333b186c8160fe8fdb0c9f7c..c8da37a4bb8f4b921ba4c09383f9da0e
              self.maybe_start_turn_for_pending_work().await;
          }
      }
+diff --git a/codex-rs/core/src/tools/parallel.rs b/codex-rs/core/src/tools/parallel.rs
+index e0b50c48dd7ed4558b4423d25bae6e62d99ccea5..df59764c6d0741906b7fc46bb44373daf810f9f5 100644
+--- a/codex-rs/core/src/tools/parallel.rs
++++ b/codex-rs/core/src/tools/parallel.rs
+@@ -218,6 +218,7 @@ impl ToolCallRuntime {
+                 }
+                 .or_cancel_tool(&invocation_cancellation_token)
+                 .await?;
++                crate::saffron::archive_self::terminal::admit_tool(&turn)?;
+                 // Admission through the parallel-execution gate marks the end
+                 // of dispatch waiting and the start of handler execution.
+                 if let Some(execution_started_at) = execution_started_at {
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
 index 88fc5abd14ef3fbb52c26e9e8cb169bf8ad1e364..7846066a57e4f8949155cf1935423b254bcfac9b 100644
 --- a/codex-rs/protocol/src/protocol.rs

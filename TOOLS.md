@@ -28,17 +28,24 @@ process.
 `saffron.archive_self`
 ----------------------
 
-Schedules archival of the calling conversation after its current turn finishes
-successfully and the final response is saved.
+Ends the current turn and requests archival of the calling conversation after
+successful completion has been saved.
 It takes no target ID and requires a saved root in a running app-server.
 Desktop does not need to be open.
 
 ```cpp
-{}
+{
+  "final_message": string?,
+}
 ```
 
 The response is `{"status":"scheduled"}`, not confirmation of archival.
-Finish the final response normally after calling the tool.
+Supply `final_message` to save a closing assistant response without another
+model request. Omit it to finish without an additional assistant message.
+Acceptance stops further tool dispatch, cancels in-flight sampling and tools,
+and terminates active Code Mode cells, including the calling cell.
+Do not rely on JavaScript after the call running.
+Goal continuation is suppressed without marking the goal complete.
 Interruption, failed completion, accepted steering, a newer turn, or server
 restart cancels the pending request.
 Native archival also archives spawned descendants; independent forks remain
