@@ -911,7 +911,26 @@ impl CodexThread {
     }
 
     pub fn rollout_path(&self) -> Option<PathBuf> {
-        self.rollout_path.clone()
+        self.rollout_path
+            .clone()
+            .or_else(|| self.session.repaired_rollout_path())
+    }
+
+    /// Restores persistence after the caller establishes that this loaded
+    /// runtime represents a saved target.
+    pub async fn restore_saved_thread_persistence(&self) -> ThreadStoreResult<()> {
+        self.session
+            .restore_saved_thread_persistence()
+            .await
+            .map_err(|error| ThreadStoreError::Internal {
+                message: format!("failed to restore saved thread persistence: {error:#}"),
+            })
+    }
+
+    /// Returns whether this runtime owns a writer, including one repaired in
+    /// place after startup.
+    pub fn has_persistence(&self) -> bool {
+        self.session.live_thread().is_some()
     }
 
     /// Returns startup metadata without the one-time initial message replay.

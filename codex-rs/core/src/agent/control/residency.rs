@@ -97,6 +97,7 @@ impl ThreadManagerState {
             let runtime = &thread.session.services.local_agent_runtime;
             let _ = runtime.mailboxes.enqueue(thread_id, /*id*/ None, mail);
             let environments = thread.environment_selections().await;
+            let ephemeral = thread.config_snapshot().await.ephemeral;
             let mut threads = manager.threads.write().await;
             if threads
                 .get(&thread_id)
@@ -107,7 +108,7 @@ impl ThreadManagerState {
             }
             runtime
                 .registry
-                .save_evicted_environments(thread_id, environments);
+                .save_evicted_runtime_settings(thread_id, environments, ephemeral);
             let removed = threads.remove(&thread_id).is_some();
             runtime.residency.remove(thread_id);
             teardown.complete();
