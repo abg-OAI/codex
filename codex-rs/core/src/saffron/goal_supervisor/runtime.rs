@@ -1,0 +1,1148 @@
+//! Runtime ownership and lifecycle for one root thread's supervisor helper.
+
+use std::sync::Arc;
+use std::sync::Weak;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+use chrono::DateTime;
+use chrono::Utc;
+use codex_extension_api::ThreadIdleCause;
+use codex_features::Feature;
+use codex_protocol::AgentPath;
+use codex_protocol::ThreadId;
+use codex_protocol::protocol::AgentStatus;
+use codex_protocol::protocol::Event;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::protocol::TruncationPolicy;
+use codex_protocol::protocol::WarningEvent;
+use codex_protocol::user_input::UserInput;
+use codex_utils_output_truncation::truncate_text;
+use futures::StreamExt;
+use tokio::sync::Mutex;
+use tokio::time::Instant;
+use tracing::debug;
+use tracing::warn;
+
+use super::HELPER_ROLE_NAME;
+use super::failure;
+use crate::agent::next_thread_spawn_depth;
+use crate::agent::types::SpawnAgentForkMode;
+use crate::agent::types::SpawnAgentOptions;
+use crate::saffron::storage::GoalSupervisorAction;
+use crate::saffron::storage::GoalSupervisorContinuity;
+use crate::saffron::storage::GoalWake;
+use crate::saffron::storage::SaffronStore;
+use crate::session::session::Session;
+
+const INITIAL_FAILURE_RETRY: Duration = Duration::from_secs(60);
+const MAX_FAILURE_RETRY: Duration = Duration::from_secs(60 * 60);
+const MAX_CHECKIN_PROMPT_TOKENS: usize = 1_000;
+const MAX_DELIVERED_FOLLOWUP_CHARS: usize = 2_000;
+
+/// Ephemeral state attached to the supervised parent thread.
+pub(super) struct Runtime {
+    /// Serializes transfers between idle supervision and root-owned work.
+    transition: Arc<Mutex<()>>,
+    state: Mutex<State>,
+    /// Revokes helpers that lose the continuation race after spawning.
+    continuation_generation: AtomicU64,
+    wake_generation: AtomicU64,
+}
+
+impl Runtime {
+    async fn idle_disposition(&self) -> IdleDisposition {
+        // Related ownership fields change under the transition lock. Wait for
+        // that transfer to settle before interpreting State.
+        let _transition = Arc::clone(&self.transition).lock_owned().await;
+        self.state.lock().await.idle_disposition()
+    }
+}
+
+#[derive(Default)]
+struct State {
+    goal_id: Option<String>,
+    starting: Option<ContinuationPermit>,
+    active: Option<ActiveHelper>,
+    snooze: Option<Snooze>,
+    consecutive_failures: u32,
+    previous_action: Option<PreviousAction>,
+}
+
+impl State {
+    fn idle_disposition(&self) -> IdleDisposition {
+        if self.starting.is_some() || self.active.is_some() {
+            return IdleDisposition::ProcessLocalWork;
+        }
+        match self.snooze.as_ref().map(|snooze| snooze.idle_retention) {
+            Some(IdleRetention::Required) => IdleDisposition::ProcessLocalWork,
+            Some(IdleRetention::Reconstructible) => IdleDisposition::ReconstructibleSnooze,
+            None => IdleDisposition::Quiescent,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IdleDisposition {
+    Quiescent,
+    ProcessLocalWork,
+    ReconstructibleSnooze,
+}
+
+struct ActiveHelper {
+    thread_id: ThreadId,
+    continuation: ContinuationPermit,
+    goal_id: String,
+    action: Option<Action>,
+}
+
+/// Capability held by one supervisor attempt until root work supersedes it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ContinuationPermit(u64);
+
+/// Root-side work that takes responsibility for continued progress.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ContinuationOwner {
+    RootTurn,
+    TriggeringMailbox,
+}
+
+/// Result of assigning responsibility for an idle goal continuation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckinStart {
+    OutsideScope,
+    Starting,
+    Started { helper_id: ThreadId },
+    AlreadyRunning { helper_id: ThreadId },
+    Deferred { owner: ContinuationOwner },
+    Scheduled,
+    RetryScheduled,
+}
+
+impl CheckinStart {
+    pub(crate) fn is_saffron_owned(self) -> bool {
+        !matches!(self, Self::OutsideScope)
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct Snooze {
+    wake: GoalWake,
+    pub(super) deadline: Instant,
+    idle_retention: IdleRetention,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IdleRetention {
+    Required,
+    Reconstructible,
+}
+
+impl Snooze {
+    fn for_goal(goal: &codex_state::ThreadGoal, delay: Duration) -> Self {
+        let delay_millis = i64::try_from(delay.as_millis()).unwrap_or(i64::MAX);
+        Self {
+            wake: GoalWake {
+                thread_id: goal.thread_id,
+                goal_id: goal.goal_id.clone(),
+                goal_objective: goal.objective.clone(),
+                goal_updated_at_ms: goal.updated_at.timestamp_millis(),
+                wake_at_ms: Utc::now().timestamp_millis().saturating_add(delay_millis),
+            },
+            deadline: Instant::now() + delay,
+            idle_retention: IdleRetention::Required,
+        }
+    }
+
+    /// Marks an explicit snooze as safe to restore after persistence succeeds.
+    ///
+    /// Automatic failure retries retain the parent instead: their in-memory
+    /// failure count determines the next backoff even though their current
+    /// deadline is also mirrored in durable storage.
+    pub(super) fn reconstructible(mut self) -> Self {
+        self.idle_retention = IdleRetention::Reconstructible;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Action {
+    Followup { delivered_message: String },
+    Snooze { delay_seconds: u64, reason: String },
+    Compact,
+    Complete,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreviousAction {
+    goal_id: String,
+    action: Action,
+    action_at_ms: i64,
+    snooze_count: u64,
+    snoozed_seconds: u64,
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self {
+            transition: Arc::new(Mutex::new(())),
+            state: Mutex::new(State::default()),
+            continuation_generation: AtomicU64::new(0),
+            wake_generation: AtomicU64::new(0),
+        }
+    }
+}
+
+impl Runtime {
+    fn claim_continuation(&self) -> ContinuationPermit {
+        ContinuationPermit(self.continuation_generation.fetch_add(1, Ordering::AcqRel) + 1)
+    }
+
+    fn supersede_continuation(&self) {
+        self.continuation_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn owns_continuation(&self, permit: ContinuationPermit) -> bool {
+        self.continuation_generation.load(Ordering::Acquire) == permit.0
+    }
+}
+
+/// Replaces normal root-goal continuation with one supervisor check-in.
+///
+/// [`CheckinStart::OutsideScope`] leaves continuation to the goal extension.
+/// Every other outcome identifies the owner or durable state that will make
+/// the next attempt.
+pub(crate) async fn start_checkin(
+    parent: &Arc<Session>,
+    goal: &codex_state::ThreadGoal,
+) -> Result<CheckinStart, String> {
+    let goal_id = goal.goal_id.as_str();
+    let parent_source = parent.session_source().await;
+    if matches!(parent_source, SessionSource::SubAgent(_)) {
+        return Ok(CheckinStart::OutsideScope);
+    }
+
+    let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+
+    if parent.active_turn.lock().await.is_some() {
+        return Ok(CheckinStart::Deferred {
+            owner: ContinuationOwner::RootTurn,
+        });
+    }
+    if parent.input_queue.has_trigger_turn_mailbox_items().await {
+        return Ok(CheckinStart::Deferred {
+            owner: ContinuationOwner::TriggeringMailbox,
+        });
+    }
+
+    let now = Instant::now();
+    let (starting, active) = {
+        let state = runtime.state.lock().await;
+        let active = state.active.as_ref().map(|active| {
+            (
+                active.thread_id,
+                active.continuation,
+                active.goal_id.clone(),
+            )
+        });
+        (state.starting, active)
+    };
+    if starting.is_some_and(|permit| runtime.owns_continuation(permit)) {
+        return Ok(CheckinStart::Starting);
+    }
+    if let Some((helper_id, continuation, active_goal_id)) = active {
+        if active_goal_id == goal_id
+            && runtime.owns_continuation(continuation)
+            && matches!(
+                super::local_agent_control(parent)
+                    .get_status(helper_id)
+                    .await,
+                AgentStatus::PendingInit | AgentStatus::Running
+            )
+        {
+            settle_persisted_wake(parent, goal, &runtime, continuation).await;
+            return Ok(CheckinStart::AlreadyRunning { helper_id });
+        }
+        let _ = super::local_agent_control(parent)
+            .shutdown_live_agent(helper_id)
+            .await;
+    }
+    {
+        let mut state = runtime.state.lock().await;
+        if state.goal_id.as_deref() != Some(goal_id) {
+            state.goal_id = Some(goal_id.to_string());
+            state.snooze = None;
+            state.consecutive_failures = 0;
+            state.previous_action = None;
+        }
+        if let Some(snooze) = state.snooze.as_ref()
+            && snooze.wake.goal_id == goal_id
+            && snooze.wake.goal_updated_at_ms == goal.updated_at.timestamp_millis()
+            && snooze.wake.goal_objective == goal.objective
+            && snooze.deadline > now
+        {
+            schedule_wake(parent, &runtime, snooze.clone());
+            return Ok(CheckinStart::Scheduled);
+        }
+        state.active = None;
+        if state.snooze.take().is_some() {
+            runtime.wake_generation.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    if let Some(snooze) = restore_persisted_snooze(parent, goal).await? {
+        runtime.state.lock().await.snooze = Some(snooze.clone());
+        if snooze.deadline > Instant::now() {
+            schedule_wake(parent, &runtime, snooze);
+            return Ok(CheckinStart::Scheduled);
+        }
+        runtime.state.lock().await.snooze = None;
+    }
+
+    let continuation = runtime.claim_continuation();
+    runtime.state.lock().await.starting = Some(continuation);
+    drop(_transition);
+    let spawn_result = spawn_helper(parent, goal).await;
+
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    let parent_is_idle = parent.active_turn.lock().await.is_none();
+    let has_triggering_mail = parent.input_queue.has_trigger_turn_mailbox_items().await;
+    let owns_continuation = parent_is_idle
+        && !has_triggering_mail
+        && runtime.owns_continuation(continuation)
+        && runtime.state.lock().await.starting == Some(continuation);
+    if !owns_continuation {
+        runtime
+            .state
+            .lock()
+            .await
+            .starting
+            .take_if(|starting| *starting == continuation);
+        drop(_transition);
+        if let Ok(helper_id) = spawn_result {
+            let _ = super::local_agent_control(parent)
+                .shutdown_live_agent(helper_id)
+                .await;
+        }
+        let owner = if parent_is_idle && has_triggering_mail {
+            ContinuationOwner::TriggeringMailbox
+        } else {
+            ContinuationOwner::RootTurn
+        };
+        return Ok(CheckinStart::Deferred { owner });
+    }
+
+    runtime.state.lock().await.starting = None;
+    match spawn_result {
+        Ok(helper_id) => {
+            runtime.state.lock().await.active = Some(ActiveHelper {
+                thread_id: helper_id,
+                continuation,
+                goal_id: goal.goal_id.clone(),
+                action: None,
+            });
+            settle_persisted_wake(parent, goal, &runtime, continuation).await;
+            watch_helper(Arc::downgrade(parent), helper_id, goal_id.to_string());
+            Ok(CheckinStart::Started { helper_id })
+        }
+        Err(error) => {
+            warn!(thread_id = %parent.thread_id, "failed to spawn Saffron goal supervisor: {error}");
+            defer_failure(parent, &runtime, goal_id, error).await?;
+            Ok(CheckinStart::RetryScheduled)
+        }
+    }
+}
+
+/// Transfers autonomous continuation to root work and revokes an idle helper.
+///
+/// Selection of a supervisor action uses the same transition lock. Whichever
+/// side acquires the lock first owns the next side effect; helpers that have
+/// not selected an action are retired when root work wins.
+pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: ContinuationOwner) {
+    if matches!(parent.session_source().await, SessionSource::SubAgent(_)) {
+        return;
+    }
+    let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    runtime.supersede_continuation();
+    debug!(thread_id = %parent.thread_id, ?owner, "root work claimed continuation");
+    let helper_id = {
+        let mut state = runtime.state.lock().await;
+        state.starting = None;
+        state
+            .active
+            .take_if(|active| active.action.is_none())
+            .map(|active| active.thread_id)
+    };
+    drop(_transition);
+    if let Some(helper_id) = helper_id {
+        let _ = super::local_agent_control(parent)
+            .shutdown_live_agent(helper_id)
+            .await;
+    }
+}
+
+/// Returns the ordinary goal-continuation trigger for automatic mailbox work.
+///
+/// Mailbox-triggered root turns bypass the goal extension's normal admission path. When the
+/// thread has an active goal, they must still carry the same trigger so downstream completion
+/// handling does not treat them as ordinary turns.
+pub(crate) async fn active_goal_turn_trigger(parent: &Session) -> Option<String> {
+    let state_db = parent.state_db()?;
+    match state_db
+        .thread_goals()
+        .get_thread_goal(parent.thread_id)
+        .await
+    {
+        Ok(Some(goal)) if goal.status == codex_state::ThreadGoalStatus::Active => {
+            Some("goal".to_string())
+        }
+        Ok(Some(_) | None) => None,
+        Err(error) => {
+            warn!(
+                thread_id = %parent.thread_id,
+                "failed to classify automatic goal work: {error}"
+            );
+            None
+        }
+    }
+}
+
+/// Cancels supervision and removes its continuity when no active goal remains.
+pub(crate) async fn stop(parent: &Arc<Session>) {
+    let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    runtime.supersede_continuation();
+    runtime.wake_generation.fetch_add(1, Ordering::AcqRel);
+    let helper_id = {
+        let mut state = runtime.state.lock().await;
+        state.goal_id = None;
+        state.starting = None;
+        state.snooze = None;
+        state.consecutive_failures = 0;
+        state.previous_action = None;
+        state.active.take().map(|active| active.thread_id)
+    };
+    if let Some(helper_id) = helper_id
+        && let Err(error) = super::local_agent_control(parent)
+            .shutdown_live_agent(helper_id)
+            .await
+    {
+        warn!(%helper_id, "failed to stop Saffron goal supervisor: {error}");
+    }
+    if let Err(error) = clear_persisted_action(parent).await {
+        warn!(
+            thread_id = %parent.thread_id,
+            "failed to clear Saffron supervisor continuity: {error}"
+        );
+    }
+}
+
+pub(in crate::saffron) async fn parent_for_helper(
+    helper: &Session,
+) -> Result<Arc<Session>, String> {
+    let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id,
+        agent_role: Some(role),
+        ..
+    }) = helper.session_source().await
+    else {
+        return Err(
+            "supervisor tools are available only in a Saffron supervisor helper".to_string(),
+        );
+    };
+    if role != HELPER_ROLE_NAME {
+        return Err(
+            "supervisor tools are available only in a Saffron supervisor helper".to_string(),
+        );
+    }
+    super::local_agent_control(helper)
+        .get_live_thread(parent_thread_id)
+        .await
+        .map(|thread| Arc::clone(&thread.session))
+        .map_err(|error| error.to_string())
+}
+
+pub(super) async fn select_action(
+    parent: &Arc<Session>,
+    helper_id: ThreadId,
+    action: Action,
+) -> Result<String, String> {
+    let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    if parent.active_turn.lock().await.is_some() {
+        return Err("the parent started a turn before this action was selected".to_string());
+    }
+    let mut state = runtime.state.lock().await;
+    let Some(active) = state
+        .active
+        .as_mut()
+        .filter(|active| active.thread_id == helper_id)
+    else {
+        return Err("this supervisor helper is no longer active".to_string());
+    };
+    if !runtime.owns_continuation(active.continuation) {
+        return Err("the parent claimed continuation before this action was selected".to_string());
+    }
+    if active.action.is_some() {
+        return Err("a supervisor action was already selected for this check-in".to_string());
+    }
+    active.action = Some(action.clone());
+    let goal_id = active.goal_id.clone();
+    Ok(goal_id)
+}
+
+pub(super) async fn commit_action(parent: &Session, goal_id: &str, action: Action) {
+    let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    if runtime.state.lock().await.goal_id.as_deref() != Some(goal_id) {
+        debug!(
+            thread_id = %parent.thread_id,
+            %goal_id,
+            "discarded action continuity for a replaced goal"
+        );
+        return;
+    }
+    let action_at_ms = Utc::now().timestamp_millis();
+    let previous_action = if matches!(&action, Action::Complete) {
+        if let Err(error) = clear_persisted_action_for_goal(parent, goal_id).await {
+            warn!(
+                thread_id = %parent.thread_id,
+                %goal_id,
+                "failed to clear completed Saffron supervisor continuity: {error}"
+            );
+        }
+        None
+    } else {
+        let (mut snooze_count, mut snoozed_seconds) = runtime
+            .state
+            .lock()
+            .await
+            .previous_action
+            .as_ref()
+            .filter(|previous| previous.goal_id == goal_id)
+            .map(|previous| (previous.snooze_count, previous.snoozed_seconds))
+            .unwrap_or_default();
+        if let Action::Snooze { delay_seconds, .. } = &action {
+            snooze_count = snooze_count.saturating_add(1);
+            snoozed_seconds = snoozed_seconds.saturating_add(*delay_seconds);
+        }
+        let previous_action = PreviousAction {
+            goal_id: goal_id.to_string(),
+            action: action.clone(),
+            action_at_ms,
+            snooze_count,
+            snoozed_seconds,
+        };
+        if let Err(error) = persist_action(parent, &previous_action).await {
+            warn!(
+                thread_id = %parent.thread_id,
+                %goal_id,
+                "failed to persist Saffron supervisor continuity: {error}"
+            );
+        }
+        Some(previous_action)
+    };
+    let mut state = runtime.state.lock().await;
+    state.previous_action = previous_action;
+    state.consecutive_failures = 0;
+}
+
+async fn persist_action(parent: &Session, previous_action: &PreviousAction) -> Result<(), String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Err("goal state is unavailable".to_string());
+    };
+    let action = match &previous_action.action {
+        Action::Followup { delivered_message } => GoalSupervisorAction::Followup {
+            delivered_message: Some(delivered_message.clone()),
+        },
+        Action::Snooze {
+            delay_seconds,
+            reason,
+        } => GoalSupervisorAction::Snooze {
+            delay_seconds: *delay_seconds,
+            reason: reason.clone(),
+        },
+        Action::Compact => GoalSupervisorAction::Compact,
+        Action::Complete => return Ok(()),
+    };
+    SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?
+        .set_goal_supervisor_continuity(&GoalSupervisorContinuity {
+            thread_id: parent.thread_id,
+            goal_id: previous_action.goal_id.clone(),
+            action,
+            action_at_ms: previous_action.action_at_ms,
+            snooze_count: previous_action.snooze_count,
+            snoozed_seconds: previous_action.snoozed_seconds,
+        })
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub(super) async fn clear_persisted_action_for_goal(
+    parent: &Session,
+    goal_id: &str,
+) -> Result<(), String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Ok(());
+    };
+    SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?
+        .clear_goal_supervisor_continuity_for_goal(parent.thread_id, goal_id)
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+async fn clear_persisted_action(parent: &Session) -> Result<(), String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Ok(());
+    };
+    SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?
+        .clear_goal_supervisor_continuity(parent.thread_id)
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+pub(super) async fn clear_failed_action(parent: &Session, helper_id: ThreadId, action: &Action) {
+    let runtime = runtime(parent);
+    let mut state = runtime.state.lock().await;
+    if let Some(active) = state
+        .active
+        .as_mut()
+        .filter(|active| active.thread_id == helper_id)
+        && active.action.as_ref() == Some(action)
+    {
+        active.action = None;
+    }
+}
+
+pub(super) async fn set_snooze(parent: &Session, snooze: Snooze) -> Result<(), String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Err("goal state is unavailable".to_string());
+    };
+    SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?
+        .set_goal_wake(&snooze.wake)
+        .await
+        .map_err(|error| error.to_string())?;
+    runtime(parent).state.lock().await.snooze = Some(snooze);
+    Ok(())
+}
+
+pub(super) async fn snooze_for_active_goal(
+    parent: &Session,
+    goal_id: &str,
+    delay: Duration,
+) -> Result<Snooze, String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Err("goal state is unavailable".to_string());
+    };
+    let goal = state_db
+        .thread_goals()
+        .get_thread_goal(parent.thread_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .filter(|goal| {
+            goal.goal_id == goal_id && goal.status == codex_state::ThreadGoalStatus::Active
+        })
+        .ok_or_else(|| "the active goal changed before it could be snoozed".to_string())?;
+    Ok(Snooze::for_goal(&goal, delay))
+}
+
+pub(super) async fn clear_snooze_for_goal(parent: &Session, goal_id: &str) -> Result<(), String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Ok(());
+    };
+    let store = SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(wake) = store
+        .get_goal_wake(parent.thread_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .filter(|wake| wake.goal_id == goal_id)
+    {
+        store
+            .clear_goal_wake(&wake)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+pub(super) fn runtime(parent: &Session) -> Arc<Runtime> {
+    parent
+        .services
+        .thread_extension_data
+        .get_or_init(Runtime::default)
+}
+
+pub(super) fn bounded_followup_message(message: &str) -> String {
+    message.chars().take(MAX_DELIVERED_FOLLOWUP_CHARS).collect()
+}
+
+/// Reports whether unfinished process-local supervision requires retention.
+///
+/// An active helper and an automatic failure retry retain the parent. An
+/// explicit snooze can instead be reconstructed from its persisted deadline.
+pub(crate) async fn should_retain_while_idle(parent: &Session) -> bool {
+    runtime(parent).idle_disposition().await == IdleDisposition::ProcessLocalWork
+}
+
+/// Reports whether the settled snooze can be reconstructed after unloading.
+pub(crate) async fn has_reconstructible_snooze(parent: &Session) -> bool {
+    runtime(parent).idle_disposition().await == IdleDisposition::ReconstructibleSnooze
+}
+
+async fn spawn_helper(
+    parent: &Arc<Session>,
+    goal: &codex_state::ThreadGoal,
+) -> Result<ThreadId, String> {
+    let mut config = parent.effective_session_config().await;
+    config.ephemeral = true;
+    // The check-in prompt supplies server time. Inheriting a client-backed
+    // reminder would make a cold wake depend on the unloaded root's subscriber.
+    let _ = config.features.disable(Feature::CurrentTimeReminder);
+    config.current_time_reminder = None;
+    config.developer_instructions = Some(match config.developer_instructions.take() {
+        Some(existing) => format!("{existing}\n\n{}", include_str!("prompt.md")),
+        None => include_str!("prompt.md").to_string(),
+    });
+    let parent_source = parent.session_source().await;
+    let helper_path = AgentPath::root().join(HELPER_ROLE_NAME)?;
+    let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: parent.thread_id,
+        depth: next_thread_spawn_depth(&parent_source),
+        agent_path: Some(helper_path),
+        agent_nickname: None,
+        agent_role: Some(HELPER_ROLE_NAME.to_string()),
+    });
+    let continuity = continuity(parent, goal).await;
+    let checkin_time = Utc::now();
+    let prompt =
+        render_checkin_prompt(parent.thread_id, checkin_time, &goal.objective, &continuity);
+    let helper = Box::pin(
+        super::local_agent_control(parent).spawn_hidden_agent_with_metadata(
+            config,
+            vec![UserInput::Text {
+                text: prompt,
+                text_elements: Vec::new(),
+            }],
+            source,
+            SpawnAgentOptions {
+                fork_parent_spawn_call_id: Some("saffron-goal-supervisor".to_string()),
+                fork_mode: Some(SpawnAgentForkMode::FullHistory),
+                parent_thread_id: Some(parent.thread_id),
+                parent_turn_id: None,
+                turn_trigger: None,
+                root_turn_id: None,
+                environments: None,
+                disabled_plugin_ids: None,
+                multi_agent_v2_usage_hints: None,
+                cyber_access_program: None,
+            },
+        ),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(helper.thread_id)
+}
+
+/// Renders one bounded model-visible assignment for the ephemeral helper.
+///
+/// The time comes from the app server rather than the parent session's clock.
+/// A scheduled check-in can cold-load an unsubscribed thread, so consulting an
+/// external client clock here would make the wake depend on that absent client.
+/// The value stays in the prefix that middle truncation preserves so inherited
+/// history cannot become the helper's only evidence of the current time.
+fn render_checkin_prompt(
+    parent_id: ThreadId,
+    checkin_time: DateTime<Utc>,
+    objective: &str,
+    continuity: &str,
+) -> String {
+    let checkin_time = checkin_time.format("%Y-%m-%d %H:%M:%S UTC");
+    let prompt = format!(
+        "# Supervisor Check-in\n\nCurrent UTC time: {checkin_time}\n\nParent thread: {parent_id}\n\nActive goal:\n{objective}\n\nContinuity:\n{continuity}"
+    );
+    truncate_text(&prompt, TruncationPolicy::Tokens(MAX_CHECKIN_PROMPT_TOKENS))
+}
+
+async fn continuity(parent: &Session, goal: &codex_state::ThreadGoal) -> String {
+    let runtime = runtime(parent);
+    let (mut previous_action, consecutive_failures) = {
+        let mut state = runtime.state.lock().await;
+        if state
+            .previous_action
+            .as_ref()
+            .is_some_and(|previous| previous.goal_id != goal.goal_id)
+        {
+            state.previous_action = None;
+        }
+        (state.previous_action.clone(), state.consecutive_failures)
+    };
+    if previous_action.is_none() {
+        previous_action = restore_persisted_action(parent, goal).await;
+        if previous_action.is_some() {
+            let mut state = runtime.state.lock().await;
+            if state.goal_id.as_deref() == Some(goal.goal_id.as_str())
+                && state.previous_action.is_none()
+            {
+                state.previous_action.clone_from(&previous_action);
+            }
+        }
+    }
+    serde_json::json!({
+        "goal_created_at": goal.created_at.timestamp(),
+        "goal_updated_at": goal.updated_at.timestamp(),
+        "tokens_used": goal.tokens_used,
+        "time_used_seconds": goal.time_used_seconds,
+        "previous_action": previous_action.as_ref().map(|previous| &previous.action),
+        "previous_action_at_ms": previous_action.as_ref().map(|previous| previous.action_at_ms),
+        "goal_timing": {
+            "snooze_count_since_goal_created": previous_action.as_ref().map_or(0, |previous| previous.snooze_count),
+            "snoozed_seconds_since_goal_created": previous_action.as_ref().map_or(0, |previous| previous.snoozed_seconds),
+        },
+        "consecutive_failures": consecutive_failures,
+    })
+    .to_string()
+}
+
+async fn restore_persisted_action(
+    parent: &Session,
+    goal: &codex_state::ThreadGoal,
+) -> Option<PreviousAction> {
+    let state_db = parent.services.state_db.as_ref()?;
+    let result = async {
+        let store = SaffronStore::open(state_db.sqlite()).await?;
+        store
+            .reconcile_goal_supervisor_continuity(parent.thread_id, &goal.goal_id)
+            .await
+    }
+    .await;
+    match result {
+        Ok(Some(continuity)) => Some(PreviousAction {
+            goal_id: continuity.goal_id,
+            action: match continuity.action {
+                GoalSupervisorAction::Followup { delivered_message } => Action::Followup {
+                    delivered_message: delivered_message.unwrap_or_default(),
+                },
+                GoalSupervisorAction::Snooze {
+                    delay_seconds,
+                    reason,
+                } => Action::Snooze {
+                    delay_seconds,
+                    reason,
+                },
+                GoalSupervisorAction::Compact => Action::Compact,
+            },
+            action_at_ms: continuity.action_at_ms,
+            snooze_count: continuity.snooze_count,
+            snoozed_seconds: continuity.snoozed_seconds,
+        }),
+        Ok(None) => None,
+        Err(error) => {
+            warn!(
+                thread_id = %parent.thread_id,
+                goal_id = %goal.goal_id,
+                "failed to restore Saffron supervisor continuity: {error}"
+            );
+            None
+        }
+    }
+}
+
+fn watch_helper(parent: Weak<Session>, helper_id: ThreadId, goal_id: String) {
+    tokio::spawn(async move {
+        let Some(parent) = parent.upgrade() else {
+            return;
+        };
+        let terminal_status = match super::local_agent_control(&parent)
+            .subscribe_status(helper_id)
+            .await
+        {
+            Ok(mut updates) => {
+                let mut terminal_status = None;
+                while let Some(update) = updates.next().await {
+                    let Ok(info) = update else {
+                        break;
+                    };
+                    let Some(status) = info.status().cloned() else {
+                        continue;
+                    };
+                    if !matches!(status, AgentStatus::PendingInit | AgentStatus::Running) {
+                        terminal_status = Some(status);
+                        break;
+                    }
+                }
+                match terminal_status {
+                    Some(status) => status,
+                    None => {
+                        super::local_agent_control(&parent)
+                            .get_status(helper_id)
+                            .await
+                    }
+                }
+            }
+            Err(_) => {
+                super::local_agent_control(&parent)
+                    .get_status(helper_id)
+                    .await
+            }
+        };
+        finish_helper(&parent, helper_id, &goal_id, terminal_status).await;
+    });
+}
+
+async fn finish_helper(
+    parent: &Arc<Session>,
+    helper_id: ThreadId,
+    goal_id: &str,
+    terminal_status: AgentStatus,
+) {
+    let runtime = runtime(parent);
+    let _transition = Arc::clone(&runtime.transition).lock_owned().await;
+    let (action, continuation_is_current) = {
+        let mut state = runtime.state.lock().await;
+        let Some(active) = state
+            .active
+            .as_ref()
+            .filter(|active| active.thread_id == helper_id)
+        else {
+            return;
+        };
+        let action = active.action.clone();
+        let continuation_is_current = runtime.owns_continuation(active.continuation);
+        state.active = None;
+        (action, continuation_is_current)
+    };
+    let terminal_failure = if action.is_none() {
+        match super::local_agent_control(parent)
+            .get_live_thread(helper_id)
+            .await
+        {
+            Ok(helper) => failure::terminal_failure(&helper.session),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+    if let Err(error) = super::local_agent_control(parent)
+        .shutdown_live_agent(helper_id)
+        .await
+    {
+        warn!(%helper_id, "failed to retire Saffron goal supervisor: {error}");
+    }
+    if !continuation_is_current && action.is_none() {
+        return;
+    }
+    if action.is_none() {
+        if let Some(terminal_failure) = terminal_failure {
+            match failure::block_goal(parent, goal_id, &terminal_failure).await {
+                Ok(()) => {
+                    if let Err(error) = clear_snooze_for_goal(parent, goal_id).await {
+                        warn!(
+                            thread_id = %parent.thread_id,
+                            "failed to clear Saffron supervisor wake for blocked goal: {error}"
+                        );
+                    }
+                    runtime.wake_generation.fetch_add(1, Ordering::AcqRel);
+                    runtime.state.lock().await.snooze = None;
+                    return;
+                }
+                Err(error) => {
+                    if let Err(retry_error) = defer_failure(
+                        parent,
+                        &runtime,
+                        goal_id,
+                        format!("failed to block goal after terminal helper error: {error}"),
+                    )
+                    .await
+                    {
+                        warn!(
+                            thread_id = %parent.thread_id,
+                            "failed to schedule Saffron supervisor retry: {retry_error}"
+                        );
+                    }
+                    return;
+                }
+            }
+        }
+        let description =
+            format!("helper ended as {terminal_status:?} without selecting an action");
+        if let Err(retry_error) = defer_failure(parent, &runtime, goal_id, description).await {
+            warn!(
+                thread_id = %parent.thread_id,
+                "failed to schedule Saffron supervisor retry: {retry_error}"
+            );
+        }
+    }
+}
+
+async fn defer_failure(
+    parent: &Arc<Session>,
+    runtime: &Arc<Runtime>,
+    goal_id: &str,
+    error: String,
+) -> Result<(), String> {
+    let delay = {
+        let mut state = runtime.state.lock().await;
+        state.consecutive_failures = state.consecutive_failures.saturating_add(1);
+        failure_retry_delay(state.consecutive_failures)
+    };
+    parent
+        .send_event_raw(Event {
+            id: format!("saffron-supervisor-retry-{}", parent.thread_id),
+            msg: EventMsg::Warning(WarningEvent {
+                message: format!(
+                    "Saffron goal supervisor failed: {error}. Retrying in {}s.",
+                    delay.as_secs()
+                ),
+            }),
+        })
+        .await;
+    match snooze_for_active_goal(parent, goal_id, delay).await {
+        Ok(snooze) => {
+            if let Err(persistence_error) = set_snooze(parent, snooze.clone()).await {
+                warn!(
+                    thread_id = %parent.thread_id,
+                    "failed to persist Saffron supervisor failure retry: {persistence_error}"
+                );
+                runtime.state.lock().await.snooze = Some(snooze.clone());
+            }
+            schedule_wake(parent, runtime, snooze);
+            Ok(())
+        }
+        Err(goal_error) => {
+            warn!(
+                thread_id = %parent.thread_id,
+                "failed to schedule Saffron supervisor failure retry: {goal_error}"
+            );
+            Err(format!(
+                "Saffron goal supervisor failed and its retry could not be scheduled: {goal_error}"
+            ))
+        }
+    }
+}
+
+fn failure_retry_delay(consecutive_failures: u32) -> Duration {
+    let exponent = consecutive_failures.saturating_sub(1).min(6);
+    INITIAL_FAILURE_RETRY
+        .saturating_mul(1_u32 << exponent)
+        .min(MAX_FAILURE_RETRY)
+}
+
+pub(super) fn schedule_wake(parent: &Arc<Session>, runtime: &Arc<Runtime>, snooze: Snooze) {
+    let generation = runtime.wake_generation.fetch_add(1, Ordering::AcqRel) + 1;
+    let parent = Arc::downgrade(parent);
+    let runtime = Arc::downgrade(runtime);
+    tokio::spawn(async move {
+        tokio::time::sleep_until(snooze.deadline).await;
+        let (Some(parent), Some(runtime)) = (parent.upgrade(), runtime.upgrade()) else {
+            return;
+        };
+        if runtime.wake_generation.load(Ordering::Acquire) != generation {
+            return;
+        }
+        let should_wake = runtime
+            .state
+            .lock()
+            .await
+            .snooze
+            .as_ref()
+            .is_some_and(|current| current.wake == snooze.wake);
+        if should_wake {
+            // The idle continuation settles durable state after it establishes
+            // a successor owner. Until then, this wake remains recoverable.
+            parent
+                .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Completed)
+                .await;
+        }
+    });
+}
+
+async fn restore_persisted_snooze(
+    parent: &Session,
+    goal: &codex_state::ThreadGoal,
+) -> Result<Option<Snooze>, String> {
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return Ok(None);
+    };
+    let store = SaffronStore::open(state_db.sqlite())
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(wake) = store
+        .get_goal_wake(parent.thread_id)
+        .await
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    let now_millis = Utc::now().timestamp_millis();
+    if wake.goal_id != goal.goal_id
+        || wake.goal_objective != goal.objective
+        || wake.goal_updated_at_ms != goal.updated_at.timestamp_millis()
+    {
+        return Ok(None);
+    }
+    let remaining_millis = u64::try_from(wake.wake_at_ms.saturating_sub(now_millis).max(0))
+        .map_err(|error| error.to_string())?;
+    Ok(Some(Snooze {
+        wake,
+        deadline: Instant::now() + Duration::from_millis(remaining_millis),
+        idle_retention: IdleRetention::Reconstructible,
+    }))
+}
+
+/// Removes a due wake only after the supplied supervisor claim is current.
+async fn settle_persisted_wake(
+    parent: &Session,
+    goal: &codex_state::ThreadGoal,
+    runtime: &Runtime,
+    continuation: ContinuationPermit,
+) {
+    if !runtime.owns_continuation(continuation) {
+        return;
+    }
+    let Some(state_db) = parent.services.state_db.as_ref() else {
+        return;
+    };
+    let result = async {
+        let store = SaffronStore::open(state_db.sqlite()).await?;
+        let Some(wake) = store.get_goal_wake(parent.thread_id).await? else {
+            return Ok::<(), anyhow::Error>(());
+        };
+        if wake.goal_id == goal.goal_id
+            && wake.goal_objective == goal.objective
+            && wake.goal_updated_at_ms == goal.updated_at.timestamp_millis()
+            && wake.wake_at_ms <= Utc::now().timestamp_millis()
+        {
+            store.clear_goal_wake(&wake).await?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = result {
+        warn!(
+            thread_id = %parent.thread_id,
+            "failed to settle due Saffron supervisor wake: {error}"
+        );
+    }
+}
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;
