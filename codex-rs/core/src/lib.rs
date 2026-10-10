@@ -157,6 +157,14 @@ mod thread_manager;
 pub(crate) mod web_search;
 pub(crate) mod windows_sandbox_read_grants;
 pub use agent::control::ThreadEvictionOutcome;
+#[doc(hidden)]
+pub use saffron::goal_resume::GoalResumeCapability;
+#[doc(hidden)]
+pub use saffron::goal_resume::GoalResumeCapabilityHandle;
+#[doc(hidden)]
+pub use saffron::goal_resume::GoalResumeError;
+#[doc(hidden)]
+pub use saffron::goal_resume::GoalResumeRequest;
 pub use saffron::goal_scheduler::GoalActivator as SaffronGoalActivator;
 pub use saffron::goal_scheduler::GoalSchedule as SaffronGoalSchedule;
 pub use saffron::goal_scheduler::GoalSchedulerHandle as SaffronGoalSchedulerHandle;
