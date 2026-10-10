@@ -674,7 +674,8 @@ impl Session {
     }
 
     pub(crate) async fn should_retain_while_idle(&self) -> bool {
-        crate::saffron::goal_supervisor::should_retain_while_idle(self).await
+        crate::saffron::archive_self::pending(self)
+            || crate::saffron::goal_supervisor::should_retain_while_idle(self).await
             || crate::saffron::subagent_completion::is_retained(self, self.thread_id)
     }
 
