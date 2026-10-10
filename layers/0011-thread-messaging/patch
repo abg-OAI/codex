@@ -41,7 +41,7 @@ index 15effd88bfee2f17124ce1f671b7c228afcfaebe..55e89e45868b324cbb8aa19575304789
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 521ee2c5cc7f43e8434f71bbace68d18e5129da2..efb684c0f3846e0c1a8eb871441bc55c8c64bfb3 100644
+index ca211d85d5542840222692f3713f0c339d682dcd..71caac25b266095e771806e13fd52220d00916b9 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -137,6 +137,7 @@ pub(crate) use skills::skills_load_input_from_config;

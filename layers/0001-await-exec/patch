@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 56f64aeeb631e46941cc08b2a9d88ee49146f623..8aa05a76a1aa28f88ca00c7543984046a8ebeae1 100644
+index e59f841ef182ccac09cf4730de8b26b99fdf7f33..8092f710fad184a3d87d007fc31c086ba0420f20 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -134,6 +134,7 @@ mod session_prefix;
@@ -61,10 +61,10 @@ index c4ea0991abf73157f469fd9ca34a172300471a95..9c4bb6d4cfc97514f0fa175c6ad4c3aa
  pub(crate) use stdin_approval::TerminalSandboxSource;
 
 diff --git a/codex-rs/core/src/unified_exec/process.rs b/codex-rs/core/src/unified_exec/process.rs
-index 51afaa36d007d39b14e278567e03e82009e8a71a..2f876a881e9019fad12788d325d951081361eca1 100644
+index 09e0cd182470cea9c74f038826a7594529408ee3..20a4c9a8a09b5e212b03197f176b7bdbae64f1ec 100644
 --- a/codex-rs/core/src/unified_exec/process.rs
 +++ b/codex-rs/core/src/unified_exec/process.rs
-@@ -188,6 +188,25 @@ impl UnifiedExecProcess {
+@@ -197,6 +197,25 @@ impl UnifiedExecProcess {
          }
      }
 
@@ -91,10 +91,10 @@ index 51afaa36d007d39b14e278567e03e82009e8a71a..2f876a881e9019fad12788d325d95108
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 80a34ce6a150b4b67e53f81395b99f2490a948c4..392153a016b07e7a9dbeea46397e3bcbaec87d06 100644
+index a8c99cd2a47cd2bc1252e32c9d209517fa113de6..098334e8cc6036cb9f3915b734f3e519ffb490c0 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
-@@ -108,6 +108,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
+@@ -109,6 +109,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
  const MAX_STDIN_APPROVAL_BYTES: usize = 8_000;
  const INTERRUPT: &str = "\u{3}";
 
@@ -107,10 +107,10 @@ index 80a34ce6a150b4b67e53f81395b99f2490a948c4..392153a016b07e7a9dbeea46397e3bcb
  ///
  /// In production builds this value should remain at its default (`false`) and
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index 750fd59520b55045f508eb644b9b35e07f9d69a3..b0d3045e749ac8a776d0befd6d939791928c1229 100644
+index d1acfc3bfd76a6ed8a3c4bb9673f92a52f639eab..52d91b2d46db73bba4ebd04b567f91b7e91a07ee 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -202,6 +202,7 @@ mod rollout_compression;
+@@ -204,6 +204,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;

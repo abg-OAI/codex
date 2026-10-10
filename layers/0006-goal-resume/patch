@@ -159,7 +159,7 @@ index 3627f608e70e9f237757bd1ebecaff540647df33..6adfc5d5a60edb1276f2c4c793cfb3a6
  async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
      let server = responses::start_mock_server().await;
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index a6d21bfffa1a0239ada1a4ac79533c391689eb46..312b65b9e64934bc30e1b365d478e9d44953596a 100644
+index a3ee5f2e4de34bc02dc5c7266a0c94776e070304..e7deee290265bf4f8939209ae2e7a9fb022377eb 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -157,6 +157,14 @@ mod thread_manager;
@@ -196,7 +196,7 @@ index 87a8b46b154f162a62d9b9db5a53f007a622a666..bb75b5ef21638ffaec0e460cbbfb6703
 +    goal_resume::register_root_if_available(session, turn_context, registry);
  }
 diff --git a/codex-rs/ext/goal/src/extension.rs b/codex-rs/ext/goal/src/extension.rs
-index 1ec9ee6378602988c2bf747433646c7cb32b86de..ebc52a87a53fc19e02ad6c45e6e59e45e295255c 100644
+index bdc75350c32da5ae18274a046b230e5339e1230e..7961702e8f5d1ea4aaeade5e39ad028e00daa1b7 100644
 --- a/codex-rs/ext/goal/src/extension.rs
 +++ b/codex-rs/ext/goal/src/extension.rs
 @@ -42,6 +42,7 @@ use crate::analytics::GoalAnalytics;
