@@ -42,7 +42,7 @@ index ac965523fb227f4c2beb832828a41bdf480e9be1..5e2a2e0c60ac0d7312b888c8969c38d9
                      auth_manager: auth_manager.clone(),
                      state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index c6a585029dc60ba5fd15bf314f762b95bd4655e5..d803f942cede2978e0281f59403b96c8f565a610 100644
+index 60ff8d9e883aa60ca5235994eebc337d6eea2196..8c146fa3f0f5d1f920333f715eb31e6fda2861aa 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -168,6 +168,7 @@ pub(crate) struct MessageProcessor {
@@ -103,10 +103,10 @@ index c6a585029dc60ba5fd15bf314f762b95bd4655e5..d803f942cede2978e0281f59403b96c8
          if let Some(worker) = &self.turn_cost_worker {
              worker.shutdown();
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 2cb90b2339a4ba769a1da9615f074d8b6b945211..bdde9f76ef0008ae826e625c123eca833d6ec0ec 100644
+index cd28513ae909580f487cdff3caa5a290551b03fa..f603a94fd0aa360bc9d09472ee1151143ec9c974 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -6509,6 +6509,7 @@ fn build_thread_from_loaded_snapshot(
+@@ -6663,6 +6663,7 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -115,7 +115,7 @@ index 2cb90b2339a4ba769a1da9615f074d8b6b945211..bdde9f76ef0008ae826e625c123eca83
 
  #[cfg(test)]
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index ccb54c7ce16ce9286f861043cdff1c82bb606e5b..49b9acee8a830f872adf00a3c9d41ede45baf9a5 100644
+index 28859adb32675b065989eaa86593b2e890df9794..c8ed627747c0e47a73d0cbe2740c4d92ec0e06c9 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
 @@ -123,6 +123,7 @@ mod review;
@@ -160,7 +160,7 @@ index ded7ed824273112bd539a1437dd5cfcda9f60c5f..c60486b41b108323a5fb6385037adc2d
              .await
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index efb684c0f3846e0c1a8eb871441bc55c8c64bfb3..c5d6464328db008202c6f452a005deecebfeb945 100644
+index 71caac25b266095e771806e13fd52220d00916b9..d07302a0b5a9f3a3216a2214a146ef61a3a9693d 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -136,6 +136,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
@@ -296,10 +296,10 @@ index 632bb1a2946e4653cd4f32d77930bd472d72ea08..167df69c737ab6037cffb736abda5e80
                  let SamplingRequestResult {
                      needs_follow_up: model_needs_follow_up,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index d4e78ec55ae4d42a81b99d3332054c882bd7d52e..638244c99818372f9c5184e3eee1cb152235e6e5 100644
+index 6ac22952e81e020e224b7dce68d8961b42a426c5..5ff0e9102c0beadbe16bc8d3899debedc970a1b0 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
-@@ -211,6 +211,7 @@ impl PreparedTurnInputSettings {
+@@ -212,6 +212,7 @@ impl PreparedTurnInputSettings {
      /// Applies only persistent settings after steering succeeds. The active
      /// turn keeps its existing context; subsequent turns see the update.
      async fn apply_steered(self, session: &Session, submission_id: String) -> CodexResult<()> {
@@ -307,7 +307,7 @@ index d4e78ec55ae4d42a81b99d3332054c882bd7d52e..638244c99818372f9c5184e3eee1cb15
          let Some(thread_settings_update) = self.thread_settings_update else {
              return Ok(());
          };
-@@ -699,6 +700,8 @@ impl Session {
+@@ -708,6 +709,8 @@ impl Session {
      ) {
          let mut state = self.state.lock().await;
          state.last_started_turn_id = Some(turn_id.to_owned());
@@ -382,10 +382,10 @@ index e0b50c48dd7ed4558b4423d25bae6e62d99ccea5..df59764c6d0741906b7fc46bb44373da
                  // of dispatch waiting and the start of handler execution.
                  if let Some(execution_started_at) = execution_started_at {
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index 88fc5abd14ef3fbb52c26e9e8cb169bf8ad1e364..7846066a57e4f8949155cf1935423b254bcfac9b 100644
+index f2a76ef087d8bf02aaef9eee7ed2ac4353ad66f3..e5c75d5af3cababea2aaa71fced8418dec981a44 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
-@@ -803,6 +803,13 @@ pub enum Op {
+@@ -865,6 +865,13 @@ pub enum Op {
          reply: oneshot::Sender<bool>,
      },
 
@@ -399,7 +399,7 @@ index 88fc5abd14ef3fbb52c26e9e8cb169bf8ad1e364..7846066a57e4f8949155cf1935423b25
      /// Execute a user-initiated one-off shell command (triggered by "!cmd").
      ///
      /// The command string is executed using the user's default shell and may
-@@ -1015,6 +1022,7 @@ impl Op {
+@@ -1077,6 +1084,7 @@ impl Op {
              Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
              Self::Shutdown => "shutdown",
              Self::ShutdownIfIdle { .. } => "shutdown_if_idle",

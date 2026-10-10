@@ -708,10 +708,10 @@ index 28051a77c36c3c1dd644ca61c3d90f81972de62d..5b78fbc6c66f72f0e263b8ef42318033
      );
 
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
-index 38ef4a59c012ae5ac3bc40330ea81b7314458c04..9b5be2d76838c80812950a051f08070a2b8185aa 100644
+index 9988b1810dc32e766f6f8c576966afbc6ae5176e..6009eaabf2c38e14cc3827c763d5d7fac506d658 100644
 --- a/codex-rs/core/src/context_manager/history.rs
 +++ b/codex-rs/core/src/context_manager/history.rs
-@@ -611,6 +611,9 @@ impl ContextManager {
+@@ -612,6 +612,9 @@ impl ContextManager {
      ) -> Vec<ResponseItemEnvelope> {
          self.normalize_history(input_modalities);
          Arc::unwrap_or_clone(self.items)
@@ -721,7 +721,7 @@ index 38ef4a59c012ae5ac3bc40330ea81b7314458c04..9b5be2d76838c80812950a051f08070a
      }
 
      /// Iterates over raw response items without exposing their history envelopes.
-@@ -671,6 +674,7 @@ impl ContextManager {
+@@ -672,6 +675,7 @@ impl ContextManager {
          let items_tokens = self
              .items
              .iter()
@@ -730,7 +730,7 @@ index 38ef4a59c012ae5ac3bc40330ea81b7314458c04..9b5be2d76838c80812950a051f08070a
              .fold(0i64, i64::saturating_add);
 
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index c5551b632048455dfda3263d48f498832c52f334..d509ffe08f1f59acc611c1d65c12025fccb4dcf6 100644
+index e363460ec7b75f4ddf3e4bc174c275f073f0927f..9bd208e8b881c93d64f2f127f62f88a4ccad3b20 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
 @@ -52,6 +52,82 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
@@ -976,7 +976,7 @@ index 879115d3d08a709b5a6384c5601954cb3759b5e6..afa87a0506d20fc43d80876754c275c7
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index 5ce19f056a95abdfe6802ae95038f2657ca7b9ed..59bed1a18c1501f860966212436ea88754b557ae 100644
+index e639c12831d04dfe65bd5d9c6be276c8ef08951d..ff0222227779ec2135f98d34a6f26a9bfdc99cee 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
 @@ -65,6 +65,11 @@ pub struct ResponseItemEnvelope {
