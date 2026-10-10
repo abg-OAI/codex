@@ -98,6 +98,10 @@ impl LocalAgentRuntime {
                                 ContextManager::reconstruct_rollout(
                                     &stored.items,
                                     meta.history_mode,
+                                    &meta
+                                        .source
+                                        .get_agent_path()
+                                        .unwrap_or_else(codex_protocol::AgentPath::root),
                                     ContextManager::new(),
                                     // Tool bodies are not sender authorization evidence.
                                     TruncationPolicy::Bytes(0),
