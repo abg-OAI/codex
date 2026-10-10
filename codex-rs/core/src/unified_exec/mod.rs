@@ -62,6 +62,8 @@ pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
 
 pub(crate) use errors::UnifiedExecError;
 pub(crate) use process::UnifiedExecProcess;
+pub(crate) use process_manager::ProcessInteractionAcquisition;
+pub(crate) use process_manager::ProcessWaitReason;
 pub(crate) use stdin_approval::TerminalPermissions;
 pub(crate) use stdin_approval::TerminalSandboxSource;
 
