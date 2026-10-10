@@ -69,6 +69,7 @@ pub use goals::GoalAccountingMode;
 pub use goals::GoalAccountingOutcome;
 pub use goals::GoalStore;
 pub use goals::GoalUpdate;
+pub use goals::ThreadGoalRevision;
 pub use guardian_feedback::GuardianReviewRecord;
 pub use guardian_feedback::MAX_GUARDIAN_REVIEW_BYTES;
 pub use guardian_feedback::MAX_GUARDIAN_REVIEW_RECORDS;

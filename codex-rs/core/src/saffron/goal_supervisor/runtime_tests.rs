@@ -120,7 +120,8 @@ async fn root_work_retires_an_uncommitted_supervisor_owner() {
     runtime.state.lock().await.active = Some(ActiveHelper {
         thread_id: helper_id,
         continuation,
-        goal_id: test_goal(parent.thread_id).goal_id,
+        goal_revision: codex_state::ThreadGoalRevision::capture(&test_goal(parent.thread_id)),
+        edit_state: GoalEditState::Available,
         action: None,
     });
 
@@ -216,7 +217,8 @@ async fn passive_mail_waking_a_sleeping_root_retires_the_supervisor_owner() {
     runtime.state.lock().await.active = Some(ActiveHelper {
         thread_id: ThreadId::new(),
         continuation,
-        goal_id: test_goal(parent.thread_id).goal_id,
+        goal_revision: codex_state::ThreadGoalRevision::capture(&test_goal(parent.thread_id)),
+        edit_state: GoalEditState::Available,
         action: None,
     });
 
@@ -227,6 +229,32 @@ async fn passive_mail_waking_a_sleeping_root_retires_the_supervisor_owner() {
     parent
         .abort_all_tasks(codex_protocol::protocol::TurnAbortReason::Replaced)
         .await;
+}
+
+#[tokio::test]
+async fn superseded_helper_cannot_select_an_action_after_finishing_an_edit() {
+    let (session, _) = make_session_and_context().await;
+    let parent = Arc::new(session);
+    let runtime = runtime(&parent);
+    let continuation = runtime.claim_continuation();
+    let helper_id = ThreadId::new();
+    runtime.state.lock().await.active = Some(ActiveHelper {
+        thread_id: helper_id,
+        continuation,
+        goal_revision: codex_state::ThreadGoalRevision::capture(&test_goal(parent.thread_id)),
+        edit_state: GoalEditState::InFlight,
+        action: None,
+    });
+
+    claim_root_continuation(&parent, ContinuationOwner::RootTurn).await;
+    commit_goal_edit(&parent, helper_id).await;
+
+    assert_eq!(
+        select_action(&parent, helper_id, Action::Complete)
+            .await
+            .expect_err("superseded helper must not select an action"),
+        "the parent claimed continuation before this action was selected"
+    );
 }
 
 #[tokio::test(start_paused = true)]
