@@ -155,6 +155,76 @@ async fn unavailable_host_rejects_the_tool() {
     assert!(!pending(&session));
 }
 
+#[tokio::test]
+async fn terminal_acceptance_drains_sampling_without_aborting_the_turn() {
+    let (session, turn, _receiver) = fixture().await;
+    let turn_cancellation = CancellationToken::new();
+    let execution = turn_cancellation.child_token();
+    invoke(session.clone(), turn.clone(), "{}").await.unwrap();
+    let sample = async {
+        execution.cancelled().await;
+        Err::<(), _>(codex_protocol::error::CodexErr::TurnAborted)
+    };
+    let result = terminal::run_sampling(&session, &turn, execution.clone(), sample)
+        .await
+        .unwrap();
+    assert!(result.is_none());
+    assert!(!turn_cancellation.is_cancelled());
+    assert!(terminal::admit_tool(&turn).is_err());
+}
+
+#[tokio::test]
+async fn revoked_archival_can_resume_after_sampling_drains() {
+    let (session, turn, _receiver) = fixture().await;
+    invoke(session.clone(), turn.clone(), "{}").await.unwrap();
+    cancel(&session);
+    let result =
+        terminal::run_sampling(&session, &turn, CancellationToken::new(), async { Ok(()) })
+            .await
+            .unwrap();
+    assert!(result.is_none());
+    assert!(terminal::resume_if_revoked(&session, &turn));
+    assert!(terminal::admit_tool(&turn).is_ok());
+    assert!(!pending(&session));
+}
+
+#[tokio::test]
+async fn terminal_request_does_not_hide_sampling_failure_or_user_interruption() {
+    let (session, turn, _receiver) = fixture().await;
+    invoke(session.clone(), turn.clone(), "{}").await.unwrap();
+    let result = terminal::run_sampling(&session, &turn, CancellationToken::new(), async {
+        Err::<(), _>(codex_protocol::error::CodexErr::Fatal(
+            "sample failed".into(),
+        ))
+    })
+    .await;
+    assert!(result.is_err());
+    let interrupted = CancellationToken::new();
+    interrupted.cancel();
+    assert!(
+        terminal::complete(&session, &StepContext::for_test(turn), &interrupted)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn unaccepted_tool_result_cannot_authorize_archival() {
+    let (session, turn, mut receiver) = fixture().await;
+    let state = session
+        .services
+        .thread_extension_data
+        .get::<PendingArchive>()
+        .unwrap();
+    Handler { state }
+        .handle(invocation(session.clone(), turn.clone(), "{}"))
+        .await
+        .unwrap();
+    assert!(!finish(&session, &turn, true).await);
+    assert!(!pending(&session));
+    assert!(receiver.try_recv().is_err());
+}
+
 async fn fixture() -> (
     Arc<Session>,
     Arc<TurnContext>,
@@ -185,20 +255,24 @@ async fn invoke(
     let handler = registry
         .remove(&ToolName::namespaced("saffron", "archive_self"))
         .unwrap();
-    let output = handler
-        .handle(ToolInvocation {
-            session,
-            step_context: StepContext::for_test(turn.clone()),
-            turn,
-            cancellation_token: CancellationToken::new(),
-            tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::default())),
-            call_id: "archive-call".into(),
-            tool_name: ToolName::namespaced("saffron", "archive_self"),
-            source: ToolCallSource::Direct,
-            payload: ToolPayload::Function {
-                arguments: arguments.into(),
-            },
-        })
-        .await?;
+    let invocation = invocation(session, turn, arguments);
+    let output = handler.handle(invocation.clone()).await?;
+    handler.on_tool_result_accepted(&invocation, output.as_ref());
     Ok(serde_json::from_str(&output.log_output()).unwrap())
+}
+
+fn invocation(session: Arc<Session>, turn: Arc<TurnContext>, arguments: &str) -> ToolInvocation {
+    ToolInvocation {
+        session,
+        step_context: StepContext::for_test(turn.clone()),
+        turn,
+        cancellation_token: CancellationToken::new(),
+        tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::default())),
+        call_id: "archive-call".into(),
+        tool_name: ToolName::namespaced("saffron", "archive_self"),
+        source: ToolCallSource::Direct,
+        payload: ToolPayload::Function {
+            arguments: arguments.into(),
+        },
+    }
 }
