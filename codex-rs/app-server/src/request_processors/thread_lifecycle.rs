@@ -131,6 +131,12 @@ pub(super) enum ThreadShutdownResult {
     TimedOut,
 }
 
+enum IdleThreadShutdownResult {
+    Accepted,
+    NotIdle,
+    SubmitFailed,
+}
+
 pub(super) enum EnsureConversationListenerResult {
     Attached,
     ConnectionClosed,
@@ -514,7 +520,7 @@ pub(super) async fn ensure_listener_task_running(
                         pending_thread_unloads.lock().await.remove(&conversation_id);
                         return;
                     }
-                    unload_thread_without_subscribers(
+                    if try_unload_thread_without_subscribers(
                         thread_manager.clone(),
                         outgoing_for_task.clone(),
                         pending_thread_unloads.clone(),
@@ -523,8 +529,11 @@ pub(super) async fn ensure_listener_task_running(
                         conversation_id,
                         conversation.clone(),
                     )
-                    .await;
-                    break;
+                    .await
+                    {
+                        break;
+                    }
+                    unloading_state.note_thread_activity_observed();
                 }
             }
         }
@@ -550,7 +559,15 @@ pub(super) async fn wait_for_thread_shutdown(thread: &Arc<CodexThread>) -> Threa
     }
 }
 
-pub(super) async fn unload_thread_without_subscribers(
+async fn request_idle_thread_shutdown(thread: &Arc<CodexThread>) -> IdleThreadShutdownResult {
+    match thread.request_shutdown_if_idle().await {
+        Ok(true) => IdleThreadShutdownResult::Accepted,
+        Ok(false) => IdleThreadShutdownResult::NotIdle,
+        Err(_) => IdleThreadShutdownResult::SubmitFailed,
+    }
+}
+
+pub(super) async fn try_unload_thread_without_subscribers(
     thread_manager: Arc<ThreadManager>,
     outgoing: Arc<OutgoingMessageSender>,
     pending_thread_unloads: PendingThreadUnloads,
@@ -558,7 +575,20 @@ pub(super) async fn unload_thread_without_subscribers(
     thread_watch_manager: ThreadWatchManager,
     thread_id: ThreadId,
     thread: Arc<CodexThread>,
-) {
+) -> bool {
+    match request_idle_thread_shutdown(&thread).await {
+        IdleThreadShutdownResult::Accepted => {}
+        IdleThreadShutdownResult::NotIdle => {
+            pending_thread_unloads.lock().await.remove(&thread_id);
+            return false;
+        }
+        IdleThreadShutdownResult::SubmitFailed => {
+            pending_thread_unloads.lock().await.remove(&thread_id);
+            warn!("failed to submit ShutdownIfIdle to thread {thread_id}");
+            return false;
+        }
+    }
+
     info!("thread {thread_id} has no subscribers and is idle; shutting down");
 
     // Any pending app-server -> client requests for this thread can no longer be
@@ -569,52 +599,41 @@ pub(super) async fn unload_thread_without_subscribers(
     thread_state_manager.remove_thread_state(thread_id).await;
 
     tokio::spawn(async move {
-        // The deadline bounds our warning, not background cleanup. Keep polling the
-        // same future so even delayed shutdown submission can eventually finish.
-        let shutdown = thread.shutdown_and_wait();
+        let shutdown = thread.wait_until_terminated();
         tokio::pin!(shutdown);
-        let result = match tokio::time::timeout(Duration::from_secs(/*secs*/ 10), &mut shutdown)
+        if tokio::time::timeout(Duration::from_secs(/*secs*/ 10), &mut shutdown)
             .await
+            .is_err()
         {
-            Ok(result) => result,
-            Err(_) => {
-                warn!(
-                    event.name = "codex.app_server.thread_shutdown_slow",
-                    "thread {thread_id} shutdown is taking longer than expected; continuing to wait"
-                );
-                shutdown.await
-            }
-        };
-        match result {
-            Ok(()) => {
-                // A delayed unload can finish after thread/revert replaces this runtime under
-                // the same thread ID. Only the runtime that scheduled this unload may remove it.
-                if thread_manager
-                    .remove_thread_if_matches(&thread_id, &thread)
-                    .await
-                    .is_none()
-                {
-                    info!("thread {thread_id} was replaced or removed before teardown finalized");
-                    pending_thread_unloads.lock().await.remove(&thread_id);
-                    return;
-                }
-                thread_watch_manager
-                    .remove_thread(&thread_id.to_string())
-                    .await;
-                let notification = ThreadClosedNotification {
-                    thread_id: thread_id.to_string(),
-                };
-                outgoing
-                    .send_server_notification(ServerNotification::ThreadClosed(notification))
-                    .await;
-                pending_thread_unloads.lock().await.remove(&thread_id);
-            }
-            Err(_) => {
-                pending_thread_unloads.lock().await.remove(&thread_id);
-                warn!("failed to submit Shutdown to thread {thread_id}");
-            }
+            warn!(
+                event.name = "codex.app_server.thread_shutdown_slow",
+                "thread {thread_id} shutdown is taking longer than expected; continuing to wait"
+            );
+            shutdown.await;
         }
+        // A delayed unload can finish after thread/revert replaces this runtime under
+        // the same thread ID. Only the runtime that scheduled this unload may remove it.
+        if thread_manager
+            .remove_thread_if_matches(&thread_id, &thread)
+            .await
+            .is_none()
+        {
+            info!("thread {thread_id} was replaced or removed before teardown finalized");
+            pending_thread_unloads.lock().await.remove(&thread_id);
+            return;
+        }
+        thread_watch_manager
+            .remove_thread(&thread_id.to_string())
+            .await;
+        let notification = ThreadClosedNotification {
+            thread_id: thread_id.to_string(),
+        };
+        outgoing
+            .send_server_notification(ServerNotification::ThreadClosed(notification))
+            .await;
+        pending_thread_unloads.lock().await.remove(&thread_id);
     });
+    true
 }
 
 #[allow(clippy::too_many_arguments)]
