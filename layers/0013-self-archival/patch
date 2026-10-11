@@ -1,28 +1,28 @@
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 55e89e45868b324cbb8aa19575304789cdb2eac5..eb432bf24a057fbb1d128f99e8768082cdcb73c4 100644
+index dfa2fc6ad7bc6789bef82bc7f363cd0ef8bc913b..a781a782177eb9865821272ca763df5e3d150adb 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
-@@ -37,6 +37,8 @@ pub(crate) struct ThreadExtensionDependencies {
-     pub(crate) state_db: Option<StateDbHandle>,
-     pub(crate) analytics_events_client: AnalyticsEventsClient,
+@@ -39,6 +39,8 @@ pub(crate) struct ThreadExtensionDependencies {
      pub(crate) thread_manager: Weak<ThreadManager>,
+     /// Weakly initialized access to process-owned message routing.
+     pub(crate) thread_message_host: Option<Arc<codex_core::SaffronThreadMessageHostHandle>>,
 +    pub(crate) self_archive_sender:
 +        Option<tokio::sync::mpsc::UnboundedSender<codex_core::SaffronArchiveRequest>>,
      pub(crate) goal_service: Arc<GoalService>,
      pub(crate) environment_manager: Arc<EnvironmentManager>,
      pub(crate) executor_skill_provider: Arc<dyn codex_skills_extension::SkillProvider>,
-@@ -56,6 +58,7 @@ pub(crate) fn thread_extensions(
-         state_db,
+@@ -59,6 +61,7 @@ pub(crate) fn thread_extensions(
          analytics_events_client,
          thread_manager,
+         thread_message_host,
 +        self_archive_sender,
          goal_service,
          environment_manager,
          executor_skill_provider,
-@@ -75,6 +78,9 @@ pub(crate) fn thread_extensions(
-     codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
-     codex_core::install_saffron_fork_thread(&mut builder, thread_manager.clone());
-     codex_core::install_saffron_thread_message(&mut builder, thread_manager.clone());
+@@ -82,6 +85,9 @@ pub(crate) fn thread_extensions(
+         thread_manager.clone(),
+         thread_message_host,
+     );
 +    if let Some(sender) = self_archive_sender {
 +        codex_core::install_saffron_archive_self(&mut builder, sender);
 +    }
@@ -30,63 +30,63 @@ index 55e89e45868b324cbb8aa19575304789cdb2eac5..eb432bf24a057fbb1d128f99e8768082
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/app-server/src/mcp_refresh.rs b/codex-rs/app-server/src/mcp_refresh.rs
-index ac965523fb227f4c2beb832828a41bdf480e9be1..5e2a2e0c60ac0d7312b888c8969c38d9a1d2ca3d 100644
+index 97e984a3c35fb07235d12051c5d6a26209efeabc..15c07022ff4c3add1d4b76c371749a9286662085 100644
 --- a/codex-rs/app-server/src/mcp_refresh.rs
 +++ b/codex-rs/app-server/src/mcp_refresh.rs
-@@ -477,6 +477,7 @@ enabled = false
-                 SessionSource::Exec,
+@@ -478,6 +478,7 @@ enabled = false
                  Arc::clone(&environment_manager),
                  thread_extensions(ThreadExtensionDependencies {
+                     thread_message_host: None,
 +                    self_archive_sender: None,
                      event_sink: Arc::new(NoopExtensionEventSink),
                      auth_manager: auth_manager.clone(),
                      state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 60ff8d9e883aa60ca5235994eebc337d6eea2196..8c146fa3f0f5d1f920333f715eb31e6fda2861aa 100644
+index 2b2945693a2a2b73f24497e95c3123ed22cbee37..6cc51aa37d83ba302109977783f8f055de530b62 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
-@@ -168,6 +168,7 @@ pub(crate) struct MessageProcessor {
-     pub(super) remote_control_processor: RemoteControlRequestProcessor,
-     search_processor: SearchRequestProcessor,
+@@ -170,6 +170,7 @@ pub(crate) struct MessageProcessor {
      saffron_goal_scheduler: Option<SaffronGoalSchedulerHandle>,
+     /// Owns routing while thread extensions hold only a weak reference.
+     _saffron_message_host: Arc<dyn codex_core::SaffronThreadMessageHost>,
 +    self_archive_stop: CancellationToken,
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -329,6 +330,7 @@ impl MessageProcessor {
-         let extension_event_sink =
+@@ -332,6 +333,7 @@ impl MessageProcessor {
              app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
          let mut queue_service = None;
+         let message_host_handle = Arc::new(codex_core::SaffronThreadMessageHostHandle::default());
 +        let (self_archive_sender, self_archive_receiver) = tokio::sync::mpsc::unbounded_channel();
          let thread_manager = Arc::new_cyclic(|thread_manager| {
              queue_service = queue_store.map(|queue| {
                  Arc::new(QueuedItemService::new(
-@@ -345,6 +347,7 @@ impl MessageProcessor {
-                 session_source,
+@@ -349,6 +351,7 @@ impl MessageProcessor {
                  environment_manager,
                  thread_extensions(ThreadExtensionDependencies {
+                     thread_message_host: Some(Arc::clone(&message_host_handle)),
 +                    self_archive_sender: Some(self_archive_sender),
                      event_sink: Arc::clone(&extension_event_sink),
                      auth_manager: auth_manager.clone(),
                      state_db: state_db.clone(),
-@@ -529,6 +532,8 @@ impl MessageProcessor {
-             turn_cost_worker.as_ref().map(TurnCostWorker::handle),
-             config_warnings,
-         );
+@@ -539,6 +542,8 @@ impl MessageProcessor {
+                 turn_admission.clone(),
+             ));
+         message_host_handle.set(Arc::downgrade(&saffron_message_host));
 +        let self_archive_stop =
 +            thread_processor.start_saffron_archive_worker(self_archive_receiver);
          let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
              && config.features.enabled(codex_features::Feature::Goals)
          {
-@@ -630,6 +635,7 @@ impl MessageProcessor {
-             remote_control_processor,
+@@ -641,6 +646,7 @@ impl MessageProcessor {
              search_processor,
              saffron_goal_scheduler,
+             _saffron_message_host: saffron_message_host,
 +            self_archive_stop,
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -640,6 +646,7 @@ impl MessageProcessor {
+@@ -651,6 +657,7 @@ impl MessageProcessor {
      }
 
      pub(crate) fn clear_runtime_references(&self) {
@@ -94,7 +94,7 @@ index 60ff8d9e883aa60ca5235994eebc337d6eea2196..8c146fa3f0f5d1f920333f715eb31e6f
          self.account_processor.clear_external_auth();
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
-@@ -869,6 +876,7 @@ impl MessageProcessor {
+@@ -880,6 +887,7 @@ impl MessageProcessor {
      }
 
      pub(crate) async fn drain_background_tasks(&self) {
@@ -103,22 +103,22 @@ index 60ff8d9e883aa60ca5235994eebc337d6eea2196..8c146fa3f0f5d1f920333f715eb31e6f
          if let Some(worker) = &self.turn_cost_worker {
              worker.shutdown();
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index cd28513ae909580f487cdff3caa5a290551b03fa..f603a94fd0aa360bc9d09472ee1151143ec9c974 100644
+index a527afad404705b8918451422d280d0277aa6fe6..68c4c3277db1f12c49a0cd14661b39d8211e722c 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -6663,6 +6663,7 @@ fn build_thread_from_loaded_snapshot(
+@@ -6710,6 +6710,7 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
 +mod saffron_archive_self;
  mod saffron_goal_scheduler;
+ pub(crate) mod saffron_thread_message;
 
- #[cfg(test)]
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index 28859adb32675b065989eaa86593b2e890df9794..c8ed627747c0e47a73d0cbe2740c4d92ec0e06c9 100644
+index 13eeab8b3b2e657704c76e39c04725161c128e45..0b1c39c4c5443f90ed6d3fb0e9381b4b41029527 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
-@@ -123,6 +123,7 @@ mod review;
+@@ -124,6 +124,7 @@ mod review;
  mod rollout_compress;
  mod rollout_migration;
  mod safety_check_downgrade;
@@ -160,7 +160,7 @@ index ded7ed824273112bd539a1437dd5cfcda9f60c5f..c60486b41b108323a5fb6385037adc2d
              .await
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 71caac25b266095e771806e13fd52220d00916b9..d07302a0b5a9f3a3216a2214a146ef61a3a9693d 100644
+index a3accaf5c6eaeeecc0a12ec9caf20d401e7d488a..2e9b0137a51822a5909e4e525bc18c7ad038a897 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -136,6 +136,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
@@ -171,7 +171,7 @@ index 71caac25b266095e771806e13fd52220d00916b9..d07302a0b5a9f3a3216a2214a146ef61
 +pub use saffron::archive_self::install as install_saffron_archive_self;
  pub use saffron::fork_thread::install as install_saffron_fork_thread;
  pub use saffron::thread_message::install as install_saffron_thread_message;
-
+ pub use saffron::thread_message::Delivery as SaffronMessageDelivery;
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
 index be2c37671ce574eb1cac73fc2ffb00316c715630..190e770b5a8695fce40fbb2acf4d03d3aa411aa7 100644
 --- a/codex-rs/core/src/saffron/mod.rs

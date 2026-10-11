@@ -1,9 +1,22 @@
-Add attributed messaging between loaded root threads
+Add attributed messaging between same-host roots
 
-Expose saffron.send_message_to_thread for loaded roots in the caller's
-app-server process. Start idle destinations or steer active turns while
-preserving destination settings and runtime-derived sender identity.
+Expose `saffron.send_message_to_thread` for independent roots.
+Start idle destinations or steer active turns while preserving
+destination settings and runtime-derived sender identity.
+Restore unloaded roots through native resume without starting goal work
+before the message is admitted.
+
+Keep another process in charge of its loaded thread.
+Route through the local control socket only when it reports the same
+Codex home and native release; otherwise refuse competing ownership.
+Peer receipts report submission without claiming a start-versus-steer
+distinction the native response does not supply.
+Do not retry an unconfirmed delivery.
+
+The app-server owns pending admission when the caller stops waiting.
+Use native listeners and idle unloading for restored roots.
+Reject archived destinations and parent-owned agents.
 
 Present incoming messages with saved sender attribution in live and
-reconstructed client history. Keep the original tool output unchanged
-for core persistence and model input.
+reconstructed client history.
+Keep attributed tool output unchanged for persistence and model input.

@@ -28,27 +28,395 @@ index 65d283827023b33f55c715dc755d8b73cb7ed5b3..9fc4261aa47546908dc9488a04df17b2
              CoreTurnItem::Plan(plan) => ThreadItem::Plan {
                  id: plan.id,
                  text: plan.text,
+diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
+index 0ef30505cc5e78102d8bfb64e18adaf0e0ad008b..42f24fb07ea66f538fd19ab0e1523129f052489f 100644
+--- a/codex-rs/app-server/Cargo.toml
++++ b/codex-rs/app-server/Cargo.toml
+@@ -25,6 +25,8 @@ doctest = false
+ workspace = true
+
+ [dependencies]
++codex-uds = { workspace = true }
++tokio-tungstenite = { workspace = true }
+ codex-utils-process = { workspace = true }
+ anyhow = { workspace = true }
+ base64 = { workspace = true }
+@@ -130,7 +132,6 @@ libc = { workspace = true }
+ codex-windows-sandbox = { workspace = true }
+
+ [dev-dependencies]
+-codex-uds = { workspace = true }
+ app_test_support = { workspace = true }
+ axum = { workspace = true, default-features = false, features = [
+     "http1",
+@@ -159,6 +160,5 @@ sqlx = { workspace = true }
+ tar = { workspace = true }
+ test-case = "3.3.1"
+ tokio-rustls = { workspace = true }
+-tokio-tungstenite = { workspace = true }
+ tracing-opentelemetry = { workspace = true }
+ wiremock = { workspace = true }
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 15effd88bfee2f17124ce1f671b7c228afcfaebe..55e89e45868b324cbb8aa19575304789cdb2eac5 100644
+index 15effd88bfee2f17124ce1f671b7c228afcfaebe..dfa2fc6ad7bc6789bef82bc7f363cd0ef8bc913b 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
-@@ -74,6 +74,7 @@ pub(crate) fn thread_extensions(
+@@ -37,6 +37,8 @@ pub(crate) struct ThreadExtensionDependencies {
+     pub(crate) state_db: Option<StateDbHandle>,
+     pub(crate) analytics_events_client: AnalyticsEventsClient,
+     pub(crate) thread_manager: Weak<ThreadManager>,
++    /// Weakly initialized access to process-owned message routing.
++    pub(crate) thread_message_host: Option<Arc<codex_core::SaffronThreadMessageHostHandle>>,
+     pub(crate) goal_service: Arc<GoalService>,
+     pub(crate) environment_manager: Arc<EnvironmentManager>,
+     pub(crate) executor_skill_provider: Arc<dyn codex_skills_extension::SkillProvider>,
+@@ -56,6 +58,7 @@ pub(crate) fn thread_extensions(
+         state_db,
+         analytics_events_client,
+         thread_manager,
++        thread_message_host,
+         goal_service,
+         environment_manager,
+         executor_skill_provider,
+@@ -74,6 +77,11 @@ pub(crate) fn thread_extensions(
      codex_history_notes_extension::install(&mut builder, auth_manager.clone());
      codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
      codex_core::install_saffron_fork_thread(&mut builder, thread_manager.clone());
-+    codex_core::install_saffron_thread_message(&mut builder, thread_manager.clone());
++    codex_core::install_saffron_thread_message(
++        &mut builder,
++        thread_manager.clone(),
++        thread_message_host,
++    );
      if let Some(state_db) = state_db {
          codex_goal_extension::install_with_backend(
              &mut builder,
+diff --git a/codex-rs/app-server/src/mcp_refresh.rs b/codex-rs/app-server/src/mcp_refresh.rs
+index ac965523fb227f4c2beb832828a41bdf480e9be1..97e984a3c35fb07235d12051c5d6a26209efeabc 100644
+--- a/codex-rs/app-server/src/mcp_refresh.rs
++++ b/codex-rs/app-server/src/mcp_refresh.rs
+@@ -477,6 +477,7 @@ enabled = false
+                 SessionSource::Exec,
+                 Arc::clone(&environment_manager),
+                 thread_extensions(ThreadExtensionDependencies {
++                    thread_message_host: None,
+                     event_sink: Arc::new(NoopExtensionEventSink),
+                     auth_manager: auth_manager.clone(),
+                     state_db: Some(state_db.clone()),
+diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
+index 60ff8d9e883aa60ca5235994eebc337d6eea2196..2b2945693a2a2b73f24497e95c3123ed22cbee37 100644
+--- a/codex-rs/app-server/src/message_processor.rs
++++ b/codex-rs/app-server/src/message_processor.rs
+@@ -168,6 +168,8 @@ pub(crate) struct MessageProcessor {
+     pub(super) remote_control_processor: RemoteControlRequestProcessor,
+     search_processor: SearchRequestProcessor,
+     saffron_goal_scheduler: Option<SaffronGoalSchedulerHandle>,
++    /// Owns routing while thread extensions hold only a weak reference.
++    _saffron_message_host: Arc<dyn codex_core::SaffronThreadMessageHost>,
+     thread_goal_processor: ThreadGoalRequestProcessor,
+     thread_queue_processor: ThreadQueueRequestProcessor,
+     thread_processor: ThreadRequestProcessor,
+@@ -329,6 +331,7 @@ impl MessageProcessor {
+         let extension_event_sink =
+             app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
+         let mut queue_service = None;
++        let message_host_handle = Arc::new(codex_core::SaffronThreadMessageHostHandle::default());
+         let thread_manager = Arc::new_cyclic(|thread_manager| {
+             queue_service = queue_store.map(|queue| {
+                 Arc::new(QueuedItemService::new(
+@@ -345,6 +348,7 @@ impl MessageProcessor {
+                 session_source,
+                 environment_manager,
+                 thread_extensions(ThreadExtensionDependencies {
++                    thread_message_host: Some(Arc::clone(&message_host_handle)),
+                     event_sink: Arc::clone(&extension_event_sink),
+                     auth_manager: auth_manager.clone(),
+                     state_db: state_db.clone(),
+@@ -529,6 +533,12 @@ impl MessageProcessor {
+             turn_cost_worker.as_ref().map(TurnCostWorker::handle),
+             config_warnings,
+         );
++        let saffron_message_host: Arc<dyn codex_core::SaffronThreadMessageHost> =
++            Arc::new(crate::request_processors::SaffronMessageHost::new(
++                thread_processor.clone(),
++                turn_admission.clone(),
++            ));
++        message_host_handle.set(Arc::downgrade(&saffron_message_host));
+         let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
+             && config.features.enabled(codex_features::Feature::Goals)
+         {
+@@ -630,6 +640,7 @@ impl MessageProcessor {
+             remote_control_processor,
+             search_processor,
+             saffron_goal_scheduler,
++            _saffron_message_host: saffron_message_host,
+             thread_goal_processor,
+             thread_queue_processor,
+             thread_processor,
+diff --git a/codex-rs/app-server/src/request_processors.rs b/codex-rs/app-server/src/request_processors.rs
+index 59d1a94157d6dc5c37f65dfd0d5e3aaf822b5dfd..4a4189b81b3b6a449e7617fdc0013e10d38ecf40 100644
+--- a/codex-rs/app-server/src/request_processors.rs
++++ b/codex-rs/app-server/src/request_processors.rs
+@@ -601,6 +601,7 @@ pub(crate) use search::SearchRequestProcessor;
+ pub(crate) use thread_goal_processor::ThreadGoalRequestProcessor;
+ pub(crate) use thread_processor::ThreadRequestProcessor;
+ pub(crate) use thread_processor::ThreadResumeTarget;
++pub(crate) use thread_processor::saffron_thread_message::MessageHost as SaffronMessageHost;
+ pub(crate) use thread_queue_processor::ThreadQueueRequestProcessor;
+ pub(crate) use turn_processor::TurnRequestProcessor;
+ pub(crate) use windows_sandbox_processor::WindowsSandboxRequestProcessor;
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d0277aa6fe6 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -475,10 +475,12 @@ pub(crate) struct ThreadRequestProcessor {
+     pub(super) initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
+ }
+
+-/// Whether resume attaches a client or restores a cold runtime during daemon startup.
++/// Selects client attachment, daemon recovery, or restoration for immediate input.
+ pub(crate) enum ThreadResumeTarget {
+     Client(ConnectionRequestId),
+     DaemonRecovery(Option<codex_app_server_transport::daemon_recovery::InterruptedTurn>),
++    /// Restores a root and admits input before entering its idle lifecycle.
++    Input(codex_core::TurnInputRequest),
+ }
+
+ /// Outcome of trying to satisfy a resume request from an already loaded thread.
+@@ -3855,7 +3857,7 @@ impl ThreadRequestProcessor {
+         app_server_client_version: Option<String>,
+         client_mcp_extensions: ClientMcpExtensions,
+         prepared_config: &mut Option<PreparedResumeConfig>,
+-    ) -> Result<ControlFlow<()>, JSONRPCErrorError> {
++    ) -> Result<ControlFlow<Option<codex_core::TurnInputSubmission>>, JSONRPCErrorError> {
+         if let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
+             && self
+                 .pending_thread_unloads
+@@ -3892,7 +3894,7 @@ impl ThreadRequestProcessor {
+                     // The listener may need this permit to finish the response.
+                     drop(_thread_list_state_permit);
+                     let _ = completion.await;
+-                    return Ok(ControlFlow::Break(()));
++                    return Ok(ControlFlow::Break(None));
+                 }
+                 RunningThreadResumeResult::NotRunning(stored_thread) => stored_thread,
+             },
+@@ -3905,7 +3907,27 @@ impl ThreadRequestProcessor {
+                         self.continue_daemon_turn(&params.thread_id, saved.clone())
+                             .await;
+                     }
+-                    return Ok(ControlFlow::Break(()));
++                    return Ok(ControlFlow::Break(None));
++                }
++                None
++            }
++            ThreadResumeTarget::Input(input) => {
++                let thread_id = ThreadId::from_string(&params.thread_id)
++                    .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
++                if let Ok(thread) = self.thread_manager.get_thread(thread_id).await {
++                    if thread
++                        .config_snapshot()
++                        .await
++                        .session_source
++                        .is_non_root_agent()
++                    {
++                        return Err(invalid_request("destination must be a root thread"));
++                    }
++                    let submitted = thread
++                        .start_or_steer_turn(input.clone())
++                        .await
++                        .map_err(|err| invalid_request(err.to_string()))?;
++                    return Ok(ControlFlow::Break(Some(submitted)));
+                 }
+                 None
+             }
+@@ -3958,6 +3980,13 @@ impl ThreadRequestProcessor {
+             }
+         };
+         let (thread_history, resume_source_thread) = resume_result?;
++        if matches!(target, ThreadResumeTarget::Input(_))
++            && thread_history
++                .get_resumed_session_sources()
++                .is_none_or(|(source, _)| source.is_non_root_agent())
++        {
++            return Err(invalid_request("destination must be a saved root thread"));
++        }
+         // Path-based resume can use an empty request thread ID. Coordinate once its real
+         // identity is known; unrelated loaded threads never wait for this cold startup.
+         let _goal_resume_guard = if let InitialHistory::Resumed(resumed) = &thread_history {
+@@ -4003,7 +4032,7 @@ impl ThreadRequestProcessor {
+             && !can_accept_direct_input(thread_history.get_multi_agent_version(), &source)
+         {
+             let ThreadResumeTarget::Client(request_id) = target else {
+-                return Ok(ControlFlow::Break(()));
++                return Ok(ControlFlow::Break(None));
+             };
+             let child_thread_id = resumed_history.conversation_id;
+             self.thread_manager
+@@ -4041,7 +4070,7 @@ impl ThreadRequestProcessor {
+                 RunningThreadResumeResult::Handled(completion) => {
+                     drop(_thread_list_state_permit);
+                     let _ = completion.await;
+-                    Ok(ControlFlow::Break(()))
++                    Ok(ControlFlow::Break(None))
+                 }
+                 RunningThreadResumeResult::NotRunning(_) => Err(invalid_request(
+                     "cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first, or use thread/read to inspect it",
+@@ -4200,7 +4229,7 @@ impl ThreadRequestProcessor {
+                     ThreadResumeTarget::Client(request_id) => {
+                         self.request_trace_context(request_id).await
+                     }
+-                    ThreadResumeTarget::DaemonRecovery(_) => None,
++                    ThreadResumeTarget::DaemonRecovery(_) | ThreadResumeTarget::Input(_) => None,
+                 },
+                 client_mcp_extensions,
+             )
+@@ -4217,18 +4246,36 @@ impl ThreadRequestProcessor {
+                     self.thread_watch_manager
+                         .upsert_thread(&thread_id.to_string())
+                         .await;
+-                    // Invoke idle work before arming subscriber-based unloading.
+-                    codex_thread
+-                        .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Completed)
+-                        .await;
++                    let submission = if let ThreadResumeTarget::Input(input) = target {
++                        // Input owns this activation; a synthetic idle event could start
++                        // goal work before the requested message reaches the thread.
++                        Some(codex_thread.start_or_steer_turn(input.clone()).await)
++                    } else {
++                        codex_thread
++                            .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Completed)
++                            .await;
++                        None
++                    };
+                     if let ThreadResumeTarget::DaemonRecovery(Some(saved)) = target {
+                         self.continue_daemon_turn(&thread_id.to_string(), saved.clone())
+                             .await;
+                     }
+                     let state = self.thread_state_manager.thread_state(thread_id).await;
+-                    self.ensure_listener_task_running(thread_id, Arc::clone(&codex_thread), state)
+-                        .await?;
+-                    return Ok(ControlFlow::Break(()));
++                    let listener = self
++                        .ensure_listener_task_running(thread_id, Arc::clone(&codex_thread), state)
++                        .await;
++                    if let Some(submission) = submission {
++                        // Admission may already be durable: listener failure must not
++                        // turn an accepted input into a retryable rejection.
++                        if let Err(error) = listener {
++                            tracing::warn!(%thread_id, error = %error.message, "input resume listener failed");
++                        }
++                        return submission
++                            .map(|value| ControlFlow::Break(Some(value)))
++                            .map_err(|err| invalid_request(err.to_string()));
++                    }
++                    listener?;
++                    return Ok(ControlFlow::Break(None));
+                 };
+                 let request_id = request_id.clone();
+                 if let Err(err) = Self::set_app_server_client_info(
+@@ -4239,7 +4286,7 @@ impl ThreadRequestProcessor {
+                 .await
+                 {
+                     self.outgoing.send_error(request_id, err).await;
+-                    return Ok(ControlFlow::Break(()));
++                    return Ok(ControlFlow::Break(None));
+                 }
+                 let instruction_sources = codex_thread.legacy_instruction_sources().await;
+                 let SessionConfiguredEvent { rollout_path, .. } = session_configured;
+@@ -4247,7 +4294,7 @@ impl ThreadRequestProcessor {
+                     let error =
+                         internal_error(format!("rollout path missing for thread {thread_id}"));
+                     self.outgoing.send_error(request_id, error).await;
+-                    return Ok(ControlFlow::Break(()));
++                    return Ok(ControlFlow::Break(None));
+                 };
+                 // Paginated JSONL is canonical, but its SQLite projection can lag after a
+                 // previous write failure. Persist after reopening the live writer so legacy
+@@ -4260,14 +4307,14 @@ impl ThreadRequestProcessor {
+                         .map_err(thread_store_resume_read_error)
+                 {
+                     self.outgoing.send_error(request_id, error).await;
+-                    return Ok(ControlFlow::Break(()));
++                    return Ok(ControlFlow::Break(None));
+                 }
+                 let materialized_turns = if paginated_resume && include_turns {
+                     match self.paginated_thread_full_turns(thread_id).await {
+                         Ok(turns) => Some(turns),
+                         Err(error) => {
+                             self.outgoing.send_error(request_id, error).await;
+-                            return Ok(ControlFlow::Break(()));
++                            return Ok(ControlFlow::Break(None));
+                         }
+                     }
+                 } else {
+@@ -4302,7 +4349,7 @@ impl ThreadRequestProcessor {
+                         self.outgoing
+                             .send_error(request_id, internal_error(message))
+                             .await;
+-                        return Ok(ControlFlow::Break(()));
++                        return Ok(ControlFlow::Break(None));
+                     }
+                 };
+                 thread.thread_source = codex_thread
+@@ -4338,7 +4385,7 @@ impl ThreadRequestProcessor {
+                             Ok(cursors) => cursors,
+                             Err(error) => {
+                                 self.outgoing.send_error(request_id, error).await;
+-                                return Ok(ControlFlow::Break(()));
++                                return Ok(ControlFlow::Break(None));
+                             }
+                         }
+                     } else {
+@@ -4365,7 +4412,7 @@ impl ThreadRequestProcessor {
+                         Ok(page) => Some(page),
+                         Err(error) => {
+                             self.outgoing.send_error(request_id, error).await;
+-                            return Ok(ControlFlow::Break(()));
++                            return Ok(ControlFlow::Break(None));
+                         }
+                     }
+                 } else {
+@@ -4446,7 +4493,7 @@ impl ThreadRequestProcessor {
+                 return Err(error);
+             }
+         }
+-        Ok(ControlFlow::Break(()))
++        Ok(ControlFlow::Break(None))
+     }
+
+     async fn load_and_apply_persisted_resume_metadata(
+@@ -6664,6 +6711,7 @@ fn build_thread_from_loaded_snapshot(
+ }
+
+ mod saffron_goal_scheduler;
++pub(crate) mod saffron_thread_message;
+
+ #[cfg(test)]
+ #[path = "thread_processor_tests.rs"]
+diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
+index 28859adb32675b065989eaa86593b2e890df9794..13eeab8b3b2e657704c76e39c04725161c128e45 100644
+--- a/codex-rs/app-server/tests/suite/v2/mod.rs
++++ b/codex-rs/app-server/tests/suite/v2/mod.rs
+@@ -19,6 +19,7 @@ mod bedrock_service_tier;
+ mod bedrock_setup;
+ mod client_metadata;
+ mod code_mode_host;
++mod saffron_thread_message;
+ mod collaboration_mode_list;
+ #[cfg(unix)]
+ mod command_exec;
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index ca211d85d5542840222692f3713f0c339d682dcd..71caac25b266095e771806e13fd52220d00916b9 100644
+index ca211d85d5542840222692f3713f0c339d682dcd..a3accaf5c6eaeeecc0a12ec9caf20d401e7d488a 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -137,6 +137,7 @@ pub(crate) use skills::skills_load_input_from_config;
+@@ -137,6 +137,11 @@ pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
  pub use saffron::fork_thread::install as install_saffron_fork_thread;
 +pub use saffron::thread_message::install as install_saffron_thread_message;
++pub use saffron::thread_message::Delivery as SaffronMessageDelivery;
++pub use saffron::thread_message::MessageSubmission as SaffronMessageSubmission;
++pub use saffron::thread_message::ThreadMessageHost as SaffronThreadMessageHost;
++pub use saffron::thread_message::ThreadMessageHostHandle as SaffronThreadMessageHostHandle;
 
  /// Installs Saffrodex-owned model guidance that accompanies goal tools.
  pub fn install_saffron_goal_guidance(
