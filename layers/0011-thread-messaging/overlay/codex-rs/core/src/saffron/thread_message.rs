@@ -1,12 +1,13 @@
-//! Message delivery between loaded root threads in one app-server process.
+//! Attributed message delivery between independent roots on the same host.
 //!
 //! The host installs a weak ThreadManager capability; this module owns the
 //! model-facing policy and sender attribution. Core owns atomic start-or-steer
-//! admission. Delivery never loads a saved thread, changes destination settings,
-//! or reaches another process. The receipt confirms acceptance, not completion.
+//! admission. The optional host capability owns saved-thread restoration and
+//! local process routing. The receipt confirms acceptance, not completion.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::Weak;
 
 use codex_extension_api::ExtensionFuture;
@@ -45,8 +46,55 @@ use crate::tools::registry::ToolExecutor;
 use crate::tools::registry::ToolRegistry;
 
 /// Installs messaging for roots owned by this app-server's thread registry.
-pub fn install(builder: &mut ExtensionRegistryBuilder<Config>, manager: Weak<ThreadManager>) {
-    builder.thread_lifecycle_contributor(Arc::new(MessageHost { manager }));
+pub fn install(
+    builder: &mut ExtensionRegistryBuilder<Config>,
+    manager: Weak<ThreadManager>,
+    delivery: Option<Arc<ThreadMessageHostHandle>>,
+) {
+    builder.thread_lifecycle_contributor(Arc::new(MessageHost { manager, delivery }));
+}
+
+/// Completes delivery outside the caller's loaded thread registry.
+///
+/// Implementations preserve destination settings and reject non-root targets.
+/// They own loading, listener lifetime and admission even if the caller stops
+/// waiting. Errors must distinguish unconfirmed delivery from rejection, and
+/// must never trigger an automatic resend after a possible submission.
+pub trait ThreadMessageHost: Send + Sync {
+    /// Submits one attributed item without granting it human authority.
+    fn send(
+        &self,
+        thread_id: ThreadId,
+        message: ResponseItem,
+    ) -> ExtensionFuture<'_, Result<MessageSubmission, String>>;
+}
+
+/// Breaks the manager-to-host ownership cycle during process construction.
+#[derive(Default)]
+pub struct ThreadMessageHostHandle {
+    /// Installed once after the app-server has constructed its processors.
+    host: OnceLock<Weak<dyn ThreadMessageHost>>,
+}
+
+impl ThreadMessageHostHandle {
+    /// Installs the process-owned implementation without retaining its manager.
+    ///
+    /// # Panics
+    /// Panics if process construction installs the capability more than once.
+    pub fn set(&self, host: Weak<dyn ThreadMessageHost>) {
+        assert!(
+            self.host.set(host).is_ok(),
+            "message host is installed once"
+        );
+    }
+}
+
+/// Acceptance of a message, without a claim that the target completed work.
+pub struct MessageSubmission {
+    /// Turn that accepted the message.
+    pub turn_id: String,
+    /// Admission detail available from the receiving runtime.
+    pub status: Delivery,
 }
 
 /// Registers the tool only for roots with a host-installed capability.
@@ -60,8 +108,10 @@ pub(super) fn register(session: &Session, turn: &TurnContext, registry: &mut Too
 
 /// Process registry access without a thread-to-manager ownership cycle.
 struct MessageHost {
-    /// Only this registry may resolve the destination.
+    /// Resolves destinations already loaded by this process.
     manager: Weak<ThreadManager>,
+    /// App-server-owned routing, absent in standalone Core fixtures.
+    delivery: Option<Arc<ThreadMessageHostHandle>>,
 }
 
 impl ThreadLifecycleContributor<Config> for MessageHost {
@@ -73,6 +123,7 @@ impl ThreadLifecycleContributor<Config> for MessageHost {
             if !input.session_source.is_non_root_agent() {
                 input.thread_store.insert(MessageHost {
                     manager: self.manager.clone(),
+                    delivery: self.delivery.clone(),
                 });
             }
         })
@@ -89,7 +140,7 @@ struct Handler {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Args {
-    /// Loaded destination in the caller's app-server process.
+    /// Destination root in the same host and Codex home.
     thread_id: String,
     /// Message content, delivered as agent output rather than user instructions.
     prompt: String,
@@ -116,18 +167,20 @@ struct Receipt {
     source_thread_id: ThreadId,
     /// Newly started or already active destination turn.
     turn_id: String,
-    /// How Core accepted this submission.
+    /// Admission detail reported by the destination runtime.
     status: Delivery,
 }
 
 /// Distinguishes starting new work from steering work already in progress.
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Delivery {
+pub enum Delivery {
     /// A new destination turn accepted the input.
     Started,
     /// The active destination turn accepted steering input.
     Steered,
+    /// A local peer accepted input but its protocol omits the admission mode.
+    Submitted,
 }
 
 impl Handler {
@@ -161,16 +214,6 @@ impl Handler {
             .manager
             .upgrade()
             .ok_or_else(|| invalid("messaging host is shutting down"))?;
-        let destination = manager.get_thread(thread_id).await.map_err(|error| {
-            invalid(format!(
-                "destination must be loaded in this app-server process; resume it in the host first: {error}"
-            ))
-        })?;
-        if destination.session_source.is_non_root_agent() {
-            return Err(invalid(
-                "destination must be a root thread; use collaboration tools for subagents",
-            ));
-        }
         let source_thread_id = invocation.session.thread_id();
         let source_thread_name = if let Ok(source) = manager.get_thread(source_thread_id).await {
             source
@@ -196,23 +239,42 @@ impl Handler {
             ),
             internal_chat_message_metadata_passthrough: None,
         };
-        let submitted = destination
-            .start_or_steer_turn(
-                TurnInputRequest::new(TurnInput::ResponseItem(message)).on_start(
-                    TurnStartOptions {
-                        turn_trigger: Some("saffron_thread_message".to_string()),
-                        ..Default::default()
-                    },
-                ),
-            )
-            .await
-            .map_err(invalid)?;
-        let (status, turn_id) = match submitted {
-            TurnInputSubmission::Started { turn_id, .. } => (Delivery::Started, turn_id),
-            TurnInputSubmission::Steered { turn_id, .. } => (Delivery::Steered, turn_id),
-            TurnInputSubmission::NotSubmitted { reason } => {
-                return Err(invalid(format!("message was not submitted: {reason:?}")));
+        let (status, turn_id) = if let Ok(destination) = manager.get_thread(thread_id).await {
+            if destination.session_source.is_non_root_agent() {
+                return Err(invalid(
+                    "destination must be a root thread; use collaboration tools for subagents",
+                ));
             }
+            let submitted = destination
+                .start_or_steer_turn(
+                    TurnInputRequest::new(TurnInput::ResponseItem(message)).on_start(
+                        TurnStartOptions {
+                            turn_trigger: Some("saffron_thread_message".to_string()),
+                            ..Default::default()
+                        },
+                    ),
+                )
+                .await
+                .map_err(invalid)?;
+            match submitted {
+                TurnInputSubmission::Started { turn_id, .. } => (Delivery::Started, turn_id),
+                TurnInputSubmission::Steered { turn_id, .. } => (Delivery::Steered, turn_id),
+                TurnInputSubmission::NotSubmitted { reason } => {
+                    return Err(invalid(format!("message was not submitted: {reason:?}")));
+                }
+            }
+        } else {
+            let host = self
+                .host
+                .delivery
+                .as_ref()
+                .and_then(|handle| handle.host.get())
+                .and_then(Weak::upgrade)
+                .ok_or_else(|| {
+                    invalid("destination is not loaded and same-host messaging is unavailable")
+                })?;
+            let submitted = host.send(thread_id, message).await.map_err(invalid)?;
+            (submitted.status, submitted.turn_id)
         };
         Ok(boxed_tool_output(JsonToolOutput::new(
             serde_json::to_value(Receipt {
@@ -237,11 +299,11 @@ impl ToolExecutor<ToolInvocation> for Handler {
             description: "Saffron extensions for independent thread and task coordination.".to_string(),
             tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
                 name: "send_message_to_thread".to_string(),
-                description: "Send a message to a root thread already loaded in this app-server process. Starts a turn when idle and steers an active turn without interrupting it. Preserves destination settings and includes your thread ID as the sender. Use only for user-authorized communication. The result reports submission, not completion. Unloaded threads must first be resumed by the host; other processes and subagents are not supported. Do not retry an uncertain delivery automatically.".to_string(),
+                description: "Send a message to a root thread on this host in the same Codex home. Starts a turn when idle and steers an active turn without interrupting it. Preserves destination settings and includes your thread ID as the sender. Saved roots can be resumed; another process must own the target through the local control socket and use the same Codex release. Archived threads, subagents and other hosts are unsupported. Use only for user-authorized communication. The result reports submission, not completion; submitted means the peer accepted input without reporting start versus steer. Cancellation does not recall a delivery. Do not retry an uncertain delivery automatically.".to_string(),
                 strict: false,
                 defer_loading: None,
                 parameters: JsonSchema::object(BTreeMap::from([
-                    ("thread_id".to_string(), JsonSchema::string(Some("Destination root thread ID in this app-server process.".to_string()))),
+                    ("thread_id".to_string(), JsonSchema::string(Some("Destination root thread ID on this host in the same Codex home.".to_string()))),
                     ("prompt".to_string(), JsonSchema::string(Some("Message to deliver to the destination.".to_string()))),
                 ]), Some(vec!["thread_id".to_string(), "prompt".to_string()]), Some(false.into())),
                 output_schema: None,

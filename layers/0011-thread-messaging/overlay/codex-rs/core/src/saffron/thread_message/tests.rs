@@ -218,7 +218,7 @@ fn nonsteerable_turn_is_not_interrupted() -> anyhow::Result<()> {
     })
 }
 
-/// A thread loaded by another registry cannot be reached even on the same host.
+/// Core without a host router cannot restore or reach another registry.
 #[test]
 fn foreign_and_unloaded_destinations_are_not_resumed() -> anyhow::Result<()> {
     run_test_with_large_stack("message process scope", || async {
@@ -232,7 +232,7 @@ fn foreign_and_unloaded_destinations_are_not_resumed() -> anyhow::Result<()> {
         assert!(
             error
                 .to_string()
-                .contains("destination must be loaded in this app-server process")
+                .contains("same-host messaging is unavailable")
         );
         host.destination.thread.shutdown_and_wait().await?;
         host.manager
@@ -242,7 +242,11 @@ fn foreign_and_unloaded_destinations_are_not_resumed() -> anyhow::Result<()> {
             .send(host.destination.thread_id, "not resumed")
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("resume it in the host first"));
+        assert!(
+            error
+                .to_string()
+                .contains("same-host messaging is unavailable")
+        );
         assert!(
             host.manager
                 .get_thread(host.destination.thread_id)
@@ -339,7 +343,7 @@ impl TestHost {
         let auth = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
         let manager = Arc::new_cyclic(|manager| {
             let mut builder = ExtensionRegistryBuilder::default();
-            install(&mut builder, manager.clone());
+            install(&mut builder, manager.clone(), None);
             ThreadManager::new(
                 &config,
                 Arc::clone(&auth),
