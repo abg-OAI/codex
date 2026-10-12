@@ -218,6 +218,7 @@ impl ToolCallRuntime {
                 }
                 .or_cancel_tool(&invocation_cancellation_token)
                 .await?;
+                crate::saffron::archive_self::terminal::admit_tool(&turn)?;
                 // Admission through the parallel-execution gate marks the end
                 // of dispatch waiting and the start of handler execution.
                 if let Some(execution_started_at) = execution_started_at {
