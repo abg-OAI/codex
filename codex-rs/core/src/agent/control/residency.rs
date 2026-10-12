@@ -59,10 +59,30 @@ impl ThreadManagerState {
         tokio::spawn(async move {
             let _residency_guard = residency_guard;
             thread.ensure_rollout_materialized().await;
-            if let Err(err) = thread.shutdown_and_wait().await {
-                teardown.record_shutdown_failure("stop_resident", CodexErrKind::from(&err).into());
-                teardown.complete();
-                return Err(err);
+            match thread.request_shutdown_if_idle().await {
+                Ok(true) => thread.wait_until_terminated().await,
+                Ok(false) => {
+                    thread
+                        .session
+                        .services
+                        .local_agent_runtime
+                        .residency
+                        .touch(thread_id);
+                    teardown.complete();
+                    return Ok(ThreadEvictionOutcome::Busy);
+                }
+                Err(err) => {
+                    teardown
+                        .record_shutdown_failure("stop_resident", CodexErrKind::from(&err).into());
+                    thread
+                        .session
+                        .services
+                        .local_agent_runtime
+                        .residency
+                        .touch(thread_id);
+                    teardown.complete();
+                    return Err(err);
+                }
             }
             // Dispatch has stopped and the residency guard excludes senders. A tree
             // shutdown deliberately discards its mailbox instead of retaining it.
@@ -324,6 +344,7 @@ async fn is_unloadable(thread: &CodexThread) -> bool {
             .input_queue
             .has_trigger_turn_mailbox_items()
             .await
+        && !thread.should_retain_while_idle().await
 }
 
 #[cfg(test)]
