@@ -143,6 +143,11 @@ impl LocalAgentControl {
     }
 }
 
+#[path = "../saffron/goal_supervisor/fork_tests.rs"]
+mod saffron_fork_tests;
+
+#[path = "../saffron/goal_supervisor/notification_tests.rs"]
+mod saffron_notification_tests;
 async fn test_config_with_cli_overrides(
     mut cli_overrides: Vec<(String, TomlValue)>,
 ) -> (TempDir, Config) {
@@ -748,6 +753,7 @@ async fn spawn_failure_context_survives_manager_and_fork_errors() {
                 fork_mode: Some(SpawnAgentForkMode::FullHistory),
                 ..Default::default()
             },
+            AgentListingVisibility::Listed,
         )
         .await
         .expect_err("fork requires a parent spawn call id");
