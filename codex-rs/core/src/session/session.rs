@@ -91,6 +91,9 @@ pub(crate) struct Session {
     pub(crate) realtime_history: Option<Mutex<crate::realtime_history::RealtimeHistoryState>>,
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     pub(crate) async_hook_results: async_channel::Receiver<HookCompletedEvent>,
+    /// Coordinates in-place attachment of persistence without inflating the
+    /// already-large Session value carried by startup futures.
+    pub(super) persistence_repair: Box<super::persistence_repair::PersistenceRepair>,
     pub(crate) input_queue: InputQueue,
     pub(crate) services: SessionServices,
     pub(super) git_enrichment_policy: GitEnrichmentPolicy,
@@ -1849,6 +1852,7 @@ impl Session {
                 .then(|| Mutex::new(Default::default())),
                 active_turn: Mutex::new(None),
                 async_hook_results,
+                persistence_repair: Box::default(),
                 input_queue: InputQueue::with_controller(
                     thread_id,
                     Arc::clone(&services.agent_control),
