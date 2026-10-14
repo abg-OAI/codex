@@ -22,10 +22,14 @@ const LIVE_MESSAGE: &str = "message accepted only by the writerless saved runtim
 
 fn marker(text: &str, turn_id: &str) -> ResponseItem {
     let mut item = ResponseItem::Message {
+        encrypted_content: None,
+        status: None,
         id: Some(ResponseItemId::with_suffix("msg", text)),
         role: "assistant".to_string(),
         content: vec![ContentItem::OutputText {
             text: text.to_string(),
+            annotations: None,
+            logprobs: None,
         }],
         phase: Some(MessagePhase::FinalAnswer),
         internal_chat_message_metadata_passthrough: None,

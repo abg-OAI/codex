@@ -529,6 +529,8 @@ fn turn_started(turn_id: &str) -> RolloutItem {
 fn user_message(text: &str) -> RolloutItem {
     RolloutItem::ResponseItem(
         ResponseItem::Message {
+            encrypted_content: None,
+            status: None,
             id: None,
             role: "user".to_string(),
             content: vec![ContentItem::InputText {

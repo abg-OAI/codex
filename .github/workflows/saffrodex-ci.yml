@@ -149,6 +149,8 @@ jobs:
       - name: Run core unit and Saffron integration tests
         working-directory: ${{ steps.projection.outputs.path }}
         run: |
+          cargo build --manifest-path codex-rs/Cargo.toml \
+            --profile ci-test --bin codex-code-mode-host
           just test --cargo-profile ci-test \
             --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
             -p codex-core \
@@ -162,8 +164,6 @@ jobs:
             -p codex-app-server-protocol \
             --lib \
             saffron::tests
-          cargo build --manifest-path codex-rs/Cargo.toml \
-            --profile ci-test --bin codex-code-mode-host
           just test --cargo-profile ci-test \
             --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
             -p codex-app-server \

@@ -77,9 +77,14 @@ impl ThreadRequestProcessor {
         };
         let has_explicit_model_resume_override =
             has_model_resume_override(request_overrides.as_ref(), &typesafe_overrides);
+        let persisted_settings = match &thread_history {
+            InitialHistory::Resumed(resumed) => latest_persisted_resume_settings(&resumed.history),
+            InitialHistory::New | InitialHistory::Cleared | InitialHistory::Forked(_) => None,
+        };
         let persisted_metadata = self
             .load_and_apply_persisted_resume_metadata(
                 &thread_history,
+                persisted_settings.as_ref(),
                 &mut request_overrides,
                 &mut typesafe_overrides,
             )

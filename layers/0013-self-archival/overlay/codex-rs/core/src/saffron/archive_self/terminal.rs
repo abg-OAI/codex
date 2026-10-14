@@ -134,9 +134,15 @@ pub(crate) async fn complete(
                 turn,
                 &step.settings.model_info,
                 ResponseItem::Message {
+                    encrypted_content: None,
+                    status: None,
                     id: Some(ResponseItemId::new("msg")),
                     role: "assistant".into(),
-                    content: vec![ContentItem::OutputText { text: text.clone() }],
+                    content: vec![ContentItem::OutputText {
+                        text: text.clone(),
+                        annotations: None,
+                        logprobs: None,
+                    }],
                     phase: Some(MessagePhase::FinalAnswer),
                     internal_chat_message_metadata_passthrough: None,
                 },
