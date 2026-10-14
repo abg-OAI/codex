@@ -152,6 +152,7 @@ impl AgentControl for TestAgentControl {
 
     fn check_turn_admission(
         &self,
+        _thread_id: ThreadId,
         _version: MultiAgentVersion,
         _source: &SessionSource,
     ) -> CodexResult<()> {
@@ -160,6 +161,7 @@ impl AgentControl for TestAgentControl {
 
     fn admit_turn(
         &self,
+        _thread_id: ThreadId,
         _version: MultiAgentVersion,
         _source: &SessionSource,
     ) -> Option<AgentExecutionGuard> {
