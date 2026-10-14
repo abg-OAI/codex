@@ -164,10 +164,10 @@ index 59d1a94157d6dc5c37f65dfd0d5e3aaf822b5dfd..4a4189b81b3b6a449e7617fdc0013e10
  pub(crate) use turn_processor::TurnRequestProcessor;
  pub(crate) use windows_sandbox_processor::WindowsSandboxRequestProcessor;
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d0277aa6fe6 100644
+index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439d60b9616 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -475,10 +475,12 @@ pub(crate) struct ThreadRequestProcessor {
+@@ -477,10 +477,12 @@ pub(crate) struct ThreadRequestProcessor {
      pub(super) initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
  }
 
@@ -181,7 +181,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
  }
 
  /// Outcome of trying to satisfy a resume request from an already loaded thread.
-@@ -3855,7 +3857,7 @@ impl ThreadRequestProcessor {
+@@ -3857,7 +3859,7 @@ impl ThreadRequestProcessor {
          app_server_client_version: Option<String>,
          client_mcp_extensions: ClientMcpExtensions,
          prepared_config: &mut Option<PreparedResumeConfig>,
@@ -190,7 +190,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
          if let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
              && self
                  .pending_thread_unloads
-@@ -3892,7 +3894,7 @@ impl ThreadRequestProcessor {
+@@ -3894,7 +3896,7 @@ impl ThreadRequestProcessor {
                      // The listener may need this permit to finish the response.
                      drop(_thread_list_state_permit);
                      let _ = completion.await;
@@ -199,7 +199,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
                  }
                  RunningThreadResumeResult::NotRunning(stored_thread) => stored_thread,
              },
-@@ -3905,7 +3907,27 @@ impl ThreadRequestProcessor {
+@@ -3907,7 +3909,27 @@ impl ThreadRequestProcessor {
                          self.continue_daemon_turn(&params.thread_id, saved.clone())
                              .await;
                      }
@@ -228,7 +228,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
                  }
                  None
              }
-@@ -3958,6 +3980,13 @@ impl ThreadRequestProcessor {
+@@ -3960,6 +3982,13 @@ impl ThreadRequestProcessor {
              }
          };
          let (thread_history, resume_source_thread) = resume_result?;
@@ -242,7 +242,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
          // Path-based resume can use an empty request thread ID. Coordinate once its real
          // identity is known; unrelated loaded threads never wait for this cold startup.
          let _goal_resume_guard = if let InitialHistory::Resumed(resumed) = &thread_history {
-@@ -4003,7 +4032,7 @@ impl ThreadRequestProcessor {
+@@ -4005,7 +4034,7 @@ impl ThreadRequestProcessor {
              && !can_accept_direct_input(thread_history.get_multi_agent_version(), &source)
          {
              let ThreadResumeTarget::Client(request_id) = target else {
@@ -251,7 +251,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
              };
              let child_thread_id = resumed_history.conversation_id;
              self.thread_manager
-@@ -4041,7 +4070,7 @@ impl ThreadRequestProcessor {
+@@ -4043,7 +4072,7 @@ impl ThreadRequestProcessor {
                  RunningThreadResumeResult::Handled(completion) => {
                      drop(_thread_list_state_permit);
                      let _ = completion.await;
@@ -260,7 +260,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
                  }
                  RunningThreadResumeResult::NotRunning(_) => Err(invalid_request(
                      "cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first, or use thread/read to inspect it",
-@@ -4200,7 +4229,7 @@ impl ThreadRequestProcessor {
+@@ -4218,7 +4247,7 @@ impl ThreadRequestProcessor {
                      ThreadResumeTarget::Client(request_id) => {
                          self.request_trace_context(request_id).await
                      }
@@ -268,8 +268,8 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
 +                    ThreadResumeTarget::DaemonRecovery(_) | ThreadResumeTarget::Input(_) => None,
                  },
                  client_mcp_extensions,
-             )
-@@ -4217,18 +4246,36 @@ impl ThreadRequestProcessor {
+                 ..StartThreadOptions::new(config)
+@@ -4236,18 +4265,36 @@ impl ThreadRequestProcessor {
                      self.thread_watch_manager
                          .upsert_thread(&thread_id.to_string())
                          .await;
@@ -313,7 +313,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
                  };
                  let request_id = request_id.clone();
                  if let Err(err) = Self::set_app_server_client_info(
-@@ -4239,7 +4286,7 @@ impl ThreadRequestProcessor {
+@@ -4258,7 +4305,7 @@ impl ThreadRequestProcessor {
                  .await
                  {
                      self.outgoing.send_error(request_id, err).await;
@@ -322,7 +322,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
                  }
                  let instruction_sources = codex_thread.legacy_instruction_sources().await;
                  let SessionConfiguredEvent { rollout_path, .. } = session_configured;
-@@ -4247,7 +4294,7 @@ impl ThreadRequestProcessor {
+@@ -4266,7 +4313,7 @@ impl ThreadRequestProcessor {
                      let error =
                          internal_error(format!("rollout path missing for thread {thread_id}"));
                      self.outgoing.send_error(request_id, error).await;
@@ -331,7 +331,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
                  };
                  // Paginated JSONL is canonical, but its SQLite projection can lag after a
                  // previous write failure. Persist after reopening the live writer so legacy
-@@ -4260,14 +4307,14 @@ impl ThreadRequestProcessor {
+@@ -4279,14 +4326,14 @@ impl ThreadRequestProcessor {
                          .map_err(thread_store_resume_read_error)
                  {
                      self.outgoing.send_error(request_id, error).await;
@@ -348,7 +348,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
                          }
                      }
                  } else {
-@@ -4302,7 +4349,7 @@ impl ThreadRequestProcessor {
+@@ -4321,7 +4368,7 @@ impl ThreadRequestProcessor {
                          self.outgoing
                              .send_error(request_id, internal_error(message))
                              .await;
@@ -357,7 +357,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
                      }
                  };
                  thread.thread_source = codex_thread
-@@ -4338,7 +4385,7 @@ impl ThreadRequestProcessor {
+@@ -4357,7 +4404,7 @@ impl ThreadRequestProcessor {
                              Ok(cursors) => cursors,
                              Err(error) => {
                                  self.outgoing.send_error(request_id, error).await;
@@ -366,7 +366,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
                              }
                          }
                      } else {
-@@ -4365,7 +4412,7 @@ impl ThreadRequestProcessor {
+@@ -4384,7 +4431,7 @@ impl ThreadRequestProcessor {
                          Ok(page) => Some(page),
                          Err(error) => {
                              self.outgoing.send_error(request_id, error).await;
@@ -375,7 +375,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
                          }
                      }
                  } else {
-@@ -4446,7 +4493,7 @@ impl ThreadRequestProcessor {
+@@ -4465,7 +4512,7 @@ impl ThreadRequestProcessor {
                  return Err(error);
              }
          }
@@ -384,7 +384,7 @@ index cd28513ae909580f487cdff3caa5a290551b03fa..a527afad404705b8918451422d280d02
      }
 
      async fn load_and_apply_persisted_resume_metadata(
-@@ -6664,6 +6711,7 @@ fn build_thread_from_loaded_snapshot(
+@@ -6687,6 +6734,7 @@ fn build_thread_from_loaded_snapshot(
  }
 
  mod saffron_goal_scheduler;
@@ -405,10 +405,10 @@ index 28859adb32675b065989eaa86593b2e890df9794..13eeab8b3b2e657704c76e39c0472516
  #[cfg(unix)]
  mod command_exec;
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index ca211d85d5542840222692f3713f0c339d682dcd..a3accaf5c6eaeeecc0a12ec9caf20d401e7d488a 100644
+index bbbd05931a78cf17db114e536c516f662be4f6f0..80a14a393d840e5c932efcfed528fd502b318c20 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -137,6 +137,11 @@ pub(crate) use skills::skills_load_input_from_config;
+@@ -139,6 +139,11 @@ pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
  pub use saffron::fork_thread::install as install_saffron_fork_thread;

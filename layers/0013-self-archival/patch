@@ -103,10 +103,10 @@ index 2b2945693a2a2b73f24497e95c3123ed22cbee37..6cc51aa37d83ba302109977783f8f055
          if let Some(worker) = &self.turn_cost_worker {
              worker.shutdown();
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index a527afad404705b8918451422d280d0277aa6fe6..68c4c3277db1f12c49a0cd14661b39d8211e722c 100644
+index cfad6428a228869f1f1bbf0ffc946439d60b9616..913cee70ecd6abe3140866b2967768ef18cd9d6a 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -6710,6 +6710,7 @@ fn build_thread_from_loaded_snapshot(
+@@ -6733,6 +6733,7 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -127,7 +127,7 @@ index 13eeab8b3b2e657704c76e39c04725161c128e45..0b1c39c4c5443f90ed6d3fb0e9381b4b
  mod saffron_goal_supervisor;
  mod saffron_goal_supervisor_history;
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index ded7ed824273112bd539a1437dd5cfcda9f60c5f..c60486b41b108323a5fb6385037adc2dcad13888 100644
+index 66b2002195363635a510ce4bba5d3abb55b2db9a..5ad9cac9ad1072e7258300ccd545f89f5f304e07 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -331,6 +331,18 @@ impl CodexThread {
@@ -160,10 +160,10 @@ index ded7ed824273112bd539a1437dd5cfcda9f60c5f..c60486b41b108323a5fb6385037adc2d
              .await
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index a3accaf5c6eaeeecc0a12ec9caf20d401e7d488a..2e9b0137a51822a5909e4e525bc18c7ad038a897 100644
+index 80a14a393d840e5c932efcfed528fd502b318c20..3f67ec970c5a62a99a5de7b798add93e516536d3 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -136,6 +136,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -138,6 +138,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
@@ -191,10 +191,10 @@ index be2c37671ce574eb1cac73fc2ffb00316c715630..190e770b5a8695fce40fbb2acf4d03d3
 +    archive_self::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index 5417e2b2a0c1416e7c743d0e39266eda93633b59..b751dd4d8e562d3cd89d364767bc1868ca6ac672 100644
+index 5ff57f83a88aad5f5fd9b8c758fa2a101a4229be..ca4a04d98edf138df0418c2f7dee466be9279ecb 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
-@@ -757,6 +757,19 @@ pub(super) async fn submission_loop(
+@@ -758,6 +758,19 @@ pub(super) async fn submission_loop(
                      false
                  }
                  Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
@@ -215,19 +215,19 @@ index 5417e2b2a0c1416e7c743d0e39266eda93633b59..b751dd4d8e562d3cd89d364767bc1868
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index a101d1a3c6d8b02e50eb13c8b4a15a60344a2f0e..d75c4d1dbe0ce1761ba289d4eab9ddb28e406876 100644
+index 891ebc90f93ed297db8696abedb4c65b18af4ade..da71775162370450cb9c031aefc7fbcbb3686d0b 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -238,6 +238,7 @@ use codex_protocol::error::Result as CodexResult;
- use codex_protocol::exec_output::StreamOutput;
+@@ -240,6 +240,7 @@ use codex_protocol::exec_output::StreamOutput;
 
+ pub(crate) mod async_compaction;
  mod code_mode_warning;
 +mod completion_shutdown;
  mod config_refresh;
  pub(crate) mod context_window;
  mod daemon_recovery;
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 9b55935776e81c9a12341391e263d78ea1c2fb01..0507961f626b81d82a245c8b4cce2e92bfbf1e8f 100644
+index d56de8f3910cc309766bf7735bd623b5a53fbf40..879aba53cbcb9494e55a954639bbf0e6c2e1764d 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -674,7 +674,8 @@ impl Session {
@@ -241,10 +241,10 @@ index 9b55935776e81c9a12341391e263d78ea1c2fb01..0507961f626b81d82a245c8b4cce2e92
      }
 
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index 632bb1a2946e4653cd4f32d77930bd472d72ea08..167df69c737ab6037cffb736abda5e80aa3613df 100644
+index d1d43621210c979e2a98e2c2bc49698e825d71c1..dd961ed6dc5a8e1adc0b7ebb1c33cd5dc06621b7 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
-@@ -529,20 +529,41 @@ pub(crate) async fn run_turn(
+@@ -559,20 +559,41 @@ pub(crate) async fn run_turn(
              .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
              .await;
 
@@ -317,7 +317,7 @@ index 6ac22952e81e020e224b7dce68d8961b42a426c5..5ff0e9102c0beadbe16bc8d3899debed
              state.turn_attribution = Some(attribution);
          }
 diff --git a/codex-rs/core/src/state/session.rs b/codex-rs/core/src/state/session.rs
-index 0f63dad3ee797a0ffba2aa98d43f91f566dbc842..4395eb1a397141b0cb0225f9477ddcc46ffedff3 100644
+index fff1bf667f6b21c15cb0dbce686adeaf03a12677..3a0c972249ab67c1822f6e748cadd9542aee7d37 100644
 --- a/codex-rs/core/src/state/session.rs
 +++ b/codex-rs/core/src/state/session.rs
 @@ -87,6 +87,8 @@ pub(crate) struct SessionState {
@@ -329,19 +329,19 @@ index 0f63dad3ee797a0ffba2aa98d43f91f566dbc842..4395eb1a397141b0cb0225f9477ddcc4
      /// Latest regular turn, retained across completion, settings changes, and compaction.
      pub(crate) turn_attribution: Option<TurnAttribution>,
      /// Runtime accounting state for the active auto-compaction window.
-@@ -134,6 +136,7 @@ impl SessionState {
+@@ -135,6 +137,7 @@ impl SessionState {
              additional_context: AdditionalContextStore::default(),
              previous_turn_settings: None,
              last_started_turn_id: None,
 +            last_completed_turn_id: None,
              turn_attribution: None,
              auto_compact_window: AutoCompactWindow::new_with_ids(auto_compact_window_ids),
-             reasoning_effort_pin: ReasoningEffortPin::Unset,
+             async_compaction: crate::session::async_compaction::AsyncCompactionState::default(),
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 2aeb1e536c124438333b186c8160fe8fdb0c9f7c..c8da37a4bb8f4b921ba4c09383f9da0e0307084b 100644
+index 69d921044620121d5f7a854f511e088886393bd5..66c629540f8712bbff40a2d733611e88019941aa 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -940,15 +940,24 @@ impl Session {
+@@ -958,15 +958,24 @@ impl Session {
          }
          drop(agent_execution_guard);
          drop(ancestor_turn_retention_guard);
@@ -382,10 +382,10 @@ index e0b50c48dd7ed4558b4423d25bae6e62d99ccea5..df59764c6d0741906b7fc46bb44373da
                  // of dispatch waiting and the start of handler execution.
                  if let Some(execution_started_at) = execution_started_at {
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index f2a76ef087d8bf02aaef9eee7ed2ac4353ad66f3..e5c75d5af3cababea2aaa71fced8418dec981a44 100644
+index 31966db4ab2a76d33cc4f29840f86a104aa25e91..46d853d0d1172477e1ca0f2997872561e7940f1e 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
-@@ -865,6 +865,13 @@ pub enum Op {
+@@ -868,6 +868,13 @@ pub enum Op {
          reply: oneshot::Sender<bool>,
      },
 
@@ -399,7 +399,7 @@ index f2a76ef087d8bf02aaef9eee7ed2ac4353ad66f3..e5c75d5af3cababea2aaa71fced8418d
      /// Execute a user-initiated one-off shell command (triggered by "!cmd").
      ///
      /// The command string is executed using the user's default shell and may
-@@ -1077,6 +1084,7 @@ impl Op {
+@@ -1082,6 +1089,7 @@ impl Op {
              Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
              Self::Shutdown => "shutdown",
              Self::ShutdownIfIdle { .. } => "shutdown_if_idle",
