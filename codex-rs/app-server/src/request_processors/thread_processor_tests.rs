@@ -1,3 +1,51 @@
+impl super::ThreadRequestProcessor {
+    /// Shares the dispatcher's manager and store so API tests can construct a
+    /// writerless saved runtime without adding a production mutation API.
+    pub(crate) fn saved_thread_persistence_test_resources(
+        &self,
+    ) -> (
+        std::sync::Arc<codex_core::ThreadManager>,
+        std::sync::Arc<dyn codex_thread_store::ThreadStore>,
+    ) {
+        (
+            std::sync::Arc::clone(&self.thread_manager),
+            std::sync::Arc::clone(&self.thread_store),
+        )
+    }
+
+    /// Recreates the historical failure by resuming a saved thread as ephemeral.
+    pub(crate) async fn resume_saved_thread_without_persistence_for_test(
+        &self,
+        mut config: codex_core::config::Config,
+        thread_id: codex_protocol::ThreadId,
+    ) -> anyhow::Result<std::sync::Arc<codex_core::CodexThread>> {
+        let stored = self
+            .thread_store
+            .read_thread(codex_thread_store::ReadThreadParams {
+                thread_id,
+                include_archived: true,
+                include_history: false,
+            })
+            .await?;
+        let (initial_history, _) = self
+            .load_resume_initial_history_from_stored_thread(stored)
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to load saved thread history: {error:?}"))?;
+        config.ephemeral = true;
+        Ok(self
+            .thread_manager
+            .resume_thread_with_history(
+                config,
+                initial_history,
+                std::sync::Arc::clone(&self.auth_manager),
+                /*parent_trace*/ None,
+                codex_protocol::mcp::ClientMcpExtensions::default(),
+            )
+            .await?
+            .thread)
+    }
+}
+
 mod thread_list_cwd_filter_tests {
     use super::super::normalize_thread_list_cwd_filters;
     use codex_app_server_protocol::ThreadListCwdFilter;
