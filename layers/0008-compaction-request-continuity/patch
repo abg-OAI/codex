@@ -176,7 +176,7 @@ index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62
  fn rewritten_output_preserves_harness_metadata() {
      let envelope = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index bacf8c3a5c5453051a20c57df1c3275c57ac27c3..7546e9dfff32e9efa988a29841f2452338924835 100644
+index 8d9ca690e3e4e79357c78d91d2dee4ceccd0bc84..9eefa1b7e31beff4fb69fbe5ae8a3598621a1f83 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
 @@ -477,12 +477,14 @@ async fn collect_compaction_output(
@@ -513,10 +513,10 @@ index a4db94d5e12296d4d4cf8347e042a60311eeeccd..e7a5022290e3d69bf54ff0b2cb5e0221
              truncate_retained_messages_for_remote_compaction(vec![source.clone()], max_tokens),
          );
 diff --git a/codex-rs/core/src/compact_remote_v2_installation.rs b/codex-rs/core/src/compact_remote_v2_installation.rs
-index a13b18ba448680976c0ce047aeb296e5c2c9d1ee..0646d7f00543840431cbe645725686c702c23acb 100644
+index 36e11b71537253b53e7de3abfddce06266d253c1..f06374512fb47ec458c14e77dbd8ad7e7a678b0e 100644
 --- a/codex-rs/core/src/compact_remote_v2_installation.rs
 +++ b/codex-rs/core/src/compact_remote_v2_installation.rs
-@@ -199,6 +199,10 @@ async fn build_and_install_compaction(
+@@ -183,6 +183,10 @@ async fn build_and_install_compaction(
          } else {
              RetainedImageBudget::Disabled
          },

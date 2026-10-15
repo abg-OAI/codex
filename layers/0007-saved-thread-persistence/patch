@@ -495,10 +495,10 @@ index ed151f7c648410e8eb0c3d30a3a91519fd4f7dd9..6c315971364c2d8d90b11b76056eeee3
      }
 
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index c7e241ae80fe3120c59a67da57ed0d8cf346a2cc..66b2002195363635a510ce4bba5d3abb55b2db9a 100644
+index 98052f011406e15ee55901cc5734d147adcfc732..ded7ed824273112bd539a1437dd5cfcda9f60c5f 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -919,7 +919,26 @@ impl CodexThread {
+@@ -911,7 +911,26 @@ impl CodexThread {
      }
 
      pub fn rollout_path(&self) -> Option<PathBuf> {
@@ -551,10 +551,10 @@ index fa0a530083ff8eb3250149649d0f4d2c7d7333ae..5ff57f83a88aad5f5fd9b8c758fa2a10
          startup_prewarm.abort().await;
      }
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b18af4ade 100644
+index 3a36880cee09b554cfb6304b7d7a5ad3363650c3..adc7385ff05f3d960afe33de191e853fff420092 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -259,6 +259,7 @@ mod mcp_prewarm;
+@@ -260,6 +260,7 @@ mod mcp_prewarm;
  mod mcp_refresh;
  mod mcp_runtime;
  pub(crate) mod multi_agents;
@@ -562,7 +562,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
  mod plugin_selection;
  mod realtime_history;
  mod retained_context;
-@@ -1487,7 +1488,12 @@ impl Session {
+@@ -1488,7 +1489,12 @@ impl Session {
      }
 
      pub(crate) fn state_db(&self) -> Option<state_db::StateDbHandle> {
@@ -576,7 +576,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
      }
 
      pub(crate) fn live_thread_for_persistence(
-@@ -1499,7 +1505,12 @@ impl Session {
+@@ -1500,7 +1506,12 @@ impl Session {
      }
 
      pub(crate) fn live_thread(&self) -> Option<&LiveThread> {
@@ -590,7 +590,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
      }
 
      pub(crate) async fn set_thread_memory_mode(
-@@ -3692,8 +3703,9 @@ impl Session {
+@@ -3693,8 +3704,9 @@ impl Session {
              .iter()
              .map(|envelope| envelope.item.clone())
              .collect::<Vec<_>>();
@@ -601,7 +601,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
              state
                  .current_time_reminder
                  .note_recorded_items(&response_items);
-@@ -3733,7 +3745,8 @@ impl Session {
+@@ -3734,7 +3746,8 @@ impl Session {
              state
                  .history
                  .record_annotated_items(&mut items, model_info.truncation_policy.into());
@@ -611,7 +611,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
          for image in image_preparations {
              self.services
                  .analytics_events_client
-@@ -3744,13 +3757,14 @@ impl Session {
+@@ -3745,13 +3758,14 @@ impl Session {
          }
          let rollout_items: Vec<RolloutItem> =
              items.into_iter().map(RolloutItem::ResponseItem).collect();
@@ -627,7 +627,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
          if turn_context.config.memories.disable_on_external_context
              && let Some(item) = response_items
                  .iter()
-@@ -4088,21 +4102,24 @@ impl Session {
+@@ -4079,21 +4093,24 @@ impl Session {
          for mut recording in pending {
              let _ = recording.changed().await;
          }
@@ -655,7 +655,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
          drop(boundary);
          self.send_raw_response_items(turn_context, items).await;
      }
-@@ -4214,8 +4231,10 @@ impl Session {
+@@ -4205,8 +4222,10 @@ impl Session {
          // Wait for accepted updates to finish persisting, then keep later updates from
          // overtaking the current settings snapshot while its checkpoint is written.
          let _settings_guard = thread_settings::acquire_persistence_lock(self).await;
@@ -667,7 +667,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
              let complete_replacement =
                  matches!(&installation, CompactedHistoryInstallation::Complete(_));
              let (metadata, started_item) = match installation {
-@@ -4335,28 +4354,29 @@ impl Session {
+@@ -4326,28 +4345,29 @@ impl Session {
                      previous_turn_settings: state.previous_turn_settings(),
                  }),
              };
@@ -704,7 +704,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
          {
              let mut state = self.state.lock().await;
              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
-@@ -4727,6 +4747,11 @@ impl Session {
+@@ -4718,6 +4738,11 @@ impl Session {
 
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
@@ -716,7 +716,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
          if let Some(live_thread) = self.live_thread()
              && let Err(e) = live_thread.append_items(items).await
          {
-@@ -4955,11 +4980,12 @@ impl Session {
+@@ -4946,11 +4971,12 @@ impl Session {
                  thread_settings::applied_event(self).await,
              ));
          }
@@ -732,7 +732,7 @@ index 32eca0410be6d86b420c44399d182e3584e3ad91..891ebc90f93ed297db8696abedb4c65b
          Ok(Arc::new(world_state))
      }
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index befd794f93b250a511888f037ed9f63dfa4716d3..d56de8f3910cc309766bf7735bd623b5a53fbf40 100644
+index 286c2c263ee0a3e59bc03b39400559e9bab4e69b..23b5d208545e32fcf50f3a7506ae37fef9416306 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -91,6 +91,9 @@ pub(crate) struct Session {
@@ -745,7 +745,7 @@ index befd794f93b250a511888f037ed9f63dfa4716d3..d56de8f3910cc309766bf7735bd623b5
      pub(crate) input_queue: InputQueue,
      pub(crate) services: SessionServices,
      pub(super) git_enrichment_policy: GitEnrichmentPolicy,
-@@ -1863,6 +1866,7 @@ impl Session {
+@@ -1862,6 +1865,7 @@ impl Session {
                  .then(|| Mutex::new(Default::default())),
                  active_turn: Mutex::new(None),
                  async_hook_results,
@@ -754,10 +754,10 @@ index befd794f93b250a511888f037ed9f63dfa4716d3..d56de8f3910cc309766bf7735bd623b5
                      thread_id,
                      Arc::clone(&services.agent_control),
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index e0370838c6bbefc65873baac440916ba1387848a..1d80e41ba73a201322509cebfaea870ce9fca94f 100644
+index 2cde3795393f3da412d7d9c4e516033e5896901d..faacbdd0c95c28ee5ee6c8993f41b43a32de43ab 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -6989,6 +6989,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
+@@ -6988,6 +6988,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
          realtime_history: None,
          active_turn: Mutex::new(None),
          async_hook_results,
@@ -765,7 +765,7 @@ index e0370838c6bbefc65873baac440916ba1387848a..1d80e41ba73a201322509cebfaea870c
          input_queue: super::input_queue::InputQueue::new(),
          services,
          git_enrichment_policy: GitEnrichmentPolicy::Fresh,
-@@ -9257,6 +9258,7 @@ where
+@@ -9256,6 +9257,7 @@ where
          realtime_history: None,
          active_turn: Mutex::new(None),
          async_hook_results,

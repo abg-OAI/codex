@@ -127,7 +127,7 @@ index 13eeab8b3b2e657704c76e39c04725161c128e45..0b1c39c4c5443f90ed6d3fb0e9381b4b
  mod saffron_goal_supervisor;
  mod saffron_goal_supervisor_history;
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 66b2002195363635a510ce4bba5d3abb55b2db9a..5ad9cac9ad1072e7258300ccd545f89f5f304e07 100644
+index ded7ed824273112bd539a1437dd5cfcda9f60c5f..c60486b41b108323a5fb6385037adc2dcad13888 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -331,6 +331,18 @@ impl CodexThread {
@@ -215,11 +215,11 @@ index 5ff57f83a88aad5f5fd9b8c758fa2a101a4229be..ca4a04d98edf138df0418c2f7dee466b
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 891ebc90f93ed297db8696abedb4c65b18af4ade..da71775162370450cb9c031aefc7fbcbb3686d0b 100644
+index adc7385ff05f3d960afe33de191e853fff420092..5cf856619b737948e5d980815eae3cefb3d9a250 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -240,6 +240,7 @@ use codex_protocol::exec_output::StreamOutput;
-
+@@ -241,6 +241,7 @@ use codex_protocol::exec_output::StreamOutput;
+ #[allow(dead_code)]
  pub(crate) mod async_compaction;
  mod code_mode_warning;
 +mod completion_shutdown;
@@ -227,7 +227,7 @@ index 891ebc90f93ed297db8696abedb4c65b18af4ade..da71775162370450cb9c031aefc7fbcb
  pub(crate) mod context_window;
  mod daemon_recovery;
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index d56de8f3910cc309766bf7735bd623b5a53fbf40..879aba53cbcb9494e55a954639bbf0e6c2e1764d 100644
+index 23b5d208545e32fcf50f3a7506ae37fef9416306..50bcb42219417cf20900d2e99b254e984e7f8568 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -674,7 +674,8 @@ impl Session {
@@ -241,10 +241,10 @@ index d56de8f3910cc309766bf7735bd623b5a53fbf40..879aba53cbcb9494e55a954639bbf0e6
      }
 
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index d1d43621210c979e2a98e2c2bc49698e825d71c1..dd961ed6dc5a8e1adc0b7ebb1c33cd5dc06621b7 100644
+index 64b42248bc73425e7d4fed80cada6a7855925380..5a3395669c1baed5d9530c0bc8c290b88bbcb161 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
-@@ -559,20 +559,41 @@ pub(crate) async fn run_turn(
+@@ -540,20 +540,41 @@ pub(crate) async fn run_turn(
              .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
              .await;
 
@@ -338,10 +338,10 @@ index fff1bf667f6b21c15cb0dbce686adeaf03a12677..3a0c972249ab67c1822f6e748cadd954
              auto_compact_window: AutoCompactWindow::new_with_ids(auto_compact_window_ids),
              async_compaction: crate::session::async_compaction::AsyncCompactionState::default(),
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 69d921044620121d5f7a854f511e088886393bd5..66c629540f8712bbff40a2d733611e88019941aa 100644
+index dea3f6b09e8ece3141ef624cb54aa8b45d336668..98d2f5dc39a574acbaaa7086ac4674f73ab41cae 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -958,15 +958,24 @@ impl Session {
+@@ -945,15 +945,24 @@ impl Session {
          }
          drop(agent_execution_guard);
          drop(ancestor_turn_retention_guard);
@@ -382,10 +382,10 @@ index e0b50c48dd7ed4558b4423d25bae6e62d99ccea5..df59764c6d0741906b7fc46bb44373da
                  // of dispatch waiting and the start of handler execution.
                  if let Some(execution_started_at) = execution_started_at {
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index 31966db4ab2a76d33cc4f29840f86a104aa25e91..46d853d0d1172477e1ca0f2997872561e7940f1e 100644
+index 7dd281bad6e6c3d85a6605e46a8e09c0d10672bc..4c6d0ccd6267b2ba0589ac663d85eb092af8e36e 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
-@@ -868,6 +868,13 @@ pub enum Op {
+@@ -865,6 +865,13 @@ pub enum Op {
          reply: oneshot::Sender<bool>,
      },
 
@@ -399,7 +399,7 @@ index 31966db4ab2a76d33cc4f29840f86a104aa25e91..46d853d0d1172477e1ca0f2997872561
      /// Execute a user-initiated one-off shell command (triggered by "!cmd").
      ///
      /// The command string is executed using the user's default shell and may
-@@ -1082,6 +1089,7 @@ impl Op {
+@@ -1079,6 +1086,7 @@ impl Op {
              Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
              Self::Shutdown => "shutdown",
              Self::ShutdownIfIdle { .. } => "shutdown_if_idle",
