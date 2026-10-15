@@ -107,7 +107,7 @@ index cda8c59dd87a4b3959985272d9b63a77c4fe5fb4..887ec2b9e41db944c137458c0ef1dea3
  ///
  /// In production builds this value should remain at its default (`false`) and
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index bc2f075304982984e2a1a3cdcff041bc5165c9ae..62d8ab64f1dc31a18440ffe7a49b431a20130d77 100644
+index dccb224dbc7106674506fa541045e8b0f756de33..9a07b6984d625eec0f5e3b95bc993dfcfdf295e9 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
 @@ -205,6 +205,7 @@ mod rollout_compression;

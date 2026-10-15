@@ -161,10 +161,10 @@ index 9862b8b3fa8db29968f588689fb45e3dce78a952..90afe2d58073e74c41ab796b1e49b8f1
 
  #[allow(clippy::too_many_arguments)]
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor/saffron_goal_scheduler.rs b/codex-rs/app-server/src/request_processors/thread_processor/saffron_goal_scheduler.rs
-index 6e4aac956eb88067ae2ba006ff13c88cbea035b7..4ce37c607c0045193f0ae5add0772c95b360aefb 100644
+index 4a506530a526479f15a6ddaa878efeadb7f20692..eb02dc3a550a0fe1535e50667dd3ee0bec827813 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor/saffron_goal_scheduler.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor/saffron_goal_scheduler.rs
-@@ -205,7 +205,7 @@ impl ThreadRequestProcessor {
+@@ -210,7 +210,7 @@ impl ThreadRequestProcessor {
                  }
                  pending_thread_unloads.insert(thread_id, tokio::sync::watch::channel(()).0);
              }
@@ -1474,7 +1474,7 @@ index 66eb053fb12a5665201852fda3a4864b79b0cfe6..dd7618be8749021dc6c491b8636d2813
  fn reservation_drop_releases_slot() {
      let registry = Arc::new(AgentRegistry::default());
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index bb740567b3365c5cddb5a583b9486735b4817a39..c7e241ae80fe3120c59a67da57ed0d8cf346a2cc 100644
+index 50c6c04e086eda3548444dfb893d832a14ad4618..98052f011406e15ee55901cc5734d147adcfc732 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -320,6 +320,17 @@ impl CodexThread {
@@ -1887,10 +1887,10 @@ index de46d6a1d641a60d3556891620143055be7c97a8..60ed99d4e4ed718c4f686a7c0963fdb3
      async fn input_queue_uses_unambiguous_trigger_parent_and_first_root() {
          let (parent, peer, root, root2) = (Some("a"), Some("b"), Some("r"), Some("s"));
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index f165e8d497cea496047af0c9089771a76bea3166..32eca0410be6d86b420c44399d182e3584e3ad91 100644
+index 282fe3ea0d84210d31bb3e212bcb195bf9fca431..3a36880cee09b554cfb6304b7d7a5ad3363650c3 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2550,6 +2550,10 @@ impl Session {
+@@ -2551,6 +2551,10 @@ impl Session {
          if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
              return;
          }
@@ -1901,7 +1901,7 @@ index f165e8d497cea496047af0c9089771a76bea3166..32eca0410be6d86b420c44399d182e35
 
          self.services
              .agent_control
-@@ -2565,6 +2569,7 @@ impl Session {
+@@ -2566,6 +2570,7 @@ impl Session {
                          .cloned(),
                      status,
                      error_info,
@@ -1910,7 +1910,7 @@ index f165e8d497cea496047af0c9089771a76bea3166..32eca0410be6d86b420c44399d182e35
                  &self.services.rollout_thread_trace,
              )
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 725f213d2bd820bf9bff9bd65cc739095d0d8d9c..befd794f93b250a511888f037ed9f63dfa4716d3 100644
+index a617d9367bc34a265c60c540ef8cd7b3d954c888..286c2c263ee0a3e59bc03b39400559e9bab4e69b 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -670,6 +670,20 @@ impl Session {
@@ -1997,10 +1997,10 @@ index aa43776d867a28dde1692ee79bff965b6652deca..49e63d93ac9f09565bb679d0c1b7fa2c
      pub(crate) tool_calls: u64,
      pub(crate) has_memory_citation: bool,
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 94476b0567505d950ede7388b7f912d5bd21be11..69d921044620121d5f7a854f511e088886393bd5 100644
+index 4a9319a31b6fb924e13b49ccf0cf7da45c7dbb9e..dea3f6b09e8ece3141ef624cb54aa8b45d336668 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -82,6 +82,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
+@@ -81,6 +81,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
      Developer,
  }
 
@@ -2013,7 +2013,7 @@ index 94476b0567505d950ede7388b7f912d5bd21be11..69d921044620121d5f7a854f511e0888
  impl InterruptedTurnHistoryMarker {
      pub(crate) fn from_config_and_version(
          config: &Config,
-@@ -330,7 +336,6 @@ impl Session {
+@@ -317,7 +323,6 @@ impl Session {
          let cancellation_token = CancellationToken::new();
          let done = Arc::new(Notify::new());
 
@@ -2021,7 +2021,7 @@ index 94476b0567505d950ede7388b7f912d5bd21be11..69d921044620121d5f7a854f511e0888
          let turn_state = {
              let mut active = self.active_turn.lock().await;
              self.record_started_turn(
-@@ -343,6 +348,10 @@ impl Session {
+@@ -330,6 +335,10 @@ impl Session {
              turn.finishing = None;
              Arc::clone(&turn.turn_state)
          };
@@ -2032,7 +2032,7 @@ index 94476b0567505d950ede7388b7f912d5bd21be11..69d921044620121d5f7a854f511e0888
          turn_state.lock().await.token_usage_at_turn_start = token_usage_at_turn_start.clone();
          self.input_queue
              .extend_pending_input_for_turn_state(turn_state.as_ref(), pending_items)
-@@ -362,6 +371,12 @@ impl Session {
+@@ -349,6 +358,12 @@ impl Session {
              turn_context.multi_agent_version,
              &turn_context.session_source,
          );
@@ -2045,7 +2045,7 @@ index 94476b0567505d950ede7388b7f912d5bd21be11..69d921044620121d5f7a854f511e0888
          let done_clone = Arc::clone(&done);
          let session = Arc::clone(self);
          let ctx = Arc::clone(&turn_context);
-@@ -437,7 +452,8 @@ impl Session {
+@@ -424,7 +439,8 @@ impl Session {
              task,
              cancellation_token,
              turn_context: Arc::clone(&turn_context),
@@ -2055,7 +2055,7 @@ index 94476b0567505d950ede7388b7f912d5bd21be11..69d921044620121d5f7a854f511e0888
              _diagnostics_guard: ACTIVE_TURNS.track(),
              _timer: timer,
          };
-@@ -576,6 +592,24 @@ impl Session {
+@@ -563,6 +579,24 @@ impl Session {
      }
 
      pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
@@ -2080,7 +2080,7 @@ index 94476b0567505d950ede7388b7f912d5bd21be11..69d921044620121d5f7a854f511e0888
          let mut aborted_turn = false;
          let mut active_turn_to_clear = None;
          if let Some(mut active_turn) = self.take_active_turn(&reason).await {
-@@ -600,8 +634,16 @@ impl Session {
+@@ -587,8 +621,16 @@ impl Session {
              // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
              self.input_queue.clear_pending(&active_turn).await;
          }
@@ -2099,7 +2099,7 @@ index 94476b0567505d950ede7388b7f912d5bd21be11..69d921044620121d5f7a854f511e0888
          }
      }
 
-@@ -690,16 +732,20 @@ impl Session {
+@@ -677,16 +719,20 @@ impl Session {
 
          let finishing = CancellationToken::new();
          let finish_recording = finishing.clone().drop_guard();
@@ -2124,7 +2124,7 @@ index 94476b0567505d950ede7388b7f912d5bd21be11..69d921044620121d5f7a854f511e0888
              return;
          };
          let pending_input = self
-@@ -910,6 +956,8 @@ impl Session {
+@@ -897,6 +943,8 @@ impl Session {
              // The parent can request another review as soon as it receives this event.
              self.send_event(turn_context.as_ref(), event).await;
          }
@@ -2173,10 +2173,10 @@ index f6ffb7a8bb92ae27cd2e235b3288741d06ac7774..48bfffc64db5c7b06f6b6a83217b0171
                          Some(communication.content)
                      }
 diff --git a/codex-rs/core/tests/suite/compact_remote.rs b/codex-rs/core/tests/suite/compact_remote.rs
-index 467a3509d96c358f38bd01ea1dbfbdb5b328778b..2d0bcef28da7279e0f126213cc7b36873271ef0b 100644
+index a77b923e7ecd55690f81869df14bb2bc8c72036f..3a0c434eb7eb9490dd5ef9aca9b6785bb9176209 100644
 --- a/codex-rs/core/tests/suite/compact_remote.rs
 +++ b/codex-rs/core/tests/suite/compact_remote.rs
-@@ -917,6 +917,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
+@@ -916,6 +916,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -2184,7 +2184,7 @@ index 467a3509d96c358f38bd01ea1dbfbdb5b328778b..2d0bcef28da7279e0f126213cc7b3687
          })
          .await?;
      let channel_progress = "Message Type: CHANNEL_POST\nSender: /root/child\nChannel: progress\nMessage ID: aaaabbbbcccc\nThread ID: aaaabbbbcccc\nPayload:\nchild channel progress";
-@@ -930,6 +931,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
+@@ -929,6 +930,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -2192,7 +2192,7 @@ index 467a3509d96c358f38bd01ea1dbfbdb5b328778b..2d0bcef28da7279e0f126213cc7b3687
          })
          .await?;
      codex
-@@ -942,6 +944,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
+@@ -941,6 +943,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -2200,7 +2200,7 @@ index 467a3509d96c358f38bd01ea1dbfbdb5b328778b..2d0bcef28da7279e0f126213cc7b3687
          })
          .await?;
      let delegated_task_ciphertext = format!("delegated compact task{}", "x".repeat(40_000));
-@@ -955,6 +958,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
+@@ -954,6 +957,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2208,7 +2208,7 @@ index 467a3509d96c358f38bd01ea1dbfbdb5b328778b..2d0bcef28da7279e0f126213cc7b3687
          })
          .await?;
      wait_for_turn_complete(&codex).await;
-@@ -971,6 +975,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
+@@ -970,6 +974,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2622,10 +2622,10 @@ index 7f56f82912ba428a1f8a2861a07c72597af48b71..df5047c552071c67b81d4d0c86bf8876
      Ok(())
  }
 diff --git a/codex-rs/core/tests/suite/turn_input_submission.rs b/codex-rs/core/tests/suite/turn_input_submission.rs
-index 6e3628c6e6c0ffadab538324dccf416195cfe217..16a333af6e6d9ff67a04e6ade41977e5b4fc67e5 100644
+index 374fe229eba764f1cdd4d1cf2ff67b22fe94212d..e4354b586949f8b157ffd3f5dbe031e76680306b 100644
 --- a/codex-rs/core/tests/suite/turn_input_submission.rs
 +++ b/codex-rs/core/tests/suite/turn_input_submission.rs
-@@ -503,6 +503,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()>
+@@ -502,6 +502,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()>
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2634,10 +2634,10 @@ index 6e3628c6e6c0ffadab538324dccf416195cfe217..16a333af6e6d9ff67a04e6ade41977e5
          .await?;
      wait_for_event(&test.codex, |event| {
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index ac0168592308e371b7f1d8c90e0a62a83eb22d63..31966db4ab2a76d33cc4f29840f86a104aa25e91 100644
+index 146209407b78b71c461c854c5d9d1e4d7816b873..7dd281bad6e6c3d85a6605e46a8e09c0d10672bc 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
-@@ -751,6 +751,9 @@ pub enum Op {
+@@ -748,6 +748,9 @@ pub enum Op {
      InterAgentCommunication {
          communication: InterAgentCommunication,
          start_options: TurnStartOptions,
@@ -2647,7 +2647,7 @@ index ac0168592308e371b7f1d8c90e0a62a83eb22d63..31966db4ab2a76d33cc4f29840f86a10
      },
 
      /// Approve a command execution
-@@ -856,6 +859,15 @@ pub enum Op {
+@@ -853,6 +856,15 @@ pub enum Op {
      /// Request to shut down codex instance.
      Shutdown,
 
@@ -2663,7 +2663,7 @@ index ac0168592308e371b7f1d8c90e0a62a83eb22d63..31966db4ab2a76d33cc4f29840f86a10
      /// Execute a user-initiated one-off shell command (triggered by "!cmd").
      ///
      /// The command string is executed using the user's default shell and may
-@@ -1069,6 +1081,7 @@ impl Op {
+@@ -1066,6 +1078,7 @@ impl Op {
              Self::Review { .. } => "review",
              Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
              Self::Shutdown => "shutdown",

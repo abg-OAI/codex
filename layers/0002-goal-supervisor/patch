@@ -1,8 +1,8 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 9b4f7e5a07101a13c6202f27167926eafea89e0c..93b93085bb7384b22018f7c76682a1115ed60fb3 100644
+index 72658b908782ad8f90ba70260fba20a395999f0b..8e905046f57425cb14221ca39c70767c323ebe42 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -3043,6 +3043,7 @@ dependencies = [
+@@ -3042,6 +3042,7 @@ dependencies = [
   "sha1 0.10.6",
   "shlex",
   "similar",
@@ -985,7 +985,7 @@ index 6cbe9acb252c6f68857f3e4b3704e57619a2c6b4..908e54e18377a7a80406f42fd10c3835
 
  #[derive(Clone, Debug, PartialEq, Eq)]
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index a63dc8f4d231e215513606e7e534a4900203718f..bb740567b3365c5cddb5a583b9486735b4817a39 100644
+index 8d2cd8351a74a7185369ab8fefcc101070e27c4b..50c6c04e086eda3548444dfb893d832a14ad4618 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -376,6 +376,38 @@ impl CodexThread {
@@ -1027,7 +1027,7 @@ index a63dc8f4d231e215513606e7e534a4900203718f..bb740567b3365c5cddb5a583b9486735
      #[doc(hidden)]
      pub async fn ensure_rollout_materialized(&self) {
          self.session
-@@ -1261,6 +1293,10 @@ impl CodexThread {
+@@ -1253,6 +1285,10 @@ impl CodexThread {
          let multi_agent_version = self
              .multi_agent_version()
              .unwrap_or_else(|| config.multi_agent_version_from_features());
@@ -1117,10 +1117,10 @@ index 91bf8de9bf91ffd98895e976c9dc1b0e2d238968..7f97ba6489f90351d146711677a2f1a3
          sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
              .await;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 9b00655edb7d9a25d6ac1a5384487dbfc54640a9..f165e8d497cea496047af0c9089771a76bea3166 100644
+index 0424f1adcad772061120943db8ce194c2fc6afcc..282fe3ea0d84210d31bb3e212bcb195bf9fca431 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2394,6 +2394,7 @@ impl Session {
+@@ -2395,6 +2395,7 @@ impl Session {
 
      /// Record a terminal CodexErr before the app-server completion notification is reduced.
      pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {
@@ -1128,7 +1128,7 @@ index 9b00655edb7d9a25d6ac1a5384487dbfc54640a9..f165e8d497cea496047af0c9089771a7
          self.services
              .analytics_events_client
              .track_turn_codex_error(TurnCodexErrorFact::from_codex_err(
-@@ -2546,6 +2547,9 @@ impl Session {
+@@ -2547,6 +2548,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }
@@ -1166,10 +1166,10 @@ index 40cf7657a6dbe96d2e5dc3bacbe3a0761b1e161e..a002388d241370414aad560700bf05cf
      #[instrument(name = "turn_context.make", level = "trace", skip_all)]
      pub(crate) fn make_turn_context(
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 6a3e95ee807b562022485af0b11b1ce7e0ebf560..94476b0567505d950ede7388b7f912d5bd21be11 100644
+index 5612045b974ba3354540da28139ab0cf909e329a..4a9319a31b6fb924e13b49ccf0cf7da45c7dbb9e 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -276,6 +276,11 @@ impl Session {
+@@ -275,6 +275,11 @@ impl Session {
          input: Vec<TurnInput>,
          task: T,
      ) {
@@ -1181,7 +1181,7 @@ index 6a3e95ee807b562022485af0b11b1ce7e0ebf560..94476b0567505d950ede7388b7f912d5
          self.abort_all_tasks(TurnAbortReason::Replaced).await;
          self.clear_connector_selection().await;
          self.start_task(turn_context, input, task).await;
-@@ -353,6 +358,7 @@ impl Session {
+@@ -340,6 +345,7 @@ impl Session {
          let turn = active.get_or_insert_with(ActiveTurn::default);
          debug_assert!(turn.task.is_none());
          let agent_execution_guard = self.services.agent_control.admit_turn(
@@ -1189,7 +1189,7 @@ index 6a3e95ee807b562022485af0b11b1ce7e0ebf560..94476b0567505d950ede7388b7f912d5
              turn_context.multi_agent_version,
              &turn_context.session_source,
          );
-@@ -478,6 +484,11 @@ impl Session {
+@@ -465,6 +471,11 @@ impl Session {
          let Some((turn_state, previous_options)) = self.reserve_pending_work_turn().await else {
              return;
          };
@@ -1201,7 +1201,7 @@ index 6a3e95ee807b562022485af0b11b1ce7e0ebf560..94476b0567505d950ede7388b7f912d5
 
          self.services
              .models_manager
-@@ -495,6 +506,10 @@ impl Session {
+@@ -482,6 +493,10 @@ impl Session {
          }
          let (input, mut start_options) =
              self.input_queue.get_pending_input(&self.active_turn).await;
