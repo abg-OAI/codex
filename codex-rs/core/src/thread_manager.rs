@@ -421,6 +421,9 @@ pub(crate) struct ResumeThreadWithHistoryOptions {
 pub(crate) struct ThreadManagerState {
     // Eviction updates this registry and residency together, locking the registry first.
     pub(crate) threads: Arc<RwLock<HashMap<ThreadId, Arc<CodexThread>>>>,
+    /// The first registered persistence mode belongs to the target and
+    /// survives later reloads driven by another thread's configuration.
+    thread_ephemeral_intent: std::sync::Mutex<HashMap<ThreadId, bool>>,
     shared_thread_instructions: shared_instructions::SharedThreadInstructionsProviders,
     thread_created_tx: broadcast::Sender<ThreadId>,
     thread_id_generator: ThreadIdGenerator,
@@ -587,6 +590,7 @@ impl ThreadManager {
         Self {
             state: Arc::new(ThreadManagerState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
+                thread_ephemeral_intent: std::sync::Mutex::new(HashMap::new()),
                 shared_thread_instructions: Default::default(),
                 thread_created_tx,
                 thread_id_generator: default_thread_id_generator(),
@@ -775,6 +779,7 @@ impl ThreadManager {
         Self {
             state: Arc::new(ThreadManagerState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
+                thread_ephemeral_intent: std::sync::Mutex::new(HashMap::new()),
                 shared_thread_instructions: Default::default(),
                 thread_created_tx,
                 thread_id_generator: default_thread_id_generator(),
@@ -948,7 +953,14 @@ impl ThreadManager {
     }
 
     pub async fn get_thread(&self, thread_id: ThreadId) -> CodexResult<Arc<CodexThread>> {
-        self.state.get_thread(thread_id).await
+        let thread = self.state.get_thread(thread_id).await?;
+        if !thread.has_persistence() && self.state.is_saved_target(thread_id) {
+            thread
+                .restore_saved_thread_persistence()
+                .await
+                .map_err(thread_store_rollout_read_error)?;
+        }
+        Ok(thread)
     }
 
     /// Board hosts may reach internal runtimes only through a matching explicit connection.
@@ -1694,6 +1706,14 @@ impl ThreadManager {
 }
 
 impl ThreadManagerState {
+    pub(crate) fn is_saved_target(&self, thread_id: ThreadId) -> bool {
+        self.thread_ephemeral_intent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&thread_id)
+            == Some(&false)
+    }
+
     pub(crate) fn shared_thread_instructions_provider(
         &self,
         root_thread_id: ThreadId,
@@ -2458,6 +2478,7 @@ impl ThreadManagerState {
         initial_host_config: Option<AgentConfigUpdate>,
     ) -> CodexResult<NewThread> {
         let thread_id = session.thread_id();
+        let ephemeral = session.get_config().await.ephemeral;
         let event = io.next_event().await?;
         let session_configured = match event {
             Event {
@@ -2472,6 +2493,11 @@ impl ThreadManagerState {
         {
             let mut threads = self.threads.write().await;
             if let std::collections::hash_map::Entry::Vacant(e) = threads.entry(thread_id) {
+                self.thread_ephemeral_intent
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .entry(thread_id)
+                    .or_insert(ephemeral);
                 if let Some(update) = initial_host_config {
                     session
                         .services

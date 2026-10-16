@@ -330,6 +330,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
         state.shutting_down = true;
         state.take_session_startup_prewarm()
     };
+    sess.close_persistence_repair().await;
     if let Some(startup_prewarm) = startup_prewarm {
         startup_prewarm.abort().await;
     }
