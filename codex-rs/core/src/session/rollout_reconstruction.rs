@@ -194,6 +194,10 @@ impl Session {
         ContextManager::reconstruct_rollout(
             rollout_items,
             turn_context.history_mode,
+            &turn_context
+                .session_source
+                .get_agent_path()
+                .unwrap_or_else(codex_protocol::AgentPath::root),
             ContextManager::for_session(
                 &turn_context.session_source,
                 &turn_context.config.features,
@@ -208,6 +212,7 @@ impl ContextManager {
     pub(crate) fn reconstruct_rollout(
         rollout_items: &[RolloutItem],
         history_mode: ThreadHistoryMode,
+        agent_path: &codex_protocol::AgentPath,
         mut history: Self,
         truncation_policy: TruncationPolicy,
     ) -> RolloutReconstruction {
@@ -532,8 +537,10 @@ impl ContextManager {
                         // prompt shape.
                         // TODO(ccunningham): if we drop support for None replacement_history compaction items,
                         // we can get rid of this second loop entirely and just build `history` directly in the first loop.
-                        let user_messages =
-                            compact::collect_annotated_user_messages(history.annotated_items());
+                        let user_messages = compact::collect_annotated_user_messages(
+                            history.annotated_items(),
+                            agent_path,
+                        );
                         let rebuilt = compact::build_compacted_history(
                             Vec::new(),
                             &user_messages,
