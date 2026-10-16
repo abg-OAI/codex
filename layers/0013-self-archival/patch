@@ -127,7 +127,7 @@ index 13eeab8b3b2e657704c76e39c04725161c128e45..0b1c39c4c5443f90ed6d3fb0e9381b4b
  mod saffron_goal_supervisor;
  mod saffron_goal_supervisor_history;
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index ded7ed824273112bd539a1437dd5cfcda9f60c5f..c60486b41b108323a5fb6385037adc2dcad13888 100644
+index 66b2002195363635a510ce4bba5d3abb55b2db9a..5ad9cac9ad1072e7258300ccd545f89f5f304e07 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -331,6 +331,18 @@ impl CodexThread {
@@ -215,11 +215,11 @@ index 5ff57f83a88aad5f5fd9b8c758fa2a101a4229be..ca4a04d98edf138df0418c2f7dee466b
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index adc7385ff05f3d960afe33de191e853fff420092..5cf856619b737948e5d980815eae3cefb3d9a250 100644
+index ccd1b3c29c5404e626747a49fdcfe93c193eb08e..14cf8ced1dc212d0bd6fd5c81e7853438f9ebb65 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -241,6 +241,7 @@ use codex_protocol::exec_output::StreamOutput;
- #[allow(dead_code)]
+@@ -240,6 +240,7 @@ use codex_protocol::exec_output::StreamOutput;
+
  pub(crate) mod async_compaction;
  mod code_mode_warning;
 +mod completion_shutdown;
@@ -241,10 +241,10 @@ index 23b5d208545e32fcf50f3a7506ae37fef9416306..50bcb42219417cf20900d2e99b254e98
      }
 
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index 64b42248bc73425e7d4fed80cada6a7855925380..5a3395669c1baed5d9530c0bc8c290b88bbcb161 100644
+index d1d43621210c979e2a98e2c2bc49698e825d71c1..dd961ed6dc5a8e1adc0b7ebb1c33cd5dc06621b7 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
-@@ -540,20 +540,41 @@ pub(crate) async fn run_turn(
+@@ -559,20 +559,41 @@ pub(crate) async fn run_turn(
              .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
              .await;
 
