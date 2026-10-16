@@ -1474,7 +1474,7 @@ index 66eb053fb12a5665201852fda3a4864b79b0cfe6..dd7618be8749021dc6c491b8636d2813
  fn reservation_drop_releases_slot() {
      let registry = Arc::new(AgentRegistry::default());
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 50c6c04e086eda3548444dfb893d832a14ad4618..98052f011406e15ee55901cc5734d147adcfc732 100644
+index bb740567b3365c5cddb5a583b9486735b4817a39..c7e241ae80fe3120c59a67da57ed0d8cf346a2cc 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -320,6 +320,17 @@ impl CodexThread {
@@ -1887,10 +1887,10 @@ index de46d6a1d641a60d3556891620143055be7c97a8..60ed99d4e4ed718c4f686a7c0963fdb3
      async fn input_queue_uses_unambiguous_trigger_parent_and_first_root() {
          let (parent, peer, root, root2) = (Some("a"), Some("b"), Some("r"), Some("s"));
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 282fe3ea0d84210d31bb3e212bcb195bf9fca431..3a36880cee09b554cfb6304b7d7a5ad3363650c3 100644
+index f271f043efb0ab89742bd9b93c422d5b3eede922..f7469ab0c838b57c80cd49d262fec5d9d8c84b55 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2551,6 +2551,10 @@ impl Session {
+@@ -2550,6 +2550,10 @@ impl Session {
          if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
              return;
          }
@@ -1901,7 +1901,7 @@ index 282fe3ea0d84210d31bb3e212bcb195bf9fca431..3a36880cee09b554cfb6304b7d7a5ad3
 
          self.services
              .agent_control
-@@ -2566,6 +2570,7 @@ impl Session {
+@@ -2565,6 +2569,7 @@ impl Session {
                          .cloned(),
                      status,
                      error_info,

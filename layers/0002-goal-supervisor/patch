@@ -985,7 +985,7 @@ index 6cbe9acb252c6f68857f3e4b3704e57619a2c6b4..908e54e18377a7a80406f42fd10c3835
 
  #[derive(Clone, Debug, PartialEq, Eq)]
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 8d2cd8351a74a7185369ab8fefcc101070e27c4b..50c6c04e086eda3548444dfb893d832a14ad4618 100644
+index a63dc8f4d231e215513606e7e534a4900203718f..bb740567b3365c5cddb5a583b9486735b4817a39 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -376,6 +376,38 @@ impl CodexThread {
@@ -1027,7 +1027,7 @@ index 8d2cd8351a74a7185369ab8fefcc101070e27c4b..50c6c04e086eda3548444dfb893d832a
      #[doc(hidden)]
      pub async fn ensure_rollout_materialized(&self) {
          self.session
-@@ -1253,6 +1285,10 @@ impl CodexThread {
+@@ -1261,6 +1293,10 @@ impl CodexThread {
          let multi_agent_version = self
              .multi_agent_version()
              .unwrap_or_else(|| config.multi_agent_version_from_features());
@@ -1117,10 +1117,10 @@ index 91bf8de9bf91ffd98895e976c9dc1b0e2d238968..7f97ba6489f90351d146711677a2f1a3
          sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
              .await;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 0424f1adcad772061120943db8ce194c2fc6afcc..282fe3ea0d84210d31bb3e212bcb195bf9fca431 100644
+index a541c5529fea30aa0f7b9f32df049f22228d1d15..f271f043efb0ab89742bd9b93c422d5b3eede922 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2395,6 +2395,7 @@ impl Session {
+@@ -2394,6 +2394,7 @@ impl Session {
 
      /// Record a terminal CodexErr before the app-server completion notification is reduced.
      pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {
@@ -1128,7 +1128,7 @@ index 0424f1adcad772061120943db8ce194c2fc6afcc..282fe3ea0d84210d31bb3e212bcb195b
          self.services
              .analytics_events_client
              .track_turn_codex_error(TurnCodexErrorFact::from_codex_err(
-@@ -2547,6 +2548,9 @@ impl Session {
+@@ -2546,6 +2547,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }
