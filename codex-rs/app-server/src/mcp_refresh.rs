@@ -479,6 +479,7 @@ enabled = false
                 thread_extensions(
                     &good_config,
                     ThreadExtensionDependencies {
+                        thread_message_host: None,
                         event_sink: Arc::new(NoopExtensionEventSink),
                         auth_manager: auth_manager.clone(),
                         state_db: Some(state_db.clone()),
