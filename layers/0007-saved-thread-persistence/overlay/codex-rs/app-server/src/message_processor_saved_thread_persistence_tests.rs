@@ -151,6 +151,7 @@ async fn exercise_saved_thread_repair(history_mode: ThreadHistoryMode) -> Result
                 memory_mode: ThreadMemoryMode::Disabled,
             },
         },
+        None,
     )
     .await?;
     let request_id = RequestId::Integer(10);
