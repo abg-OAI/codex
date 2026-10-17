@@ -170,6 +170,7 @@ pub(crate) struct MessageProcessor {
     saffron_goal_scheduler: Option<SaffronGoalSchedulerHandle>,
     /// Owns routing while thread extensions hold only a weak reference.
     _saffron_message_host: Arc<dyn codex_core::SaffronThreadMessageHost>,
+    self_archive_stop: CancellationToken,
     thread_goal_processor: ThreadGoalRequestProcessor,
     thread_queue_processor: ThreadQueueRequestProcessor,
     thread_processor: ThreadRequestProcessor,
@@ -335,6 +336,7 @@ impl MessageProcessor {
             app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
         let mut queue_service = None;
         let message_host_handle = Arc::new(codex_core::SaffronThreadMessageHostHandle::default());
+        let (self_archive_sender, self_archive_receiver) = tokio::sync::mpsc::unbounded_channel();
         let thread_manager = Arc::new_cyclic(|thread_manager| {
             queue_service = queue_store.map(|queue| {
                 Arc::new(QueuedItemService::new(
@@ -354,6 +356,7 @@ impl MessageProcessor {
                     config.as_ref(),
                     ThreadExtensionDependencies {
                         thread_message_host: Some(Arc::clone(&message_host_handle)),
+                        self_archive_sender: Some(self_archive_sender),
                         event_sink: Arc::clone(&extension_event_sink),
                         auth_manager: auth_manager.clone(),
                         state_db: state_db.clone(),
@@ -549,6 +552,8 @@ impl MessageProcessor {
                 turn_admission.clone(),
             ));
         message_host_handle.set(Arc::downgrade(&saffron_message_host));
+        let self_archive_stop =
+            thread_processor.start_saffron_archive_worker(self_archive_receiver);
         let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
             && config.features.enabled(codex_features::Feature::Goals)
         {
@@ -651,6 +656,7 @@ impl MessageProcessor {
             search_processor,
             saffron_goal_scheduler,
             _saffron_message_host: saffron_message_host,
+            self_archive_stop,
             thread_goal_processor,
             thread_queue_processor,
             thread_processor,
@@ -661,6 +667,7 @@ impl MessageProcessor {
     }
 
     pub(crate) fn clear_runtime_references(&self) {
+        self.self_archive_stop.cancel();
         self.account_processor.clear_external_auth();
         self.apps_processor.shutdown();
         self.models_refresh_worker.shutdown();
@@ -890,6 +897,7 @@ impl MessageProcessor {
     }
 
     pub(crate) async fn drain_background_tasks(&self) {
+        self.self_archive_stop.cancel();
         self.models_refresh_worker.shutdown();
         if let Some(worker) = &self.turn_cost_worker {
             worker.shutdown();
