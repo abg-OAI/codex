@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index defd306f86f0e55c469e3a01eccaa5cd2ef49867..15effd88bfee2f17124ce1f671b7c228afcfaebe 100644
+index 974a704b62dad3906ba7e11bac56f091d414afcf..8b3078af4556c6a189e52f8e53d08fd380524433 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
-@@ -73,6 +73,7 @@ pub(crate) fn thread_extensions(
+@@ -80,6 +80,7 @@ pub(crate) fn thread_extensions(
      }
      codex_history_notes_extension::install(&mut builder, auth_manager.clone());
      codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
@@ -11,10 +11,10 @@ index defd306f86f0e55c469e3a01eccaa5cd2ef49867..15effd88bfee2f17124ce1f671b7c228
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index b171219b35c69e2755605e218bcab1bad44144e8..bbbd05931a78cf17db114e536c516f662be4f6f0 100644
+index 1a5b67c4dedd55c54c6cab187b9d94568b0d2114..6a03f105e6be4f5d7241fbe7023e49a6ef71ad7f 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -138,6 +138,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -139,6 +139,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
@@ -55,10 +55,10 @@ index 0e5b94605cafe76a6c7fe66b8627aa905dd16dd4..e548b2f1503cf3cf31fa705c73e46c3b
 +    fork_thread::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 0679d60e9bbbfd3e989d2abdebc5d6755b67af25..af61471e85ec79b32c6f32be083cc0baf775a88e 100644
+index 1cc954e947dd0b09614824a8bb979c7c48442176..a89ac88de33f07be3b2bc806cc4ca829bf115c97 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -952,6 +952,11 @@ impl ThreadManager {
+@@ -956,6 +956,11 @@ impl ThreadManager {
          self.state.thread_created_tx.subscribe()
      }
 
@@ -71,10 +71,10 @@ index 0679d60e9bbbfd3e989d2abdebc5d6755b67af25..af61471e85ec79b32c6f32be083cc0ba
          let thread = self.state.get_thread(thread_id).await?;
          if !thread.has_persistence() && self.state.is_saved_target(thread_id) {
 diff --git a/codex-rs/core/src/tools/handlers/dynamic.rs b/codex-rs/core/src/tools/handlers/dynamic.rs
-index 9e78325058546a3924b12fa8c9de938d6421fbcf..004cf7ecd093a3c64f35f49359ecee750e4ddd6f 100644
+index 0eac846e05187ab469d9ecc33f295b75e06f7a48..5e5beef1e477f4f265c82d9a2e9dae5986a8c6d1 100644
 --- a/codex-rs/core/src/tools/handlers/dynamic.rs
 +++ b/codex-rs/core/src/tools/handlers/dynamic.rs
-@@ -183,7 +183,7 @@ impl CoreToolRuntime for DynamicToolHandler {
+@@ -187,7 +187,7 @@ impl CoreToolRuntime for DynamicToolHandler {
      clippy::await_holding_invalid_type,
      reason = "active turn checks and dynamic tool response registration must remain atomic"
  )]
@@ -84,7 +84,7 @@ index 9e78325058546a3924b12fa8c9de938d6421fbcf..004cf7ecd093a3c64f35f49359ecee75
      turn_context: &TurnContext,
      call_id: String,
 diff --git a/codex-rs/core/src/tools/handlers/mod.rs b/codex-rs/core/src/tools/handlers/mod.rs
-index 710c089b8a5481b6a69b19047d677e7f19bf419c..e6e54dc828ef64f45e11a459d0442af761df174b 100644
+index a4d92223c3ae4da9cc061bb8c003d945c7c3d18c..2a2eeeb845180914e679200f195d15513fda4647 100644
 --- a/codex-rs/core/src/tools/handlers/mod.rs
 +++ b/codex-rs/core/src/tools/handlers/mod.rs
 @@ -1,7 +1,7 @@

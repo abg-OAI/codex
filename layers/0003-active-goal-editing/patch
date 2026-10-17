@@ -504,10 +504,10 @@ index d3dfa5a32bb3fc33c5eba5c846a996a8c918ae11..63957c93264bc3f05a964c6af88e8e69
 +    goal_edit::register_root_if_available(session, turn_context, registry);
  }
 diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
-index d1de678a862ec11f563e6f350a6571ce89203bfa..c8441ff77cb25c065fd2411ae98065be3420e168 100644
+index 78aea77025ff7e4a35267035ccb8a1f2ed273c8f..d7499c6a1275ba97684aadb8ee659577b3f56261 100644
 --- a/codex-rs/state/src/lib.rs
 +++ b/codex-rs/state/src/lib.rs
-@@ -96,6 +96,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
+@@ -97,6 +97,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
  pub use runtime::SqliteIntegrityCheck;
  pub use runtime::SqliteQueueStore;
  pub use runtime::ThreadFilterOptions;
@@ -516,10 +516,10 @@ index d1de678a862ec11f563e6f350a6571ce89203bfa..c8441ff77cb25c065fd2411ae98065be
  pub use runtime::backup_runtime_db_for_fresh_start;
  pub use runtime::collect_runtime_db_backups;
 diff --git a/codex-rs/state/src/runtime.rs b/codex-rs/state/src/runtime.rs
-index 244f219cd571f229dc9b1968acb9f1c39414f932..7d988b45a14a9570cf6f9cc971ac1514555c3512 100644
+index 58dd668469dea74ee73f4bd58e734f59f37c8942..50792fda181ea3594a40dc53388a40bc479adc67 100644
 --- a/codex-rs/state/src/runtime.rs
 +++ b/codex-rs/state/src/runtime.rs
-@@ -70,6 +70,7 @@ pub use goals::GoalAccountingMode;
+@@ -71,6 +71,7 @@ pub use goals::GoalAccountingMode;
  pub use goals::GoalAccountingOutcome;
  pub use goals::GoalStore;
  pub use goals::GoalUpdate;
@@ -528,10 +528,10 @@ index 244f219cd571f229dc9b1968acb9f1c39414f932..7d988b45a14a9570cf6f9cc971ac1514
  pub use guardian_feedback::MAX_GUARDIAN_REVIEW_BYTES;
  pub use guardian_feedback::MAX_GUARDIAN_REVIEW_RECORDS;
 diff --git a/codex-rs/state/src/runtime/goals.rs b/codex-rs/state/src/runtime/goals.rs
-index 4d1987e23b8fbace0390b1f8f1224756e12f9c47..e2ac3a5ac005f9c3563ae9fa1a05630ad2cb6f80 100644
+index c8824f7e8da99c4869fd172b606e139ca32ba9bd..8badb21de92809555bcdfc12437545179b4681e9 100644
 --- a/codex-rs/state/src/runtime/goals.rs
 +++ b/codex-rs/state/src/runtime/goals.rs
-@@ -3,6 +3,9 @@ use crate::model::ThreadGoalRow;
+@@ -5,6 +5,9 @@ use crate::sqlite::SqliteWriteQueryExt;
  use uuid::Uuid;
 
  mod active_goal_listing;

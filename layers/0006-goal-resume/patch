@@ -159,10 +159,10 @@ index 3627f608e70e9f237757bd1ebecaff540647df33..6adfc5d5a60edb1276f2c4c793cfb3a6
  async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
      let server = responses::start_mock_server().await;
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 9beeab0f42091f63b912948b50636744196d2b6e..b171219b35c69e2755605e218bcab1bad44144e8 100644
+index f289a650457172873d40f0b42500f5c8d617499f..1a5b67c4dedd55c54c6cab187b9d94568b0d2114 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -160,6 +160,14 @@ mod thread_spawn;
+@@ -161,6 +161,14 @@ mod thread_spawn;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
  pub use agent::control::ThreadEvictionOutcome;
@@ -236,10 +236,10 @@ index ccd091affce4646394f7c6e41f84b2153feb6654..8aa4a6aa69bb05a44e661f2e5ef5927d
  mod spec;
  mod steering;
 diff --git a/codex-rs/state/src/runtime/goals.rs b/codex-rs/state/src/runtime/goals.rs
-index e2ac3a5ac005f9c3563ae9fa1a05630ad2cb6f80..4f60dec3ed177a441e60bdcddc1e4905e425f2fa 100644
+index 8badb21de92809555bcdfc12437545179b4681e9..94dab913b0eaef8cf2eb119081674042fb8e9583 100644
 --- a/codex-rs/state/src/runtime/goals.rs
 +++ b/codex-rs/state/src/runtime/goals.rs
-@@ -4,6 +4,7 @@ use uuid::Uuid;
+@@ -6,6 +6,7 @@ use uuid::Uuid;
 
  mod active_goal_listing;
  mod active_goal_objective;

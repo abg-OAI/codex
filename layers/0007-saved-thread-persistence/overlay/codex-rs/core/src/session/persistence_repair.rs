@@ -124,7 +124,7 @@ impl Session {
         let live_thread = guard
             .acquire(async move {
                 let (live_thread, _history) =
-                    LiveThread::resume(resume_store, history_mode, params).await?;
+                    LiveThread::resume(resume_store, history_mode, params, None).await?;
                 Ok(live_thread)
             })
             .await?;

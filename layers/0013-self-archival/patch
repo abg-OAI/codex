@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index dfa2fc6ad7bc6789bef82bc7f363cd0ef8bc913b..a781a782177eb9865821272ca763df5e3d150adb 100644
+index 59bc2b7c2740fc8e32f4db28f7e5b9bcc8ba1d4f..f8be36a65397b6ff6699f35bac5785f9b9f7bc90 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -39,6 +39,8 @@ pub(crate) struct ThreadExtensionDependencies {
@@ -11,7 +11,7 @@ index dfa2fc6ad7bc6789bef82bc7f363cd0ef8bc913b..a781a782177eb9865821272ca763df5e
      pub(crate) goal_service: Arc<GoalService>,
      pub(crate) environment_manager: Arc<EnvironmentManager>,
      pub(crate) executor_skill_provider: Arc<dyn codex_skills_extension::SkillProvider>,
-@@ -59,6 +61,7 @@ pub(crate) fn thread_extensions(
+@@ -60,6 +62,7 @@ pub(crate) fn thread_extensions(
          analytics_events_client,
          thread_manager,
          thread_message_host,
@@ -19,7 +19,7 @@ index dfa2fc6ad7bc6789bef82bc7f363cd0ef8bc913b..a781a782177eb9865821272ca763df5e
          goal_service,
          environment_manager,
          executor_skill_provider,
-@@ -82,6 +85,9 @@ pub(crate) fn thread_extensions(
+@@ -89,6 +92,9 @@ pub(crate) fn thread_extensions(
          thread_manager.clone(),
          thread_message_host,
      );
@@ -30,19 +30,19 @@ index dfa2fc6ad7bc6789bef82bc7f363cd0ef8bc913b..a781a782177eb9865821272ca763df5e
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/app-server/src/mcp_refresh.rs b/codex-rs/app-server/src/mcp_refresh.rs
-index 97e984a3c35fb07235d12051c5d6a26209efeabc..15c07022ff4c3add1d4b76c371749a9286662085 100644
+index 148836f9d3c141c897da1a3086c5415346f1b24d..db8fdfac72f8a917f670e25ceefe05612b8be356 100644
 --- a/codex-rs/app-server/src/mcp_refresh.rs
 +++ b/codex-rs/app-server/src/mcp_refresh.rs
-@@ -478,6 +478,7 @@ enabled = false
-                 Arc::clone(&environment_manager),
-                 thread_extensions(ThreadExtensionDependencies {
-                     thread_message_host: None,
-+                    self_archive_sender: None,
-                     event_sink: Arc::new(NoopExtensionEventSink),
-                     auth_manager: auth_manager.clone(),
-                     state_db: Some(state_db.clone()),
+@@ -480,6 +480,7 @@ enabled = false
+                     &good_config,
+                     ThreadExtensionDependencies {
+                         thread_message_host: None,
++                        self_archive_sender: None,
+                         event_sink: Arc::new(NoopExtensionEventSink),
+                         auth_manager: auth_manager.clone(),
+                         state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 2b2945693a2a2b73f24497e95c3123ed22cbee37..6cc51aa37d83ba302109977783f8f055de530b62 100644
+index f0be94f3a00238f5637be828ad43df79b08583a6..620a3ef6969312f621413ea52c7cc7676109075e 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -170,6 +170,7 @@ pub(crate) struct MessageProcessor {
@@ -53,7 +53,7 @@ index 2b2945693a2a2b73f24497e95c3123ed22cbee37..6cc51aa37d83ba302109977783f8f055
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -332,6 +333,7 @@ impl MessageProcessor {
+@@ -335,6 +336,7 @@ impl MessageProcessor {
              app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
          let mut queue_service = None;
          let message_host_handle = Arc::new(codex_core::SaffronThreadMessageHostHandle::default());
@@ -61,15 +61,15 @@ index 2b2945693a2a2b73f24497e95c3123ed22cbee37..6cc51aa37d83ba302109977783f8f055
          let thread_manager = Arc::new_cyclic(|thread_manager| {
              queue_service = queue_store.map(|queue| {
                  Arc::new(QueuedItemService::new(
-@@ -349,6 +351,7 @@ impl MessageProcessor {
-                 environment_manager,
-                 thread_extensions(ThreadExtensionDependencies {
-                     thread_message_host: Some(Arc::clone(&message_host_handle)),
-+                    self_archive_sender: Some(self_archive_sender),
-                     event_sink: Arc::clone(&extension_event_sink),
-                     auth_manager: auth_manager.clone(),
-                     state_db: state_db.clone(),
-@@ -539,6 +542,8 @@ impl MessageProcessor {
+@@ -354,6 +356,7 @@ impl MessageProcessor {
+                     config.as_ref(),
+                     ThreadExtensionDependencies {
+                         thread_message_host: Some(Arc::clone(&message_host_handle)),
++                        self_archive_sender: Some(self_archive_sender),
+                         event_sink: Arc::clone(&extension_event_sink),
+                         auth_manager: auth_manager.clone(),
+                         state_db: state_db.clone(),
+@@ -549,6 +552,8 @@ impl MessageProcessor {
                  turn_admission.clone(),
              ));
          message_host_handle.set(Arc::downgrade(&saffron_message_host));
@@ -78,7 +78,7 @@ index 2b2945693a2a2b73f24497e95c3123ed22cbee37..6cc51aa37d83ba302109977783f8f055
          let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
              && config.features.enabled(codex_features::Feature::Goals)
          {
-@@ -641,6 +646,7 @@ impl MessageProcessor {
+@@ -651,6 +656,7 @@ impl MessageProcessor {
              search_processor,
              saffron_goal_scheduler,
              _saffron_message_host: saffron_message_host,
@@ -86,7 +86,7 @@ index 2b2945693a2a2b73f24497e95c3123ed22cbee37..6cc51aa37d83ba302109977783f8f055
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -651,6 +657,7 @@ impl MessageProcessor {
+@@ -661,6 +667,7 @@ impl MessageProcessor {
      }
 
      pub(crate) fn clear_runtime_references(&self) {
@@ -94,7 +94,7 @@ index 2b2945693a2a2b73f24497e95c3123ed22cbee37..6cc51aa37d83ba302109977783f8f055
          self.account_processor.clear_external_auth();
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
-@@ -880,6 +887,7 @@ impl MessageProcessor {
+@@ -890,6 +897,7 @@ impl MessageProcessor {
      }
 
      pub(crate) async fn drain_background_tasks(&self) {
@@ -127,7 +127,7 @@ index 13eeab8b3b2e657704c76e39c04725161c128e45..0b1c39c4c5443f90ed6d3fb0e9381b4b
  mod saffron_goal_supervisor;
  mod saffron_goal_supervisor_history;
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 66b2002195363635a510ce4bba5d3abb55b2db9a..5ad9cac9ad1072e7258300ccd545f89f5f304e07 100644
+index 90b688d1600ba38bdbf7c4434815e30192ca246e..d72238c57b305a01e35e410f993b6418790fd139 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -331,6 +331,18 @@ impl CodexThread {
@@ -160,10 +160,10 @@ index 66b2002195363635a510ce4bba5d3abb55b2db9a..5ad9cac9ad1072e7258300ccd545f89f
              .await
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 80a14a393d840e5c932efcfed528fd502b318c20..3f67ec970c5a62a99a5de7b798add93e516536d3 100644
+index c9c0ab72305f5c2291468bffad820b344b8ddaa6..d09378d508cdf1f9e9a2cbb30d997b28f93cb026 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -138,6 +138,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -139,6 +139,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
@@ -215,10 +215,10 @@ index 5ff57f83a88aad5f5fd9b8c758fa2a101a4229be..ca4a04d98edf138df0418c2f7dee466b
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index ccd1b3c29c5404e626747a49fdcfe93c193eb08e..14cf8ced1dc212d0bd6fd5c81e7853438f9ebb65 100644
+index 2db1cea50be3c8a0ef6ed7f4cae2d49b70c52400..618e55a6446b16958754747045e719915b08b599 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -240,6 +240,7 @@ use codex_protocol::exec_output::StreamOutput;
+@@ -242,6 +242,7 @@ use codex_protocol::exec_output::StreamOutput;
 
  pub(crate) mod async_compaction;
  mod code_mode_warning;
@@ -227,10 +227,10 @@ index ccd1b3c29c5404e626747a49fdcfe93c193eb08e..14cf8ced1dc212d0bd6fd5c81e785343
  pub(crate) mod context_window;
  mod daemon_recovery;
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 23b5d208545e32fcf50f3a7506ae37fef9416306..50bcb42219417cf20900d2e99b254e984e7f8568 100644
+index 972f7625ac43aa81aa63278ee5fd0a9b2d16fc65..e55c506101da3a245e4da14842780dcfe7bd52da 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -674,7 +674,8 @@ impl Session {
+@@ -676,7 +676,8 @@ impl Session {
      }
 
      pub(crate) async fn should_retain_while_idle(&self) -> bool {
@@ -296,7 +296,7 @@ index d1d43621210c979e2a98e2c2bc49698e825d71c1..dd961ed6dc5a8e1adc0b7ebb1c33cd5d
                  let SamplingRequestResult {
                      needs_follow_up: model_needs_follow_up,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 6ac22952e81e020e224b7dce68d8961b42a426c5..5ff0e9102c0beadbe16bc8d3899debedc970a1b0 100644
+index 4abbd1193dfaa3563e35e61e52b44affb4c7168b..29a24bd4a3bc3657fa6d7a0c86cb38de995c721a 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -212,6 +212,7 @@ impl PreparedTurnInputSettings {
@@ -307,7 +307,7 @@ index 6ac22952e81e020e224b7dce68d8961b42a426c5..5ff0e9102c0beadbe16bc8d3899debed
          let Some(thread_settings_update) = self.thread_settings_update else {
              return Ok(());
          };
-@@ -708,6 +709,8 @@ impl Session {
+@@ -704,6 +705,8 @@ impl Session {
      ) {
          let mut state = self.state.lock().await;
          state.last_started_turn_id = Some(turn_id.to_owned());
@@ -338,10 +338,10 @@ index fff1bf667f6b21c15cb0dbce686adeaf03a12677..3a0c972249ab67c1822f6e748cadd954
              auto_compact_window: AutoCompactWindow::new_with_ids(auto_compact_window_ids),
              async_compaction: crate::session::async_compaction::AsyncCompactionState::default(),
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index dea3f6b09e8ece3141ef624cb54aa8b45d336668..98d2f5dc39a574acbaaa7086ac4674f73ab41cae 100644
+index b8ed72d5fa5099f4d9e3993e5a3382c96fbdf52b..086f7b095edeb7eaea9fb4664e87226c76d3d0c3 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -945,15 +945,24 @@ impl Session {
+@@ -959,15 +959,24 @@ impl Session {
          }
          drop(agent_execution_guard);
          drop(ancestor_turn_retention_guard);
@@ -382,10 +382,10 @@ index e0b50c48dd7ed4558b4423d25bae6e62d99ccea5..df59764c6d0741906b7fc46bb44373da
                  // of dispatch waiting and the start of handler execution.
                  if let Some(execution_started_at) = execution_started_at {
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index 7dd281bad6e6c3d85a6605e46a8e09c0d10672bc..4c6d0ccd6267b2ba0589ac663d85eb092af8e36e 100644
+index 78fb147cb33220fb91d07882d8fe3350cc2e235a..5723f627433356533a154a47a287004e34e09296 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
-@@ -865,6 +865,13 @@ pub enum Op {
+@@ -870,6 +870,13 @@ pub enum Op {
          reply: oneshot::Sender<bool>,
      },
 
@@ -399,7 +399,7 @@ index 7dd281bad6e6c3d85a6605e46a8e09c0d10672bc..4c6d0ccd6267b2ba0589ac663d85eb09
      /// Execute a user-initiated one-off shell command (triggered by "!cmd").
      ///
      /// The command string is executed using the user's default shell and may
-@@ -1079,6 +1086,7 @@ impl Op {
+@@ -1084,6 +1091,7 @@ impl Op {
              Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
              Self::Shutdown => "shutdown",
              Self::ShutdownIfIdle { .. } => "shutdown_if_idle",
