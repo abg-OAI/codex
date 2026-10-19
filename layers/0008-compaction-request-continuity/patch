@@ -14,7 +14,7 @@ index b056b43bc73adee0204e2c573f3c74c0f3abecae..5cbc00dd49e892a8998dbe61e88c2898
                                      // Tool bodies are not sender authorization evidence.
                                      TruncationPolicy::Bytes(0),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index 0bc35f63ad4bbe6d660dcbdffc61e111368eb488..00b5de45c50baf4dd0ddd9aad988425fd0e1e9eb 100644
+index f0a4cdffaa2768841878fc78ed1e2994091594b1..d37d347e160f85a838fd9e99d12725304b9d735d 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
 @@ -19,6 +19,7 @@ use crate::hook_runtime::run_post_compact_hooks;
@@ -25,7 +25,7 @@ index 0bc35f63ad4bbe6d660dcbdffc61e111368eb488..00b5de45c50baf4dd0ddd9aad988425f
  use crate::session::RequestEffortUsage;
  use crate::session::session::Session;
  use crate::session::step_context::StepContext;
-@@ -402,7 +403,11 @@ async fn run_compact_task_inner_impl(
+@@ -401,7 +402,11 @@ async fn run_compact_task_inner_impl(
          get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default()
      };
      let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
@@ -38,7 +38,7 @@ index 0bc35f63ad4bbe6d660dcbdffc61e111368eb488..00b5de45c50baf4dd0ddd9aad988425f
 
      let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
      if let Some(summary_item) = new_history.last_mut() {
-@@ -585,19 +590,39 @@ pub(crate) struct CompactedUserMessage<'a> {
+@@ -580,19 +585,39 @@ pub(crate) struct CompactedUserMessage<'a> {
  }
 
  #[cfg(test)]
@@ -84,7 +84,7 @@ index 0bc35f63ad4bbe6d660dcbdffc61e111368eb488..00b5de45c50baf4dd0ddd9aad988425f
          .collect()
  }
 
-@@ -699,9 +724,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
+@@ -694,9 +719,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
      compacted_history
  }
 
@@ -96,7 +96,7 @@ index 0bc35f63ad4bbe6d660dcbdffc61e111368eb488..00b5de45c50baf4dd0ddd9aad988425f
      summary_text: &str,
  ) -> Vec<ResponseItemEnvelope> {
      build_compacted_history_with_limit(
-@@ -712,9 +738,10 @@ pub(crate) fn build_compacted_history(
+@@ -707,9 +733,10 @@ pub(crate) fn build_compacted_history(
      )
  }
 
@@ -108,7 +108,7 @@ index 0bc35f63ad4bbe6d660dcbdffc61e111368eb488..00b5de45c50baf4dd0ddd9aad988425f
      summary_text: &str,
      max_tokens: usize,
  ) -> Vec<ResponseItemEnvelope> {
-@@ -725,6 +752,26 @@ fn build_compacted_history_with_limit(
+@@ -720,6 +747,26 @@ fn build_compacted_history_with_limit(
              if remaining == 0 {
                  break;
              }
@@ -732,10 +732,10 @@ index f39be3fb41fee1371036f393d5d1f62057225b60..3a214bf18c9a8c4b68f42f996eb61f5b
              .fold(0i64, i64::saturating_add);
 
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index f657b5f79e4730f1550c4f2f319d4d8d461d8371..c41e3569833abd257c6e231cf9aceaa739b4f995 100644
+index 70178c446f78bb419de5699bfe0f73bd8bd63170..0847b00d532dfb08edf8cfe4b1356d1dfd51877b 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
-@@ -54,6 +54,82 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
+@@ -56,6 +56,82 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
  const EXEC_FORMAT_MAX_TOKENS: usize = 2_500;
  const TEST_WAV_SAMPLE_RATE: u32 = 8_000;
 

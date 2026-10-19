@@ -29,7 +29,7 @@ index bde4c2aa87c2d71f9dddbd0e36caa0c3ab638b94..bcdfc1f9ca459085852780e522ca9449
                  id: plan.id,
                  text: plan.text,
 diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
-index b205a05ffb6007cd56091107f0a9f28828265a8d..290d8c77850cd492acd36fec288f07f7a9e791a2 100644
+index 650c717e699e0970ee3df48d1a9ae6631e76075b..22b325f5e9d8ed3b79067c006a51bbd95e288ef0 100644
 --- a/codex-rs/app-server/Cargo.toml
 +++ b/codex-rs/app-server/Cargo.toml
 @@ -25,6 +25,8 @@ doctest = false
@@ -49,7 +49,7 @@ index b205a05ffb6007cd56091107f0a9f28828265a8d..290d8c77850cd492acd36fec288f07f7
  app_test_support = { workspace = true }
  axum = { workspace = true, default-features = false, features = [
      "http1",
-@@ -160,6 +161,5 @@ sqlx = { workspace = true }
+@@ -161,6 +162,5 @@ sqlx = { workspace = true }
  tar = { workspace = true }
  test-case = "3.3.1"
  tokio-rustls = { workspace = true }
@@ -57,10 +57,10 @@ index b205a05ffb6007cd56091107f0a9f28828265a8d..290d8c77850cd492acd36fec288f07f7
  tracing-opentelemetry = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 8b3078af4556c6a189e52f8e53d08fd380524433..59bc2b7c2740fc8e32f4db28f7e5b9bcc8ba1d4f 100644
+index 4cc1d0f091eb9ef51eab030868e5600dad3eee42..b9dd3605beccab526129e5e0a1f62b8a2d907592 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
-@@ -37,6 +37,8 @@ pub(crate) struct ThreadExtensionDependencies {
+@@ -38,6 +38,8 @@ pub(crate) struct ThreadExtensionDependencies {
      pub(crate) state_db: Option<StateDbHandle>,
      pub(crate) analytics_events_client: AnalyticsEventsClient,
      pub(crate) thread_manager: Weak<ThreadManager>,
@@ -69,7 +69,7 @@ index 8b3078af4556c6a189e52f8e53d08fd380524433..59bc2b7c2740fc8e32f4db28f7e5b9bc
      pub(crate) goal_service: Arc<GoalService>,
      pub(crate) environment_manager: Arc<EnvironmentManager>,
      pub(crate) executor_skill_provider: Arc<dyn codex_skills_extension::SkillProvider>,
-@@ -57,6 +59,7 @@ pub(crate) fn thread_extensions(
+@@ -59,6 +61,7 @@ pub(crate) fn thread_extensions(
          state_db,
          analytics_events_client,
          thread_manager,
@@ -77,7 +77,7 @@ index 8b3078af4556c6a189e52f8e53d08fd380524433..59bc2b7c2740fc8e32f4db28f7e5b9bc
          goal_service,
          environment_manager,
          executor_skill_provider,
-@@ -81,6 +84,11 @@ pub(crate) fn thread_extensions(
+@@ -83,6 +86,11 @@ pub(crate) fn thread_extensions(
      codex_history_notes_extension::install(&mut builder, auth_manager.clone());
      codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
      codex_core::install_saffron_fork_thread(&mut builder, thread_manager.clone());
@@ -90,19 +90,19 @@ index 8b3078af4556c6a189e52f8e53d08fd380524433..59bc2b7c2740fc8e32f4db28f7e5b9bc
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/app-server/src/mcp_refresh.rs b/codex-rs/app-server/src/mcp_refresh.rs
-index 3611ab3992b5d0db7f00af657c5b46a63e2684ac..148836f9d3c141c897da1a3086c5415346f1b24d 100644
+index 433c1814bef82d30f72d307c0957f79d50551bae..c8456761eb56b383ab79c51b464cb7bf5ffc2595 100644
 --- a/codex-rs/app-server/src/mcp_refresh.rs
 +++ b/codex-rs/app-server/src/mcp_refresh.rs
-@@ -479,6 +479,7 @@ enabled = false
-                 thread_extensions(
-                     &good_config,
-                     ThreadExtensionDependencies {
+@@ -525,6 +525,7 @@ enabled = false
+                         sample_responses: Arc::new(
+                             crate::thread_sample::SampleResponseRegistry::default(),
+                         ),
 +                        thread_message_host: None,
                          event_sink: Arc::new(NoopExtensionEventSink),
                          auth_manager: auth_manager.clone(),
                          state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index ea79a1104e0c2f35892ee007a49f2b3da66c8254..f0be94f3a00238f5637be828ad43df79b08583a6 100644
+index 5cab7e6995a36e247ce2ad9e23dd5e43655b8916..f689ecf0fdd10ce688a7e4ff53e7a3f5ac3ee815 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -168,6 +168,8 @@ pub(crate) struct MessageProcessor {
@@ -114,25 +114,25 @@ index ea79a1104e0c2f35892ee007a49f2b3da66c8254..f0be94f3a00238f5637be828ad43df79
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -332,6 +334,7 @@ impl MessageProcessor {
-         let extension_event_sink =
+@@ -333,6 +335,7 @@ impl MessageProcessor {
              app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
          let mut queue_service = None;
+         let sample_responses = Arc::new(crate::thread_sample::SampleResponseRegistry::default());
 +        let message_host_handle = Arc::new(codex_core::SaffronThreadMessageHostHandle::default());
          let thread_manager = Arc::new_cyclic(|thread_manager| {
              queue_service = queue_store.map(|queue| {
                  Arc::new(QueuedItemService::new(
-@@ -350,6 +353,7 @@ impl MessageProcessor {
-                 thread_extensions(
+@@ -352,6 +355,7 @@ impl MessageProcessor {
                      config.as_ref(),
                      ThreadExtensionDependencies {
+                         sample_responses: Arc::clone(&sample_responses),
 +                        thread_message_host: Some(Arc::clone(&message_host_handle)),
                          event_sink: Arc::clone(&extension_event_sink),
                          auth_manager: auth_manager.clone(),
                          state_db: state_db.clone(),
-@@ -539,6 +543,12 @@ impl MessageProcessor {
-             turn_cost_worker.as_ref().map(TurnCostWorker::handle),
+@@ -542,6 +546,12 @@ impl MessageProcessor {
              config_warnings,
+             sample_responses,
          );
 +        let saffron_message_host: Arc<dyn codex_core::SaffronThreadMessageHost> =
 +            Arc::new(crate::request_processors::SaffronMessageHost::new(
@@ -143,7 +143,7 @@ index ea79a1104e0c2f35892ee007a49f2b3da66c8254..f0be94f3a00238f5637be828ad43df79
          let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
              && config.features.enabled(codex_features::Feature::Goals)
          {
-@@ -640,6 +650,7 @@ impl MessageProcessor {
+@@ -643,6 +653,7 @@ impl MessageProcessor {
              remote_control_processor,
              search_processor,
              saffron_goal_scheduler,
@@ -152,7 +152,7 @@ index ea79a1104e0c2f35892ee007a49f2b3da66c8254..f0be94f3a00238f5637be828ad43df79
              thread_queue_processor,
              thread_processor,
 diff --git a/codex-rs/app-server/src/request_processors.rs b/codex-rs/app-server/src/request_processors.rs
-index 59d1a94157d6dc5c37f65dfd0d5e3aaf822b5dfd..4a4189b81b3b6a449e7617fdc0013e10d38ecf40 100644
+index 4d58b2cbd5673f51ebd131a0c0ca177d42cf4d35..722cd549d684dd264993008c6dc08a727e29a218 100644
 --- a/codex-rs/app-server/src/request_processors.rs
 +++ b/codex-rs/app-server/src/request_processors.rs
 @@ -601,6 +601,7 @@ pub(crate) use search::SearchRequestProcessor;
@@ -164,10 +164,10 @@ index 59d1a94157d6dc5c37f65dfd0d5e3aaf822b5dfd..4a4189b81b3b6a449e7617fdc0013e10
  pub(crate) use turn_processor::TurnRequestProcessor;
  pub(crate) use windows_sandbox_processor::WindowsSandboxRequestProcessor;
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439d60b9616 100644
+index 05f45250ab1350418ce90f5e5fe3a778ce5f6a2a..c18bbd3a259abfac1e91bda3c09dc6875e05e80e 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -477,10 +477,12 @@ pub(crate) struct ThreadRequestProcessor {
+@@ -484,10 +484,12 @@ pub(crate) struct ThreadRequestProcessor {
      pub(super) initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
  }
 
@@ -181,7 +181,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
  }
 
  /// Outcome of trying to satisfy a resume request from an already loaded thread.
-@@ -3857,7 +3859,7 @@ impl ThreadRequestProcessor {
+@@ -3900,7 +3902,7 @@ impl ThreadRequestProcessor {
          app_server_client_version: Option<String>,
          client_mcp_extensions: ClientMcpExtensions,
          prepared_config: &mut Option<PreparedResumeConfig>,
@@ -190,7 +190,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
          if let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
              && self
                  .pending_thread_unloads
-@@ -3894,7 +3896,7 @@ impl ThreadRequestProcessor {
+@@ -3937,7 +3939,7 @@ impl ThreadRequestProcessor {
                      // The listener may need this permit to finish the response.
                      drop(_thread_list_state_permit);
                      let _ = completion.await;
@@ -199,7 +199,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                  }
                  RunningThreadResumeResult::NotRunning(stored_thread) => stored_thread,
              },
-@@ -3907,7 +3909,27 @@ impl ThreadRequestProcessor {
+@@ -3950,7 +3952,27 @@ impl ThreadRequestProcessor {
                          self.continue_daemon_turn(&params.thread_id, saved.clone())
                              .await;
                      }
@@ -228,7 +228,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                  }
                  None
              }
-@@ -3960,6 +3982,13 @@ impl ThreadRequestProcessor {
+@@ -4003,6 +4025,13 @@ impl ThreadRequestProcessor {
              }
          };
          let (thread_history, resume_source_thread) = resume_result?;
@@ -242,7 +242,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
          // Path-based resume can use an empty request thread ID. Coordinate once its real
          // identity is known; unrelated loaded threads never wait for this cold startup.
          let _goal_resume_guard = if let InitialHistory::Resumed(resumed) = &thread_history {
-@@ -4005,7 +4034,7 @@ impl ThreadRequestProcessor {
+@@ -4048,7 +4077,7 @@ impl ThreadRequestProcessor {
              && !can_accept_direct_input(thread_history.get_multi_agent_version(), &source)
          {
              let ThreadResumeTarget::Client(request_id) = target else {
@@ -251,7 +251,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
              };
              let child_thread_id = resumed_history.conversation_id;
              self.thread_manager
-@@ -4043,7 +4072,7 @@ impl ThreadRequestProcessor {
+@@ -4086,7 +4115,7 @@ impl ThreadRequestProcessor {
                  RunningThreadResumeResult::Handled(completion) => {
                      drop(_thread_list_state_permit);
                      let _ = completion.await;
@@ -260,7 +260,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                  }
                  RunningThreadResumeResult::NotRunning(_) => Err(invalid_request(
                      "cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first, or use thread/read to inspect it",
-@@ -4218,7 +4247,7 @@ impl ThreadRequestProcessor {
+@@ -4261,7 +4290,7 @@ impl ThreadRequestProcessor {
                      ThreadResumeTarget::Client(request_id) => {
                          self.request_trace_context(request_id).await
                      }
@@ -269,7 +269,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                  },
                  client_mcp_extensions,
                  ..StartThreadOptions::new(config)
-@@ -4236,18 +4265,36 @@ impl ThreadRequestProcessor {
+@@ -4279,18 +4308,36 @@ impl ThreadRequestProcessor {
                      self.thread_watch_manager
                          .upsert_thread(&thread_id.to_string())
                          .await;
@@ -313,7 +313,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                  };
                  let request_id = request_id.clone();
                  if let Err(err) = Self::set_app_server_client_info(
-@@ -4258,7 +4305,7 @@ impl ThreadRequestProcessor {
+@@ -4301,7 +4348,7 @@ impl ThreadRequestProcessor {
                  .await
                  {
                      self.outgoing.send_error(request_id, err).await;
@@ -322,7 +322,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                  }
                  let instruction_sources = codex_thread.legacy_instruction_sources().await;
                  let SessionConfiguredEvent { rollout_path, .. } = session_configured;
-@@ -4266,7 +4313,7 @@ impl ThreadRequestProcessor {
+@@ -4309,7 +4356,7 @@ impl ThreadRequestProcessor {
                      let error =
                          internal_error(format!("rollout path missing for thread {thread_id}"));
                      self.outgoing.send_error(request_id, error).await;
@@ -331,7 +331,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                  };
                  // Paginated JSONL is canonical, but its SQLite projection can lag after a
                  // previous write failure. Persist after reopening the live writer so legacy
-@@ -4279,14 +4326,14 @@ impl ThreadRequestProcessor {
+@@ -4322,14 +4369,14 @@ impl ThreadRequestProcessor {
                          .map_err(thread_store_resume_read_error)
                  {
                      self.outgoing.send_error(request_id, error).await;
@@ -348,7 +348,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                          }
                      }
                  } else {
-@@ -4321,7 +4368,7 @@ impl ThreadRequestProcessor {
+@@ -4364,7 +4411,7 @@ impl ThreadRequestProcessor {
                          self.outgoing
                              .send_error(request_id, internal_error(message))
                              .await;
@@ -357,7 +357,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                      }
                  };
                  thread.thread_source = codex_thread
-@@ -4357,7 +4404,7 @@ impl ThreadRequestProcessor {
+@@ -4400,7 +4447,7 @@ impl ThreadRequestProcessor {
                              Ok(cursors) => cursors,
                              Err(error) => {
                                  self.outgoing.send_error(request_id, error).await;
@@ -366,7 +366,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                              }
                          }
                      } else {
-@@ -4384,7 +4431,7 @@ impl ThreadRequestProcessor {
+@@ -4427,7 +4474,7 @@ impl ThreadRequestProcessor {
                          Ok(page) => Some(page),
                          Err(error) => {
                              self.outgoing.send_error(request_id, error).await;
@@ -375,7 +375,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
                          }
                      }
                  } else {
-@@ -4465,7 +4512,7 @@ impl ThreadRequestProcessor {
+@@ -4508,7 +4555,7 @@ impl ThreadRequestProcessor {
                  return Err(error);
              }
          }
@@ -384,7 +384,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
      }
 
      async fn load_and_apply_persisted_resume_metadata(
-@@ -6687,6 +6734,7 @@ fn build_thread_from_loaded_snapshot(
+@@ -6744,6 +6791,7 @@ fn build_thread_from_loaded_snapshot(
  }
 
  mod saffron_goal_scheduler;
@@ -393,7 +393,7 @@ index 35caa18c7cc4f5b82105494b0c2f92593902c502..cfad6428a228869f1f1bbf0ffc946439
  #[cfg(test)]
  #[path = "thread_processor_tests.rs"]
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index 28859adb32675b065989eaa86593b2e890df9794..13eeab8b3b2e657704c76e39c04725161c128e45 100644
+index 1c5558fc97d2718cd3db8e53bbd0130eb9a1ac5f..c6cf35ccfc72e75f07d1a972d2ba0ebeaae39b64 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
 @@ -19,6 +19,7 @@ mod bedrock_service_tier;

@@ -10,7 +10,7 @@ fn persistent_guidance_is_emitted_once_for_unchanged_state() {
     let initial = initial.expect("initial guidance");
 
     assert_eq!(snapshot, json!({ "instructions": INSTRUCTIONS }));
-    assert_eq!(initial.body(), format!("\n{INSTRUCTIONS}\n"));
+    assert_eq!(initial.body(), &input_text(format!("\n{INSTRUCTIONS}\n")));
     assert!(section.matches_retained_fragment("developer", &rendered(initial)));
     let (unchanged_snapshot, update) =
         section.render_diff(PreviousWorldStateSection::Known(&snapshot));
@@ -28,13 +28,13 @@ fn guidance_is_replaced_or_retired_when_configuration_changes() {
     let replaced = replaced.expect("replacement guidance");
     assert_eq!(
         replaced.body(),
-        format!("\n{REPLACEMENT_NOTICE}\n\n{INSTRUCTIONS}\n")
+        &input_text(format!("\n{REPLACEMENT_NOTICE}\n\n{INSTRUCTIONS}\n"))
     );
 
     let (snapshot, retired) = disabled.render_diff(PreviousWorldStateSection::Known(&snapshot));
     assert_eq!(snapshot, Some(json!({ "instructions": null })));
     let retired = retired.expect("retirement guidance");
-    assert_eq!(retired.body(), format!("\n{REMOVAL_NOTICE}\n"));
+    assert_eq!(retired.body(), &input_text(format!("\n{REMOVAL_NOTICE}\n")));
 }
 
 #[test]
@@ -72,5 +72,8 @@ fn guidance_is_root_scoped() {
 
 fn rendered(fragment: RenderedWorldStateFragment) -> String {
     let (start, end) = fragment.markers();
-    format!("{start}{}{end}", fragment.body())
+    let codex_protocol::models::ContentItem::InputText { text } = fragment.body() else {
+        panic!("guidance must contain input text");
+    };
+    format!("{start}{text}{end}")
 }
