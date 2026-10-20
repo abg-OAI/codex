@@ -2419,6 +2419,7 @@ impl Session {
 
     /// Record a terminal CodexErr before the app-server completion notification is reduced.
     pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {
+        crate::saffron::goal_supervisor::record_turn_error(self, turn_context, error);
         self.services
             .analytics_events_client
             .track_turn_codex_error(TurnCodexErrorFact::from_codex_err(
@@ -2569,6 +2570,9 @@ impl Session {
             }
         };
         if !is_final(&status) {
+            return;
+        }
+        if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
             return;
         }
 
