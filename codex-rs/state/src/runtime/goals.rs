@@ -5,6 +5,9 @@ use crate::sqlite::SqliteWriteQueryExt;
 use uuid::Uuid;
 
 mod active_goal_listing;
+mod active_goal_objective;
+
+pub use active_goal_objective::ThreadGoalRevision;
 
 #[derive(Clone)]
 pub struct GoalStore {
