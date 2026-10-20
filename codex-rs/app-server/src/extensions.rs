@@ -40,6 +40,8 @@ pub(crate) struct ThreadExtensionDependencies {
     pub(crate) thread_manager: Weak<ThreadManager>,
     /// Weakly initialized access to process-owned message routing.
     pub(crate) thread_message_host: Option<Arc<codex_core::SaffronThreadMessageHostHandle>>,
+    pub(crate) self_archive_sender:
+        Option<tokio::sync::mpsc::UnboundedSender<codex_core::SaffronArchiveRequest>>,
     pub(crate) goal_service: Arc<GoalService>,
     pub(crate) environment_manager: Arc<EnvironmentManager>,
     pub(crate) executor_skill_provider: Arc<dyn codex_skills_extension::SkillProvider>,
@@ -62,6 +64,7 @@ pub(crate) fn thread_extensions(
         analytics_events_client,
         thread_manager,
         thread_message_host,
+        self_archive_sender,
         goal_service,
         environment_manager,
         executor_skill_provider,
@@ -91,6 +94,9 @@ pub(crate) fn thread_extensions(
         thread_manager.clone(),
         thread_message_host,
     );
+    if let Some(sender) = self_archive_sender {
+        codex_core::install_saffron_archive_self(&mut builder, sender);
+    }
     if let Some(state_db) = state_db {
         codex_goal_extension::install_with_backend(
             &mut builder,
