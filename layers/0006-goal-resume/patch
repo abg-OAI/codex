@@ -159,10 +159,10 @@ index 3627f608e70e9f237757bd1ebecaff540647df33..6adfc5d5a60edb1276f2c4c793cfb3a6
  async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
      let server = responses::start_mock_server().await;
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index f289a650457172873d40f0b42500f5c8d617499f..1a5b67c4dedd55c54c6cab187b9d94568b0d2114 100644
+index accffe05b6b3779ffffc77a738eb903128c503dd..323a30f1186e1b41f73b51078e249051ba666afa 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -161,6 +161,14 @@ mod thread_spawn;
+@@ -162,6 +162,14 @@ mod thread_spawn;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
  pub use agent::control::ThreadEvictionOutcome;

@@ -121,10 +121,10 @@ index f76e655805210a92d932617a69144f918b9c9438..4d58b2cbd5673f51ebd131a0c0ca177d
      thread: &mut Thread,
      config_snapshot: &ThreadConfigSnapshot,
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 788f96a5e644fead5a6f19ea27df96a9064b1559..05f45250ab1350418ce90f5e5fe3a778ce5f6a2a 100644
+index ed269fb2323a6920d2ea6d4ec589abdb45de9d05..08b78a10c4fea93ccb4e4cb2d210e075193b82d3 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -3025,7 +3025,9 @@ impl ThreadRequestProcessor {
+@@ -3026,7 +3026,9 @@ impl ThreadRequestProcessor {
                  ))
              })?
              .and_then(|metadata| metadata.daybreak_enabled);
@@ -135,7 +135,7 @@ index 788f96a5e644fead5a6f19ea27df96a9064b1559..05f45250ab1350418ce90f5e5fe3a778
          let mut thread = if include_turns {
              if let Some(loaded_thread) = loaded_thread.as_ref() {
                  // Loaded thread with turns: use persisted metadata when it exists,
-@@ -4558,11 +4560,9 @@ impl ThreadRequestProcessor {
+@@ -4559,11 +4561,9 @@ impl ThreadRequestProcessor {
      ) -> Result<RunningThreadResumeResult, JSONRPCErrorError> {
          let running_thread = if params.history.is_some() {
              if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
@@ -150,7 +150,7 @@ index 788f96a5e644fead5a6f19ea27df96a9064b1559..05f45250ab1350418ce90f5e5fe3a778
              {
                  return Err(invalid_request(format!(
                      "cannot resume thread {existing_thread_id} with history while it is already running"
-@@ -4570,7 +4570,8 @@ impl ThreadRequestProcessor {
+@@ -4571,7 +4571,8 @@ impl ThreadRequestProcessor {
              }
              None
          } else if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
@@ -160,7 +160,7 @@ index 788f96a5e644fead5a6f19ea27df96a9064b1559..05f45250ab1350418ce90f5e5fe3a778
          {
              let source_thread = self
                  .read_stored_thread_for_resume(
-@@ -4589,9 +4590,11 @@ impl ThreadRequestProcessor {
+@@ -4590,9 +4591,11 @@ impl ThreadRequestProcessor {
                  )
                  .await?;
              let existing_thread_id = source_thread.thread_id;
@@ -498,7 +498,7 @@ index 37736dc679528cf5c404d7ba4444b536da462621..2a6b3daa4e86ef0afd3bb5c9a18e95e1
      }
 
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 4af2c53df588a3bbd0e86cba21d30ee9be302fa4..90b688d1600ba38bdbf7c4434815e30192ca246e 100644
+index 52684fc87c241834e5b072c8f1da89838615bd1f..75736e7cef35a65dc34baa285154087cdccfc589 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -920,7 +920,26 @@ impl CodexThread {
@@ -735,7 +735,7 @@ index b13201a149d4798bb5e47e209924d1364aa9a121..73e843128623e904b78b1b3463fcf6b8
          Ok(Arc::new(world_state))
      }
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index c03d459bf0f278c8b53e4a11fedb1054ff47a8b1..0a3d0a15c2a1b30aa3bb257898784d3f1690105d 100644
+index 4a4e5b42659b9b9559059ff7be6fa0c6727a3ff6..ec0b12e40f5554ec45c1e697fb7d009cd630c194 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -91,6 +91,9 @@ pub(crate) struct Session {

@@ -42,10 +42,10 @@ index c8456761eb56b383ab79c51b464cb7bf5ffc2595..88eea154d45606441325d8b08a9f51c0
                          auth_manager: auth_manager.clone(),
                          state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index f689ecf0fdd10ce688a7e4ff53e7a3f5ac3ee815..e86c1acb8945aba8f75c3ebc90ab968cb3a17865 100644
+index 833e07faad9a28ea5af78bd78f472902c5908ac7..183013bf5e5f3e6b26bab2ffa004f39a1fd34d29 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
-@@ -170,6 +170,7 @@ pub(crate) struct MessageProcessor {
+@@ -171,6 +171,7 @@ pub(crate) struct MessageProcessor {
      saffron_goal_scheduler: Option<SaffronGoalSchedulerHandle>,
      /// Owns routing while thread extensions hold only a weak reference.
      _saffron_message_host: Arc<dyn codex_core::SaffronThreadMessageHost>,
@@ -53,7 +53,7 @@ index f689ecf0fdd10ce688a7e4ff53e7a3f5ac3ee815..e86c1acb8945aba8f75c3ebc90ab968c
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -336,6 +337,7 @@ impl MessageProcessor {
+@@ -337,6 +338,7 @@ impl MessageProcessor {
          let mut queue_service = None;
          let sample_responses = Arc::new(crate::thread_sample::SampleResponseRegistry::default());
          let message_host_handle = Arc::new(codex_core::SaffronThreadMessageHostHandle::default());
@@ -61,7 +61,7 @@ index f689ecf0fdd10ce688a7e4ff53e7a3f5ac3ee815..e86c1acb8945aba8f75c3ebc90ab968c
          let thread_manager = Arc::new_cyclic(|thread_manager| {
              queue_service = queue_store.map(|queue| {
                  Arc::new(QueuedItemService::new(
-@@ -356,6 +358,7 @@ impl MessageProcessor {
+@@ -357,6 +359,7 @@ impl MessageProcessor {
                      ThreadExtensionDependencies {
                          sample_responses: Arc::clone(&sample_responses),
                          thread_message_host: Some(Arc::clone(&message_host_handle)),
@@ -69,7 +69,7 @@ index f689ecf0fdd10ce688a7e4ff53e7a3f5ac3ee815..e86c1acb8945aba8f75c3ebc90ab968c
                          event_sink: Arc::clone(&extension_event_sink),
                          auth_manager: auth_manager.clone(),
                          state_db: state_db.clone(),
-@@ -552,6 +555,8 @@ impl MessageProcessor {
+@@ -553,6 +556,8 @@ impl MessageProcessor {
                  turn_admission.clone(),
              ));
          message_host_handle.set(Arc::downgrade(&saffron_message_host));
@@ -78,7 +78,7 @@ index f689ecf0fdd10ce688a7e4ff53e7a3f5ac3ee815..e86c1acb8945aba8f75c3ebc90ab968c
          let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
              && config.features.enabled(codex_features::Feature::Goals)
          {
-@@ -654,6 +659,7 @@ impl MessageProcessor {
+@@ -655,6 +660,7 @@ impl MessageProcessor {
              search_processor,
              saffron_goal_scheduler,
              _saffron_message_host: saffron_message_host,
@@ -86,7 +86,7 @@ index f689ecf0fdd10ce688a7e4ff53e7a3f5ac3ee815..e86c1acb8945aba8f75c3ebc90ab968c
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -664,6 +670,7 @@ impl MessageProcessor {
+@@ -665,6 +671,7 @@ impl MessageProcessor {
      }
 
      pub(crate) fn clear_runtime_references(&self) {
@@ -94,7 +94,7 @@ index f689ecf0fdd10ce688a7e4ff53e7a3f5ac3ee815..e86c1acb8945aba8f75c3ebc90ab968c
          self.account_processor.clear_external_auth();
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
-@@ -893,6 +900,7 @@ impl MessageProcessor {
+@@ -894,6 +901,7 @@ impl MessageProcessor {
      }
 
      pub(crate) async fn drain_background_tasks(&self) {
@@ -103,10 +103,10 @@ index f689ecf0fdd10ce688a7e4ff53e7a3f5ac3ee815..e86c1acb8945aba8f75c3ebc90ab968c
          if let Some(worker) = &self.turn_cost_worker {
              worker.shutdown();
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index c18bbd3a259abfac1e91bda3c09dc6875e05e80e..18c5a3eb39de978a1d848059562238616b1a65e4 100644
+index 340282b17ba7871ed3104d790e6070c9525d6221..3231f2c9e39f112bd94f71f057bc2fe50fef77a7 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -6790,6 +6790,7 @@ fn build_thread_from_loaded_snapshot(
+@@ -6820,6 +6820,7 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -127,7 +127,7 @@ index c6cf35ccfc72e75f07d1a972d2ba0ebeaae39b64..74de4c3f287b20888b8093e6200fccdd
  mod saffron_goal_supervisor;
  mod saffron_goal_supervisor_history;
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 90b688d1600ba38bdbf7c4434815e30192ca246e..d72238c57b305a01e35e410f993b6418790fd139 100644
+index 75736e7cef35a65dc34baa285154087cdccfc589..2721a4a911e3a6bf8078dd6bc25a50b83d9228e8 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -331,6 +331,18 @@ impl CodexThread {
@@ -160,10 +160,10 @@ index 90b688d1600ba38bdbf7c4434815e30192ca246e..d72238c57b305a01e35e410f993b6418
              .await
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index c9c0ab72305f5c2291468bffad820b344b8ddaa6..d09378d508cdf1f9e9a2cbb30d997b28f93cb026 100644
+index a67eae3efdd04327ce991b12ff8d67d289a5f237..3de99e466b4f2d7cf79fd688384858e510cae428 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -139,6 +139,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -140,6 +140,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
@@ -227,7 +227,7 @@ index 73e843128623e904b78b1b3463fcf6b80bd2c779..d225cf608ca14118dffac731c3a878f9
  pub(crate) mod context_window;
  mod daemon_recovery;
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 0a3d0a15c2a1b30aa3bb257898784d3f1690105d..0d46a8efb2a92dc7cf3d6d0acc6caf843bdaadb3 100644
+index ec0b12e40f5554ec45c1e697fb7d009cd630c194..0d8fa350a84164b9a451aefe1505406b52a401b7 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -677,7 +677,8 @@ impl Session {
