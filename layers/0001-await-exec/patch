@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index e722464838ce7cca3298e88479e44c5ec2358679..eb13cb02a646e869cdd8486a5b280223318649a7 100644
+index 477b780f126ebc67d0d872ae5506f9f0f66159d6..7419b355cbf68a06ce586ee3f739862f58340c11 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -137,6 +137,7 @@ mod skills;
+@@ -138,6 +138,7 @@ mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  #[cfg(test)]
  pub(crate) use skills::skills_load_input_from_config;

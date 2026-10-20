@@ -1474,7 +1474,7 @@ index 66eb053fb12a5665201852fda3a4864b79b0cfe6..dd7618be8749021dc6c491b8636d2813
  fn reservation_drop_releases_slot() {
      let registry = Arc::new(AgentRegistry::default());
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 3ee02dd9739306976c0dd5babf2f71ded5808657..4af2c53df588a3bbd0e86cba21d30ee9be302fa4 100644
+index c63b1aa02abca87ef71f3eabd5035cee50bac305..52684fc87c241834e5b072c8f1da89838615bd1f 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -320,6 +320,17 @@ impl CodexThread {
@@ -1910,7 +1910,7 @@ index 37089fa6924f80149ec3be3d0de1f31cdc2c9c6f..b13201a149d4798bb5e47e209924d136
                  &self.services.rollout_thread_trace,
              )
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index a2a3415eedc1f00abf843d49ccea32e07647f4de..c03d459bf0f278c8b53e4a11fedb1054ff47a8b1 100644
+index 05bc138da7e84283c89ff4360236c15695caf4d4..4a4e5b42659b9b9559059ff7be6fa0c6727a3ff6 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -673,6 +673,20 @@ impl Session {

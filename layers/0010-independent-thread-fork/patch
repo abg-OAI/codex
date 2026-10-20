@@ -11,10 +11,10 @@ index c34714aeec3ffe2679acbbd58e5f92f12b266819..4cc1d0f091eb9ef51eab030868e5600d
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 1a5b67c4dedd55c54c6cab187b9d94568b0d2114..6a03f105e6be4f5d7241fbe7023e49a6ef71ad7f 100644
+index 323a30f1186e1b41f73b51078e249051ba666afa..f08ed584972dc88c4f851823fa2bdd7b1fa55a1f 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -139,6 +139,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -140,6 +140,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 

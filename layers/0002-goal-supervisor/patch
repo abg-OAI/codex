@@ -1,8 +1,8 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 221bab821cae2cdf3aae784489c86fa8ab89b2c4..86e9be3ad354309448e345b86a9d09b58e726301 100644
+index c403f0b5a01edce9121835a434ecd343dd6c0232..5b7ad788b10dd944f9a1259006240d9d3be6dde6 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -3045,6 +3045,7 @@ dependencies = [
+@@ -3046,6 +3046,7 @@ dependencies = [
   "sha1 0.10.6",
   "shlex",
   "similar",
@@ -23,10 +23,10 @@ index 96b74788151df3fb9d039960e19375ccbdbb5a91..c34714aeec3ffe2679acbbd58e5f92f1
      codex_git_attribution::install(
          &mut builder,
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 58b5a6ce5b7e5a3f77a784bb3aeb42add3514561..5cab7e6995a36e247ce2ad9e23dd5e43655b8916 100644
+index 54f81d1600dea59dd272fdc985b22c8f6824e848..e3a7c9d9ad6a6b10765dd482b456b74d7508ae78 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
-@@ -76,6 +76,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
+@@ -77,6 +77,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
  use codex_app_server_protocol::experimental_required_message;
  use codex_arg0::Arg0DispatchPaths;
  use codex_code_mode::CodeModeSessionProvider;
@@ -35,7 +35,7 @@ index 58b5a6ce5b7e5a3f77a784bb3aeb42add3514561..5cab7e6995a36e247ce2ad9e23dd5e43
  use codex_core::ThreadManager;
  use codex_core::config::Config;
  use codex_core::config::ThreadStoreConfig;
-@@ -165,6 +167,7 @@ pub(crate) struct MessageProcessor {
+@@ -166,6 +168,7 @@ pub(crate) struct MessageProcessor {
      project_processor: ProjectRequestProcessor,
      pub(super) remote_control_processor: RemoteControlRequestProcessor,
      search_processor: SearchRequestProcessor,
@@ -43,7 +43,7 @@ index 58b5a6ce5b7e5a3f77a784bb3aeb42add3514561..5cab7e6995a36e247ce2ad9e23dd5e43
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -539,6 +542,24 @@ impl MessageProcessor {
+@@ -540,6 +543,24 @@ impl MessageProcessor {
              config_warnings,
              sample_responses,
          );
@@ -68,7 +68,7 @@ index 58b5a6ce5b7e5a3f77a784bb3aeb42add3514561..5cab7e6995a36e247ce2ad9e23dd5e43
          let turn_processor = TurnRequestProcessor::new(
              auth_manager,
              Arc::clone(&thread_manager),
-@@ -621,6 +642,7 @@ impl MessageProcessor {
+@@ -622,6 +643,7 @@ impl MessageProcessor {
              project_processor,
              remote_control_processor,
              search_processor,
@@ -76,7 +76,7 @@ index 58b5a6ce5b7e5a3f77a784bb3aeb42add3514561..5cab7e6995a36e247ce2ad9e23dd5e43
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -635,6 +657,9 @@ impl MessageProcessor {
+@@ -636,6 +658,9 @@ impl MessageProcessor {
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
          self.skills_watcher.shutdown();
@@ -113,7 +113,7 @@ index ab13ac6b0d4831912c691a85ebbcde850e1ce984..f42562ef7c6f9894067f0c68e7d96cd1
      match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_and_wait()).await {
          Ok(Ok(())) => ThreadShutdownResult::Complete,
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index af2abeb21b02f44fe1ceab2087c92dcd54fd8a7d..788f96a5e644fead5a6f19ea27df96a9064b1559 100644
+index de9b90925f06d2e9144d0397ae49f595c434f4b1..ed269fb2323a6920d2ea6d4ec589abdb45de9d05 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
 @@ -293,6 +293,15 @@ fn has_model_resume_override(
@@ -132,7 +132,7 @@ index af2abeb21b02f44fe1ceab2087c92dcd54fd8a7d..788f96a5e644fead5a6f19ea27df96a9
  fn has_permission_override(
      request_overrides: Option<&HashMap<String, serde_json::Value>>,
      typesafe_overrides: &ConfigOverrides,
-@@ -6731,6 +6740,8 @@ fn build_thread_from_loaded_snapshot(
+@@ -6761,6 +6770,8 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -985,7 +985,7 @@ index 2b3626fd51528b1eaeb29b32114cc3e52aa91c8d..583ddd0b7cb4b82f318ae365a2081637
 
  #[derive(Clone, Debug, PartialEq, Eq)]
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 0dff26d89ab6ccaf1505278b03d370b1571a9d3e..3ee02dd9739306976c0dd5babf2f71ded5808657 100644
+index f174a728dd5826b41db2f62c9fa92e8b9bf30a9c..c63b1aa02abca87ef71f3eabd5035cee50bac305 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -376,6 +376,38 @@ impl CodexThread {
@@ -1027,7 +1027,7 @@ index 0dff26d89ab6ccaf1505278b03d370b1571a9d3e..3ee02dd9739306976c0dd5babf2f71de
      #[doc(hidden)]
      pub async fn ensure_rollout_materialized(&self) {
          self.session
-@@ -1263,6 +1295,10 @@ impl CodexThread {
+@@ -1264,6 +1296,10 @@ impl CodexThread {
          let multi_agent_version = self
              .multi_agent_version()
              .unwrap_or_else(|| config.multi_agent_version_from_features());
@@ -1040,10 +1040,10 @@ index 0dff26d89ab6ccaf1505278b03d370b1571a9d3e..3ee02dd9739306976c0dd5babf2f71de
      }
  }
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index eb13cb02a646e869cdd8486a5b280223318649a7..f289a650457172873d40f0b42500f5c8d617499f 100644
+index 7419b355cbf68a06ce586ee3f739862f58340c11..accffe05b6b3779ffffc77a738eb903128c503dd 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -138,6 +138,14 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -139,6 +139,14 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  #[cfg(test)]
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
@@ -1058,7 +1058,7 @@ index eb13cb02a646e869cdd8486a5b280223318649a7..f289a650457172873d40f0b42500f5c8
  mod stream_events_utils;
  pub mod test_support;
  mod unified_exec;
-@@ -153,6 +161,9 @@ mod thread_spawn;
+@@ -154,6 +162,9 @@ mod thread_spawn;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
  pub use agent::control::ThreadEvictionOutcome;
