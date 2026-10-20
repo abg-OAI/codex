@@ -13,6 +13,7 @@ use codex_extension_api::ThreadLifecycleContributor;
 use codex_extension_api::ThreadStartInput;
 use codex_extension_api::WorldStateContributionInput;
 use codex_extension_api::WorldStateSectionContribution;
+use codex_extension_api::input_text;
 use codex_features::Feature;
 use serde_json::Value;
 use serde_json::json;
@@ -142,7 +143,7 @@ fn render_guidance_diff(
     Some(RenderedWorldStateFragment::new(
         "developer",
         (START_MARKER, END_MARKER),
-        format!("\n{body}\n"),
+        input_text(format!("\n{body}\n")),
     ))
 }
 

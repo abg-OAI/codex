@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 974a704b62dad3906ba7e11bac56f091d414afcf..8b3078af4556c6a189e52f8e53d08fd380524433 100644
+index c34714aeec3ffe2679acbbd58e5f92f12b266819..4cc1d0f091eb9ef51eab030868e5600dad3eee42 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
-@@ -80,6 +80,7 @@ pub(crate) fn thread_extensions(
+@@ -82,6 +82,7 @@ pub(crate) fn thread_extensions(
      }
      codex_history_notes_extension::install(&mut builder, auth_manager.clone());
      codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
