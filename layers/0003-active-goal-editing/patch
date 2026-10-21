@@ -414,10 +414,10 @@ index acc2df00323b399d665c187cdb851412aad8124f..557de50e9251ba85ba0b06aaaa0b499e
      let runtime = runtime(parent);
      let _transition = Arc::clone(&runtime.transition).lock_owned().await;
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
-index f8f584b50e7b3f86cb9fe33e49614ff3759997d6..68fd5e1fbb8fc97d3a59dc6be5cf416c2e9fefe9 100644
+index 130426adbe65cf42735f1f4907f7f88368809b81..7af30753b81f255dc9e16459b8f4a568b5ce2257 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime_tests.rs
-@@ -120,7 +120,8 @@ async fn root_work_retires_an_uncommitted_supervisor_owner() {
+@@ -121,7 +121,8 @@ async fn root_work_retires_an_uncommitted_supervisor_owner() {
      runtime.state.lock().await.active = Some(ActiveHelper {
          thread_id: helper_id,
          continuation,
@@ -427,7 +427,7 @@ index f8f584b50e7b3f86cb9fe33e49614ff3759997d6..68fd5e1fbb8fc97d3a59dc6be5cf416c
          action: None,
      });
 
-@@ -216,7 +217,8 @@ async fn passive_mail_waking_a_sleeping_root_retires_the_supervisor_owner() {
+@@ -219,7 +220,8 @@ async fn passive_mail_waking_a_sleeping_root_retires_the_supervisor_owner() {
      runtime.state.lock().await.active = Some(ActiveHelper {
          thread_id: ThreadId::new(),
          continuation,
@@ -437,7 +437,7 @@ index f8f584b50e7b3f86cb9fe33e49614ff3759997d6..68fd5e1fbb8fc97d3a59dc6be5cf416c
          action: None,
      });
 
-@@ -229,6 +231,32 @@ async fn passive_mail_waking_a_sleeping_root_retires_the_supervisor_owner() {
+@@ -232,6 +234,32 @@ async fn passive_mail_waking_a_sleeping_root_retires_the_supervisor_owner() {
          .await;
  }
 

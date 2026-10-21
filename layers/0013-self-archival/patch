@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index b9dd3605beccab526129e5e0a1f62b8a2d907592..d4f8be1846abd063bc93f9a6129c69bf2bfb4391 100644
+index 03ff976781eccbcd31834323aaeb28af9a800ba4..c9e660081aea0709963b0183296f171ded4be0dc 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -40,6 +40,8 @@ pub(crate) struct ThreadExtensionDependencies {
@@ -11,7 +11,7 @@ index b9dd3605beccab526129e5e0a1f62b8a2d907592..d4f8be1846abd063bc93f9a6129c69bf
      pub(crate) goal_service: Arc<GoalService>,
      pub(crate) environment_manager: Arc<EnvironmentManager>,
      pub(crate) executor_skill_provider: Arc<dyn codex_skills_extension::SkillProvider>,
-@@ -62,6 +64,7 @@ pub(crate) fn thread_extensions(
+@@ -63,6 +65,7 @@ pub(crate) fn thread_extensions(
          analytics_events_client,
          thread_manager,
          thread_message_host,
@@ -19,7 +19,7 @@ index b9dd3605beccab526129e5e0a1f62b8a2d907592..d4f8be1846abd063bc93f9a6129c69bf
          goal_service,
          environment_manager,
          executor_skill_provider,
-@@ -91,6 +94,9 @@ pub(crate) fn thread_extensions(
+@@ -93,6 +96,9 @@ pub(crate) fn thread_extensions(
          thread_manager.clone(),
          thread_message_host,
      );
@@ -30,19 +30,19 @@ index b9dd3605beccab526129e5e0a1f62b8a2d907592..d4f8be1846abd063bc93f9a6129c69bf
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/app-server/src/mcp_refresh.rs b/codex-rs/app-server/src/mcp_refresh.rs
-index c8456761eb56b383ab79c51b464cb7bf5ffc2595..88eea154d45606441325d8b08a9f51c03036ccaf 100644
+index 52b8a04d337cd24fcd1977128baab849f0f47f08..575af535a0445109317a0d44a075af3c0c2aeefc 100644
 --- a/codex-rs/app-server/src/mcp_refresh.rs
 +++ b/codex-rs/app-server/src/mcp_refresh.rs
-@@ -526,6 +526,7 @@ enabled = false
-                             crate::thread_sample::SampleResponseRegistry::default(),
+@@ -527,6 +527,7 @@ enabled = false
                          ),
+                         cloud_skill_provider: None,
                          thread_message_host: None,
 +                        self_archive_sender: None,
                          event_sink: Arc::new(NoopExtensionEventSink),
                          auth_manager: auth_manager.clone(),
                          state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 833e07faad9a28ea5af78bd78f472902c5908ac7..183013bf5e5f3e6b26bab2ffa004f39a1fd34d29 100644
+index 32989770e27147ec87c67b1c5f779170e92b4706..780729b280d5793a4c4d9557190610bcd9b2a28a 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -171,6 +171,7 @@ pub(crate) struct MessageProcessor {
@@ -53,7 +53,7 @@ index 833e07faad9a28ea5af78bd78f472902c5908ac7..183013bf5e5f3e6b26bab2ffa004f39a
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -337,6 +338,7 @@ impl MessageProcessor {
+@@ -339,6 +340,7 @@ impl MessageProcessor {
          let mut queue_service = None;
          let sample_responses = Arc::new(crate::thread_sample::SampleResponseRegistry::default());
          let message_host_handle = Arc::new(codex_core::SaffronThreadMessageHostHandle::default());
@@ -61,7 +61,7 @@ index 833e07faad9a28ea5af78bd78f472902c5908ac7..183013bf5e5f3e6b26bab2ffa004f39a
          let thread_manager = Arc::new_cyclic(|thread_manager| {
              queue_service = queue_store.map(|queue| {
                  Arc::new(QueuedItemService::new(
-@@ -357,6 +359,7 @@ impl MessageProcessor {
+@@ -359,6 +361,7 @@ impl MessageProcessor {
                      ThreadExtensionDependencies {
                          sample_responses: Arc::clone(&sample_responses),
                          thread_message_host: Some(Arc::clone(&message_host_handle)),
@@ -69,7 +69,7 @@ index 833e07faad9a28ea5af78bd78f472902c5908ac7..183013bf5e5f3e6b26bab2ffa004f39a
                          event_sink: Arc::clone(&extension_event_sink),
                          auth_manager: auth_manager.clone(),
                          state_db: state_db.clone(),
-@@ -553,6 +556,8 @@ impl MessageProcessor {
+@@ -556,6 +559,8 @@ impl MessageProcessor {
                  turn_admission.clone(),
              ));
          message_host_handle.set(Arc::downgrade(&saffron_message_host));
@@ -78,7 +78,7 @@ index 833e07faad9a28ea5af78bd78f472902c5908ac7..183013bf5e5f3e6b26bab2ffa004f39a
          let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
              && config.features.enabled(codex_features::Feature::Goals)
          {
-@@ -655,6 +660,7 @@ impl MessageProcessor {
+@@ -658,6 +663,7 @@ impl MessageProcessor {
              search_processor,
              saffron_goal_scheduler,
              _saffron_message_host: saffron_message_host,
@@ -86,7 +86,7 @@ index 833e07faad9a28ea5af78bd78f472902c5908ac7..183013bf5e5f3e6b26bab2ffa004f39a
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -665,6 +671,7 @@ impl MessageProcessor {
+@@ -668,6 +674,7 @@ impl MessageProcessor {
      }
 
      pub(crate) fn clear_runtime_references(&self) {
@@ -94,7 +94,7 @@ index 833e07faad9a28ea5af78bd78f472902c5908ac7..183013bf5e5f3e6b26bab2ffa004f39a
          self.account_processor.clear_external_auth();
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
-@@ -894,6 +901,7 @@ impl MessageProcessor {
+@@ -897,6 +904,7 @@ impl MessageProcessor {
      }
 
      pub(crate) async fn drain_background_tasks(&self) {
@@ -115,10 +115,10 @@ index 340282b17ba7871ed3104d790e6070c9525d6221..3231f2c9e39f112bd94f71f057bc2fe5
  pub(crate) mod saffron_thread_message;
 
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index c6cf35ccfc72e75f07d1a972d2ba0ebeaae39b64..74de4c3f287b20888b8093e6200fccddfd1c0265 100644
+index e0c444dbb0c71e5f9c96fd6e4d78d81f81358eeb..054a6e1c8efbfa26fcef7c0000e818154056cf77 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
-@@ -126,6 +126,7 @@ mod review;
+@@ -127,6 +127,7 @@ mod review;
  mod rollout_compress;
  mod rollout_migration;
  mod safety_check_downgrade;
@@ -127,7 +127,7 @@ index c6cf35ccfc72e75f07d1a972d2ba0ebeaae39b64..74de4c3f287b20888b8093e6200fccdd
  mod saffron_goal_supervisor;
  mod saffron_goal_supervisor_history;
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 75736e7cef35a65dc34baa285154087cdccfc589..2721a4a911e3a6bf8078dd6bc25a50b83d9228e8 100644
+index 2abb5c6c46dd079af1d564fbe1269fa016e02351..53d2508b252fa23bd91362f19f405c1d8e256317 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -331,6 +331,18 @@ impl CodexThread {
@@ -160,10 +160,10 @@ index 75736e7cef35a65dc34baa285154087cdccfc589..2721a4a911e3a6bf8078dd6bc25a50b8
              .await
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index a67eae3efdd04327ce991b12ff8d67d289a5f237..3de99e466b4f2d7cf79fd688384858e510cae428 100644
+index d01bf4a9652556656bd3825e180cef9a5d420c1e..b9e40b2482d67e83f509f0a64268f7415dda5dfa 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -140,6 +140,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -141,6 +141,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
@@ -191,10 +191,10 @@ index be2c37671ce574eb1cac73fc2ffb00316c715630..190e770b5a8695fce40fbb2acf4d03d3
 +    archive_self::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index 3bd3245dbe76b7fc8b706570b8e7bbeca31ace83..1be2f8960049c3286e6fa0a4bc83dbfd80e0d880 100644
+index ab7f8e49ee4714ea03a5c9cec89c328deaf52174..9ab2d62e0545ab4c1e7e14a81ae99584e06c1a80 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
-@@ -764,6 +764,19 @@ pub(super) async fn submission_loop(
+@@ -765,6 +765,19 @@ pub(super) async fn submission_loop(
                      false
                  }
                  Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
@@ -215,7 +215,7 @@ index 3bd3245dbe76b7fc8b706570b8e7bbeca31ace83..1be2f8960049c3286e6fa0a4bc83dbfd
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 73e843128623e904b78b1b3463fcf6b80bd2c779..d225cf608ca14118dffac731c3a878f9c901dd3c 100644
+index a740d3c2d75e1bbd13c977518e4c407a12adb13f..861ca970da7f7bae46422f592ed756b5a4978ea2 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -242,6 +242,7 @@ use codex_protocol::exec_output::StreamOutput;
@@ -227,7 +227,7 @@ index 73e843128623e904b78b1b3463fcf6b80bd2c779..d225cf608ca14118dffac731c3a878f9
  pub(crate) mod context_window;
  mod daemon_recovery;
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index ec0b12e40f5554ec45c1e697fb7d009cd630c194..0d8fa350a84164b9a451aefe1505406b52a401b7 100644
+index 87e37a5e730434e27cc686935fca29d2baf1b213..dd714b1f2f6e7c0064432ebb306f46e319f191d4 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -677,7 +677,8 @@ impl Session {
@@ -296,7 +296,7 @@ index 7333c9060c94b48ae03399fdddb987e8714c81d0..380fc88edd13c7ba8cfdd332ba6da9b9
                  let SamplingRequestResult {
                      needs_follow_up: model_needs_follow_up,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 4eef0725467cc6dd2b00bdb531051fcdc59e9b16..586fa9dc8a4102486714fe8c768823b721aa8dbb 100644
+index e89ed837898b7e578c3b8865b321833fc9ad5ca6..4437d5e3bd814a0fb6c5ec9c3c99a2787b8899fb 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -213,6 +213,7 @@ impl PreparedTurnInputSettings {
