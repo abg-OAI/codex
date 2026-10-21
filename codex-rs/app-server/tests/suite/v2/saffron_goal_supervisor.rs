@@ -6,6 +6,7 @@ use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
 use app_test_support::create_fake_rollout;
 use app_test_support::create_mock_responses_server_repeating_assistant;
+use codex_app_server_protocol::ThreadGoalSetResponse;
 use codex_app_server_protocol::ThreadGoalStatus;
 use codex_app_server_protocol::ThreadGoalUpdatedNotification;
 use codex_app_server_protocol::ThreadLoadedListParams;
@@ -124,6 +125,147 @@ async fn root_can_edit_its_active_goal_without_changing_other_goal_state() -> Re
         line.contains(r#""type":"thread_goal_updated""#)
             && line.contains(r#""objective":"ship the release with release notes""#)
     }));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn root_can_resume_a_paused_goal_and_account_subsequent_work() -> Result<()> {
+    let server = responses::start_mock_server().await;
+    let model_responses = responses::mount_sse_sequence(
+        &server,
+        vec![
+            responses::sse(vec![
+                responses::ev_response_created("resume-goal"),
+                responses::ev_function_call_with_namespace(
+                    "resume-goal-call",
+                    "saffron",
+                    "resume_goal",
+                    &json!({}).to_string(),
+                ),
+                responses::ev_completed_with_tokens("resume-goal", /*total_tokens*/ 50),
+            ]),
+            responses::sse(vec![
+                responses::ev_response_created("observe-goal"),
+                responses::ev_function_call(
+                    "observe-goal-call",
+                    "get_goal",
+                    &json!({}).to_string(),
+                ),
+                responses::ev_completed_with_tokens("observe-goal", /*total_tokens*/ 80),
+            ]),
+            responses::sse(vec![
+                responses::ev_response_created("complete-goal"),
+                responses::ev_function_call(
+                    "complete-goal-call",
+                    "update_goal",
+                    &json!({ "status": "complete" }).to_string(),
+                ),
+                responses::ev_completed_with_tokens("complete-goal", /*total_tokens*/ 100),
+            ]),
+            responses::sse(vec![
+                responses::ev_response_created("root-finished"),
+                responses::ev_assistant_message("root-message", "Goal resumed and completed."),
+                responses::ev_completed_with_tokens("root-finished", /*total_tokens*/ 120),
+            ]),
+        ],
+    )
+    .await;
+
+    let codex_home = TempDir::new()?;
+    MockResponsesConfig::new(&server.uri())
+        .enable_feature(Feature::Goals)
+        .write(codex_home.path())?;
+    let mut app_server = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .without_managed_config()
+        .build_initialized()
+        .await?;
+    let thread = app_server
+        .start_thread(ThreadStartParams::default())
+        .await?;
+
+    let set_id = app_server
+        .send_raw_request(
+            "thread/goal/set",
+            Some(json!({
+                "threadId": thread.thread.id,
+                "objective": "finish the paused release",
+                "status": "paused",
+                "tokenBudget": 20_000,
+            })),
+        )
+        .await?;
+    let paused: ThreadGoalSetResponse = app_server.read_response(set_id).await?;
+    assert_eq!(paused.goal.status, ThreadGoalStatus::Paused);
+
+    let state_db = test_state_db(codex_home.path()).await?;
+    let thread_id = ThreadId::from_string(&thread.thread.id)?;
+    let original = state_db
+        .thread_goals()
+        .get_thread_goal(thread_id)
+        .await?
+        .context("paused goal")?;
+
+    app_server
+        .start_turn_and_wait_for_completion(TurnStartParams {
+            thread_id: thread.thread.id,
+            input: vec![UserInput::Text {
+                text: "Resume the paused goal and finish it.".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+
+    let requests = model_responses.requests();
+    assert_eq!(requests.len(), 4);
+    assert!(
+        requests[0].tool_by_name("saffron", "resume_goal").is_some(),
+        "the root should receive the goal-resumption tool"
+    );
+    assert!(
+        requests[1]
+            .function_call_output_text("resume-goal-call")
+            .is_some_and(|output| {
+                output.contains("finish the paused release")
+                    && output.contains("20000")
+                    && output.contains("active")
+            }),
+        "the resume result should retain the objective and budget while becoming active"
+    );
+
+    let completed = state_db
+        .thread_goals()
+        .get_thread_goal(thread_id)
+        .await?
+        .context("completed goal")?;
+    assert_eq!(completed.goal_id, original.goal_id);
+    assert_eq!(completed.objective, original.objective);
+    assert_eq!(completed.token_budget, original.token_budget);
+    assert_eq!(completed.created_at, original.created_at);
+    assert_eq!(completed.status, codex_state::ThreadGoalStatus::Complete);
+    assert!(
+        completed.tokens_used > original.tokens_used,
+        "work after resumption should count toward the durable goal"
+    );
+
+    let mut resume_updates = 0;
+    while app_server
+        .pending_notification_methods()
+        .iter()
+        .any(|method| method == "thread/goal/updated")
+    {
+        let notification: ThreadGoalUpdatedNotification =
+            app_server.read_notification("thread/goal/updated").await?;
+        if notification.turn_id.is_some()
+            && notification.goal.status == ThreadGoalStatus::Active
+            && notification.goal.tokens_used == original.tokens_used
+        {
+            resume_updates += 1;
+        }
+    }
+    assert_eq!(resume_updates, 1, "goal resumption should emit one update");
 
     Ok(())
 }
