@@ -57,7 +57,7 @@ index 650c717e699e0970ee3df48d1a9ae6631e76075b..22b325f5e9d8ed3b79067c006a51bbd9
  tracing-opentelemetry = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 4cc1d0f091eb9ef51eab030868e5600dad3eee42..b9dd3605beccab526129e5e0a1f62b8a2d907592 100644
+index 7a48516acb55e210d6adacf54fad7c1c1315219f..03ff976781eccbcd31834323aaeb28af9a800ba4 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -38,6 +38,8 @@ pub(crate) struct ThreadExtensionDependencies {
@@ -69,7 +69,7 @@ index 4cc1d0f091eb9ef51eab030868e5600dad3eee42..b9dd3605beccab526129e5e0a1f62b8a
      pub(crate) goal_service: Arc<GoalService>,
      pub(crate) environment_manager: Arc<EnvironmentManager>,
      pub(crate) executor_skill_provider: Arc<dyn codex_skills_extension::SkillProvider>,
-@@ -59,6 +61,7 @@ pub(crate) fn thread_extensions(
+@@ -60,6 +62,7 @@ pub(crate) fn thread_extensions(
          state_db,
          analytics_events_client,
          thread_manager,
@@ -77,7 +77,7 @@ index 4cc1d0f091eb9ef51eab030868e5600dad3eee42..b9dd3605beccab526129e5e0a1f62b8a
          goal_service,
          environment_manager,
          executor_skill_provider,
-@@ -83,6 +86,11 @@ pub(crate) fn thread_extensions(
+@@ -85,6 +88,11 @@ pub(crate) fn thread_extensions(
      codex_history_notes_extension::install(&mut builder, auth_manager.clone());
      codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
      codex_core::install_saffron_fork_thread(&mut builder, thread_manager.clone());
@@ -90,19 +90,19 @@ index 4cc1d0f091eb9ef51eab030868e5600dad3eee42..b9dd3605beccab526129e5e0a1f62b8a
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/app-server/src/mcp_refresh.rs b/codex-rs/app-server/src/mcp_refresh.rs
-index 433c1814bef82d30f72d307c0957f79d50551bae..c8456761eb56b383ab79c51b464cb7bf5ffc2595 100644
+index c0fad84f867762037d7994143a1d6d00633a4553..52b8a04d337cd24fcd1977128baab849f0f47f08 100644
 --- a/codex-rs/app-server/src/mcp_refresh.rs
 +++ b/codex-rs/app-server/src/mcp_refresh.rs
-@@ -525,6 +525,7 @@ enabled = false
-                         sample_responses: Arc::new(
+@@ -526,6 +526,7 @@ enabled = false
                              crate::thread_sample::SampleResponseRegistry::default(),
                          ),
+                         cloud_skill_provider: None,
 +                        thread_message_host: None,
                          event_sink: Arc::new(NoopExtensionEventSink),
                          auth_manager: auth_manager.clone(),
                          state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index e3a7c9d9ad6a6b10765dd482b456b74d7508ae78..833e07faad9a28ea5af78bd78f472902c5908ac7 100644
+index 640e268311358a29f401521fa59c68be0718ad2e..32989770e27147ec87c67b1c5f779170e92b4706 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -169,6 +169,8 @@ pub(crate) struct MessageProcessor {
@@ -114,7 +114,7 @@ index e3a7c9d9ad6a6b10765dd482b456b74d7508ae78..833e07faad9a28ea5af78bd78f472902
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -334,6 +336,7 @@ impl MessageProcessor {
+@@ -336,6 +338,7 @@ impl MessageProcessor {
              app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
          let mut queue_service = None;
          let sample_responses = Arc::new(crate::thread_sample::SampleResponseRegistry::default());
@@ -122,7 +122,7 @@ index e3a7c9d9ad6a6b10765dd482b456b74d7508ae78..833e07faad9a28ea5af78bd78f472902
          let thread_manager = Arc::new_cyclic(|thread_manager| {
              queue_service = queue_store.map(|queue| {
                  Arc::new(QueuedItemService::new(
-@@ -353,6 +356,7 @@ impl MessageProcessor {
+@@ -355,6 +358,7 @@ impl MessageProcessor {
                      config.as_ref(),
                      ThreadExtensionDependencies {
                          sample_responses: Arc::clone(&sample_responses),
@@ -130,7 +130,7 @@ index e3a7c9d9ad6a6b10765dd482b456b74d7508ae78..833e07faad9a28ea5af78bd78f472902
                          event_sink: Arc::clone(&extension_event_sink),
                          auth_manager: auth_manager.clone(),
                          state_db: state_db.clone(),
-@@ -543,6 +547,12 @@ impl MessageProcessor {
+@@ -546,6 +550,12 @@ impl MessageProcessor {
              config_warnings,
              sample_responses,
          );
@@ -143,7 +143,7 @@ index e3a7c9d9ad6a6b10765dd482b456b74d7508ae78..833e07faad9a28ea5af78bd78f472902
          let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
              && config.features.enabled(codex_features::Feature::Goals)
          {
-@@ -644,6 +654,7 @@ impl MessageProcessor {
+@@ -647,6 +657,7 @@ impl MessageProcessor {
              remote_control_processor,
              search_processor,
              saffron_goal_scheduler,
@@ -393,7 +393,7 @@ index 08b78a10c4fea93ccb4e4cb2d210e075193b82d3..340282b17ba7871ed3104d790e6070c9
  #[cfg(test)]
  #[path = "thread_processor_tests.rs"]
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index 1c5558fc97d2718cd3db8e53bbd0130eb9a1ac5f..c6cf35ccfc72e75f07d1a972d2ba0ebeaae39b64 100644
+index abc72b707ba961eea7f9816fc6f2deae0714366f..e0c444dbb0c71e5f9c96fd6e4d78d81f81358eeb 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
 @@ -19,6 +19,7 @@ mod bedrock_service_tier;
@@ -405,10 +405,10 @@ index 1c5558fc97d2718cd3db8e53bbd0130eb9a1ac5f..c6cf35ccfc72e75f07d1a972d2ba0ebe
  #[cfg(unix)]
  mod command_exec;
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index f08ed584972dc88c4f851823fa2bdd7b1fa55a1f..a67eae3efdd04327ce991b12ff8d67d289a5f237 100644
+index 511b8339b1fb5f90dd34788bf9b32a1ee1eca054..d01bf4a9652556656bd3825e180cef9a5d420c1e 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -141,6 +141,11 @@ pub(crate) use skills::skills_load_input_from_config;
+@@ -142,6 +142,11 @@ pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
  pub use saffron::fork_thread::install as install_saffron_fork_thread;

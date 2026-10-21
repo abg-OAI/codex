@@ -22,7 +22,7 @@ async fn passive_agent_mail_does_not_suppress_a_supervisor_spawn_attempt() {
     );
     parent
         .input_queue
-        .enqueue_mailbox_communication(mail.clone(), Default::default())
+        .enqueue_mailbox_communication(mail.clone().into(), Default::default())
         .await;
     let goal = test_goal(parent.thread_id);
 
@@ -36,7 +36,7 @@ async fn passive_agent_mail_does_not_suppress_a_supervisor_spawn_attempt() {
     assert_eq!(runtime(&parent).state.lock().await.consecutive_failures, 1);
     assert_eq!(
         parent.input_queue.drain_mailbox_input_items().await.0,
-        vec![crate::session::TurnInput::InterAgentCommunication(mail)]
+        vec![crate::session::TurnInput::InterAgentCommunication(mail.into())]
     );
 }
 
@@ -53,7 +53,8 @@ async fn triggering_agent_mail_owns_continuation_before_a_supervisor_starts() {
                 Vec::new(),
                 "continue now".to_string(),
                 /*trigger_turn*/ true,
-            ),
+            )
+            .into(),
             Default::default(),
         )
         .await;
@@ -167,7 +168,8 @@ async fn active_goal_classifies_automatic_root_work_as_goal_continuation() {
                 Vec::new(),
                 "worker finished".to_string(),
                 /*trigger_turn*/ true,
-            ),
+            )
+            .into(),
             Default::default(),
         )
         .await;
@@ -207,7 +209,8 @@ async fn passive_mail_waking_a_sleeping_root_retires_the_supervisor_owner() {
                 Vec::new(),
                 "worker finished".to_string(),
                 /*trigger_turn*/ false,
-            ),
+            )
+            .into(),
             Default::default(),
         )
         .await;
@@ -362,7 +365,8 @@ async fn due_wake_with_passive_mail_becomes_a_durable_retry_after_spawn_failure(
                 Vec::new(),
                 "worker finished".to_string(),
                 /*trigger_turn*/ false,
-            ),
+            )
+            .into(),
             Default::default(),
         )
         .await;
