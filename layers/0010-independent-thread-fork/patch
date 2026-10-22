@@ -55,10 +55,10 @@ index 0e5b94605cafe76a6c7fe66b8627aa905dd16dd4..e548b2f1503cf3cf31fa705c73e46c3b
 +    fork_thread::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 4af221644b14953eb5b27b0012a34a0151fb4c9d..38ef9700b1881b60389b4070974cf00c203e909e 100644
+index a857234b02219146c0543fc75053780f5491a3c8..1777291056733113b63f1f100f6f23ebd2a525a4 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -972,6 +972,11 @@ impl ThreadManager {
+@@ -979,6 +979,11 @@ impl ThreadManager {
          self.state.thread_created_tx.subscribe()
      }
 
@@ -84,7 +84,7 @@ index 0eac846e05187ab469d9ecc33f295b75e06f7a48..5e5beef1e477f4f265c82d9a2e9dae59
      turn_context: &TurnContext,
      call_id: String,
 diff --git a/codex-rs/core/src/tools/handlers/mod.rs b/codex-rs/core/src/tools/handlers/mod.rs
-index a4d92223c3ae4da9cc061bb8c003d945c7c3d18c..2a2eeeb845180914e679200f195d15513fda4647 100644
+index 56ae313eef79c8412383edace26670b55439f6b3..674763f4244ad226a59a4882993712d7aa9eeae0 100644
 --- a/codex-rs/core/src/tools/handlers/mod.rs
 +++ b/codex-rs/core/src/tools/handlers/mod.rs
 @@ -1,7 +1,7 @@

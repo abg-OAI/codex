@@ -327,7 +327,7 @@ impl Session {
                 previous_turn_settings: state.previous_turn_settings(),
             }),
         };
-        let mut items = vec![RolloutItem::Compacted(compacted)];
+        let mut items = vec![RolloutItem::Compacted(Box::new(compacted))];
         if let Some(world_state) = history.world_state_checkpoint() {
             items.push(RolloutItem::WorldState(world_state));
         }

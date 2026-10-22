@@ -548,7 +548,7 @@ index c7cad3e9f21913f01c8082f36577b2c2bd81367f..e708616e52c5b0fe115a4006754e7e7b
                      context,
                      start_options,
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index b415242fbc08d688279e3f9ce7b1140c594fe584..2795a765468f4e081c4a5d4dbe15e4c5b5c80019 100644
+index 3ab247ba8cf25a865d419e52215eaab7ca2f7a1b..93b4dfa104fabd6a033621ded8cd1ed850ab6ef8 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
 @@ -31,7 +31,13 @@ use crate::context::world_state::IncrementalToolsHint;
@@ -1474,7 +1474,7 @@ index 66eb053fb12a5665201852fda3a4864b79b0cfe6..dd7618be8749021dc6c491b8636d2813
  fn reservation_drop_releases_slot() {
      let registry = Arc::new(AgentRegistry::default());
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index ba1407098a7929afadad8ed253077a7342e9e111..f1a04f0f64d6fe471414af4007c3e7920be8ba65 100644
+index 8490ed28d42e280de9870c0acd105ceb8ed16215..2179fc5658c6ce1b8d21caa2ad14c54d7c3ba02d 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -320,6 +320,17 @@ impl CodexThread {
@@ -1889,10 +1889,10 @@ index 21d31dd791dd56850f72b17f869f10b168250c0e..789947cb35d0ecf7b15156aad4ea5108
      async fn input_queue_uses_unambiguous_trigger_parent_and_first_root() {
          let (parent, peer, root, root2) = (Some("a"), Some("b"), Some("r"), Some("s"));
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index fd3b290056b0808c31c1b3a74653cb92a4061e66..054e9c550377aa9c26705af4147ab2071c1ef27a 100644
+index f1280c7bb2eabf29150cf5e0e021d27269924f6b..b0a17ac8f61aa22016009dbf396969dc175877b1 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2582,6 +2582,10 @@ impl Session {
+@@ -2594,6 +2594,10 @@ impl Session {
          if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
              return;
          }
@@ -1903,7 +1903,7 @@ index fd3b290056b0808c31c1b3a74653cb92a4061e66..054e9c550377aa9c26705af4147ab207
 
          self.services
              .agent_control
-@@ -2597,6 +2601,7 @@ impl Session {
+@@ -2609,6 +2613,7 @@ impl Session {
                          .cloned(),
                      status,
                      error_info,
@@ -1912,10 +1912,10 @@ index fd3b290056b0808c31c1b3a74653cb92a4061e66..054e9c550377aa9c26705af4147ab207
                  &self.services.rollout_thread_trace,
              )
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 0e5c4080d5deb8ab3343e15c4d1cc34bd303e753..18ee37917f36a9660ba148914ca96a52708d831a 100644
+index e3bcb2befbc3a71f665096f75c1a169085eb9c95..7a215436e378eb5decb0ee2e79fb7450eb9be3d2 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -673,6 +673,20 @@ impl Session {
+@@ -692,6 +692,20 @@ impl Session {
          self.services.agent_control.identity()
      }
 
@@ -2136,10 +2136,10 @@ index 2cb18189a578573ec83973303021c65959763965..26c7e3b5e766ca826bb01232996d8db9
              self.emit_thread_idle_lifecycle_if_idle(idle_cause).await;
          }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 1ac38d20fde91ee26967dde9f373c17f62997c1b..6517b7b72ace7f615719f738084e1d7d7b81322e 100644
+index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..309a079015100adf8731b8d748de3fd6d75d3516 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -151,9 +151,11 @@ fn capture_test_op(op: &Op) -> Option<Op> {
+@@ -152,9 +152,11 @@ fn capture_test_op(op: &Op) -> Option<Op> {
          Op::InterAgentCommunication {
              communication,
              start_options,
@@ -2152,10 +2152,10 @@ index 1ac38d20fde91ee26967dde9f373c17f62997c1b..6517b7b72ace7f615719f738084e1d7d
          Op::Shutdown => Some(Op::Shutdown),
          _ => None,
 diff --git a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
-index 27bee5dfa269f82ad99c9ff2ced4748482f26cde..61fb725e63dec1498d27e8f81ffe34c75024b4bd 100644
+index be73c65ac3d5cdd9f092a68435878553d6b82844..a25cf6c7281078a3879d9ab6bb98cae4ac3dd632 100644
 --- a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
 +++ b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
-@@ -2022,7 +2022,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
+@@ -2023,7 +2023,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
                                  if communication.author == worker_path
                                      && communication.recipient == AgentPath::root()
                                      && communication.other_recipients.is_empty()
@@ -2164,7 +2164,7 @@ index 27bee5dfa269f82ad99c9ff2ced4748482f26cde..61fb725e63dec1498d27e8f81ffe34c7
                              {
                                  Some(communication.content)
                              }
-@@ -2169,8 +2169,7 @@ async fn multi_agent_v2_interrupted_turn_does_not_notify_parent() {
+@@ -2170,8 +2170,7 @@ async fn multi_agent_v2_interrupted_turn_does_not_notify_parent() {
                      Op::InterAgentCommunication { communication, .. }
                          if communication.author.as_str() == "/root/worker"
                              && communication.recipient == AgentPath::root()
@@ -2263,10 +2263,10 @@ index 0ebb34066316f887a1af8447119926314fccabcd..e5ee58ed84bf59994476699212f892ad
                  .await?;
          }
 diff --git a/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs b/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs
-index ecf4029eeb9f101b05bf9ca7105f80093bed51cc..a05ed91da297dfe01cddb448d34f29fd2f210c6c 100644
+index 7474c1d7743190f95b66fb3646586bedcb12fa45..40be2b0c9f5b90bd8cb2f939b2c20eb468ec1e66 100644
 --- a/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs
 +++ b/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs
-@@ -129,6 +129,7 @@ async fn mailbox_preemption_preserves_response_when_deferred(
+@@ -131,6 +131,7 @@ async fn mailbox_preemption_preserves_response_when_deferred(
                      /*trigger_turn*/ false,
                  ),
                  start_options: Default::default(),

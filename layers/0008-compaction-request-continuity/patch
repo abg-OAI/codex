@@ -14,7 +14,7 @@ index b056b43bc73adee0204e2c573f3c74c0f3abecae..5cbc00dd49e892a8998dbe61e88c2898
                                      // Tool bodies are not sender authorization evidence.
                                      TruncationPolicy::Bytes(0),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index f0a4cdffaa2768841878fc78ed1e2994091594b1..d37d347e160f85a838fd9e99d12725304b9d735d 100644
+index 163e7d53e417eaa5b6da7e5d301b77373bd06f9d..183d0d4220f06d4f436bbf62b6291dd5781f42d8 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
 @@ -19,6 +19,7 @@ use crate::hook_runtime::run_post_compact_hooks;
@@ -867,7 +867,7 @@ index 7c8ae88b5dd59674df284c49c13cc4d99b614b54..edb32f7fbb809c180628ec264509ec6e
                              Vec::new(),
                              &user_messages,
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index 21463d873c7e87fcf1ca8357d451bfec676dfe44..26e8da01e528325b84ef969475056abdbc77b469 100644
+index 86430a174fb2120f166b9afe721acbae395a339b..91b9c02a10316a37e15d57eef86bf340d2ab9dce 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 @@ -1465,6 +1465,106 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
@@ -890,7 +890,7 @@ index 21463d873c7e87fcf1ca8357d451bfec676dfe44..26e8da01e528325b84ef969475056abd
 +    });
 +    let rollout = vec![
 +        RolloutItem::ResponseItem(assignment.clone()),
-+        RolloutItem::Compacted(CompactedItem {
++        RolloutItem::Compacted(Box::new(CompactedItem {
 +            message: "The inspection is underway.".to_owned(),
 +            replacement_history: None,
 +            retained_context: None,
@@ -903,7 +903,7 @@ index 21463d873c7e87fcf1ca8357d451bfec676dfe44..26e8da01e528325b84ef969475056abd
 +            compaction_response_id: None,
 +            latest_token_usage_record: None,
 +            resume_metadata: None,
-+        }),
++        })),
 +    ];
 +    let reconstructed = ContextManager::reconstruct_rollout(
 +        &rollout,
@@ -940,7 +940,7 @@ index 21463d873c7e87fcf1ca8357d451bfec676dfe44..26e8da01e528325b84ef969475056abd
 +            crate::compact::SUMMARY_PREFIX
 +        ),
 +    );
-+    let checkpoint = RolloutItem::Compacted(CompactedItem {
++    let checkpoint = RolloutItem::Compacted(Box::new(CompactedItem {
 +        message: String::new(),
 +        replacement_history: Some(compacted),
 +        guardian_history: None,
@@ -953,7 +953,7 @@ index 21463d873c7e87fcf1ca8357d451bfec676dfe44..26e8da01e528325b84ef969475056abd
 +        compaction_response_id: None,
 +        latest_token_usage_record: None,
 +        resume_metadata: None,
-+    });
++    }));
 +    let encoded = serde_json::to_vec(&checkpoint).unwrap();
 +    let restored: RolloutItem = serde_json::from_slice(&encoded).unwrap();
 +    let replayed = session
@@ -978,7 +978,7 @@ index 21463d873c7e87fcf1ca8357d451bfec676dfe44..26e8da01e528325b84ef969475056abd
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index 826669cc3335dc23102e6a5bdbf2d62c1cb22fa4..45701d2a098ef44d01962c35c2a7f19887c5fe6c 100644
+index 7262a4b1b848d3fd1fbfafb909fea8c8cd371050..b5b12a86b257f99499b9d5c45db38f4747e3bcd1 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
 @@ -65,6 +65,11 @@ pub struct ResponseItemEnvelope {
