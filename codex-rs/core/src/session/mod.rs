@@ -2594,6 +2594,10 @@ impl Session {
         if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
             return;
         }
+        let completion_delivery_mode = crate::saffron::subagent_completion::terminal_delivery_mode(
+            &turn_context.extension_data,
+            &status,
+        );
 
         self.services
             .agent_control
@@ -2609,6 +2613,7 @@ impl Session {
                         .cloned(),
                     status,
                     error_info,
+                    completion_delivery_mode,
                 },
                 &self.services.rollout_thread_trace,
             )
