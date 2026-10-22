@@ -47,6 +47,7 @@ fn trim(items: Vec<ResponseItem>, max_tokens: usize) -> Vec<ResponseItem> {
         items.into_iter().map(ResponseItemEnvelope::new).collect(),
         max_tokens,
         RetainedImageBudget::Enabled,
+        None,
     )
     .into_iter()
     .map(ResponseItemEnvelope::into_item)
@@ -146,6 +147,7 @@ fn image_treatment_preserves_text_only_boundary_behavior() {
                 vec![source.clone()],
                 max_tokens,
                 RetainedImageBudget::Enabled,
+                None,
             ),
             truncate_retained_messages_for_remote_compaction(vec![source.clone()], max_tokens),
         );
@@ -171,7 +173,8 @@ fn image_treatment_preserves_client_developer_boundary_behavior() {
             truncate_retained_messages(
                 vec![source.clone()],
                 max_tokens,
-                RetainedImageBudget::Enabled
+                RetainedImageBudget::Enabled,
+                None,
             ),
             truncate_retained_messages_for_remote_compaction(vec![source.clone()], max_tokens),
         );
