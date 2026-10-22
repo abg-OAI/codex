@@ -30,10 +30,10 @@ index 03ff976781eccbcd31834323aaeb28af9a800ba4..c9e660081aea0709963b0183296f171d
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/app-server/src/mcp_refresh.rs b/codex-rs/app-server/src/mcp_refresh.rs
-index 52b8a04d337cd24fcd1977128baab849f0f47f08..575af535a0445109317a0d44a075af3c0c2aeefc 100644
+index b9e0a4b48d5f09a19f3d8f45a26dedac0952ee9e..c433f4a080b4694b7913d1fc9eb89f905eae11a6 100644
 --- a/codex-rs/app-server/src/mcp_refresh.rs
 +++ b/codex-rs/app-server/src/mcp_refresh.rs
-@@ -527,6 +527,7 @@ enabled = false
+@@ -546,6 +546,7 @@ enabled = false
                          ),
                          cloud_skill_provider: None,
                          thread_message_host: None,
@@ -42,7 +42,7 @@ index 52b8a04d337cd24fcd1977128baab849f0f47f08..575af535a0445109317a0d44a075af3c
                          auth_manager: auth_manager.clone(),
                          state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 32989770e27147ec87c67b1c5f779170e92b4706..780729b280d5793a4c4d9557190610bcd9b2a28a 100644
+index 9d2fdaf28aa94c9eb0a2c04ac0e50863452c6fdb..5323257957c15c061c7aed3ddae61939ce42933a 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -171,6 +171,7 @@ pub(crate) struct MessageProcessor {
@@ -103,10 +103,10 @@ index 32989770e27147ec87c67b1c5f779170e92b4706..780729b280d5793a4c4d9557190610bc
          if let Some(worker) = &self.turn_cost_worker {
              worker.shutdown();
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 340282b17ba7871ed3104d790e6070c9525d6221..3231f2c9e39f112bd94f71f057bc2fe50fef77a7 100644
+index 22a5257a6e4405d86ccd84250e7ac4f0dc95abb9..e40363bc62b5ea6efa7ac9b078a6538f58016b8d 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -6820,6 +6820,7 @@ fn build_thread_from_loaded_snapshot(
+@@ -6864,6 +6864,7 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -115,10 +115,10 @@ index 340282b17ba7871ed3104d790e6070c9525d6221..3231f2c9e39f112bd94f71f057bc2fe5
  pub(crate) mod saffron_thread_message;
 
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index e0c444dbb0c71e5f9c96fd6e4d78d81f81358eeb..054a6e1c8efbfa26fcef7c0000e818154056cf77 100644
+index 386514b9cfb1a41589ff99fb5fe8ea1486a26cc2..7c0bc569501d02a9df1e8fbdd4adaab3cb37d8f9 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
-@@ -127,6 +127,7 @@ mod review;
+@@ -128,6 +128,7 @@ mod review;
  mod rollout_compress;
  mod rollout_migration;
  mod safety_check_downgrade;
@@ -127,7 +127,7 @@ index e0c444dbb0c71e5f9c96fd6e4d78d81f81358eeb..054a6e1c8efbfa26fcef7c0000e81815
  mod saffron_goal_supervisor;
  mod saffron_goal_supervisor_history;
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 2abb5c6c46dd079af1d564fbe1269fa016e02351..53d2508b252fa23bd91362f19f405c1d8e256317 100644
+index 4514c128f61751d8369117db05608aa45aab40e7..f72d9ddcb786a4c5dad74733690dfe43864a9829 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -331,6 +331,18 @@ impl CodexThread {
@@ -215,7 +215,7 @@ index ab7f8e49ee4714ea03a5c9cec89c328deaf52174..9ab2d62e0545ab4c1e7e14a81ae99584
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index a740d3c2d75e1bbd13c977518e4c407a12adb13f..861ca970da7f7bae46422f592ed756b5a4978ea2 100644
+index 90b68596267cbcde062dcb143f17641699c1edd3..2ae59486a1fc6f8a401acba608d115f75e809b77 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -242,6 +242,7 @@ use codex_protocol::exec_output::StreamOutput;
@@ -227,10 +227,10 @@ index a740d3c2d75e1bbd13c977518e4c407a12adb13f..861ca970da7f7bae46422f592ed756b5
  pub(crate) mod context_window;
  mod daemon_recovery;
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 87e37a5e730434e27cc686935fca29d2baf1b213..dd714b1f2f6e7c0064432ebb306f46e319f191d4 100644
+index d07c0e01151f183d219ab16bc3d1eabb2f7fa51c..18d32db98a4e4d7521f42e6e7b9948d264d54d8a 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -677,7 +677,8 @@ impl Session {
+@@ -696,7 +696,8 @@ impl Session {
      }
 
      pub(crate) async fn should_retain_while_idle(&self) -> bool {
@@ -241,10 +241,10 @@ index 87e37a5e730434e27cc686935fca29d2baf1b213..dd714b1f2f6e7c0064432ebb306f46e3
      }
 
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index 7333c9060c94b48ae03399fdddb987e8714c81d0..380fc88edd13c7ba8cfdd332ba6da9b93d267a33 100644
+index 32fdf7bd27d02e3b04b26174034f5210fe94c9ce..47227b1e75a0ef7d6e250da1a86c60ee6b6b80bb 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
-@@ -565,20 +565,41 @@ pub(crate) async fn run_turn(
+@@ -564,20 +564,41 @@ pub(crate) async fn run_turn(
              .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
              .await;
 
@@ -317,7 +317,7 @@ index e89ed837898b7e578c3b8865b321833fc9ad5ca6..4437d5e3bd814a0fb6c5ec9c3c99a278
              state.turn_attribution = Some(attribution);
          }
 diff --git a/codex-rs/core/src/state/session.rs b/codex-rs/core/src/state/session.rs
-index fff1bf667f6b21c15cb0dbce686adeaf03a12677..3a0c972249ab67c1822f6e748cadd9542aee7d37 100644
+index d122db22d868a4f6ea1be2afa2015d04894f6b23..3dab09c2a0cc5c7b23c9413f6ebd3f2907263501 100644
 --- a/codex-rs/core/src/state/session.rs
 +++ b/codex-rs/core/src/state/session.rs
 @@ -87,6 +87,8 @@ pub(crate) struct SessionState {
@@ -329,7 +329,7 @@ index fff1bf667f6b21c15cb0dbce686adeaf03a12677..3a0c972249ab67c1822f6e748cadd954
      /// Latest regular turn, retained across completion, settings changes, and compaction.
      pub(crate) turn_attribution: Option<TurnAttribution>,
      /// Runtime accounting state for the active auto-compaction window.
-@@ -135,6 +137,7 @@ impl SessionState {
+@@ -136,6 +138,7 @@ impl SessionState {
              additional_context: AdditionalContextStore::default(),
              previous_turn_settings: None,
              last_started_turn_id: None,
@@ -370,7 +370,7 @@ index 26c7e3b5e766ca826bb01232996d8db932785663..a3cd7e4200324e16b9f55cf56f92d68b
          }
      }
 diff --git a/codex-rs/core/src/tools/parallel.rs b/codex-rs/core/src/tools/parallel.rs
-index 70ff50c5e42d4b3287a8b2a82e92453f34426b50..a39d9f6305c372ccd002be21ac00c05f84af09f8 100644
+index cc8beb4e3091eaaa0460eead9b05186af71f5513..f8ceeef4b8601017793a8e24de7c514796035eef 100644
 --- a/codex-rs/core/src/tools/parallel.rs
 +++ b/codex-rs/core/src/tools/parallel.rs
 @@ -218,6 +218,7 @@ impl ToolCallRuntime {
