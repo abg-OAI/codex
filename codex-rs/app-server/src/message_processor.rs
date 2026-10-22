@@ -169,6 +169,8 @@ pub(crate) struct MessageProcessor {
     pub(super) remote_control_processor: RemoteControlRequestProcessor,
     search_processor: SearchRequestProcessor,
     saffron_goal_scheduler: Option<SaffronGoalSchedulerHandle>,
+    /// Owns routing while thread extensions hold only a weak reference.
+    _saffron_message_host: Arc<dyn codex_core::SaffronThreadMessageHost>,
     thread_goal_processor: ThreadGoalRequestProcessor,
     thread_queue_processor: ThreadQueueRequestProcessor,
     thread_processor: ThreadRequestProcessor,
@@ -336,6 +338,7 @@ impl MessageProcessor {
             app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
         let mut queue_service = None;
         let sample_responses = Arc::new(crate::thread_sample::SampleResponseRegistry::default());
+        let message_host_handle = Arc::new(codex_core::SaffronThreadMessageHostHandle::default());
         let thread_manager = Arc::new_cyclic(|thread_manager| {
             queue_service = queue_store.map(|queue| {
                 Arc::new(QueuedItemService::new(
@@ -355,6 +358,7 @@ impl MessageProcessor {
                     config.as_ref(),
                     ThreadExtensionDependencies {
                         sample_responses: Arc::clone(&sample_responses),
+                        thread_message_host: Some(Arc::clone(&message_host_handle)),
                         event_sink: Arc::clone(&extension_event_sink),
                         auth_manager: auth_manager.clone(),
                         state_db: state_db.clone(),
@@ -546,6 +550,12 @@ impl MessageProcessor {
             config_warnings,
             sample_responses,
         );
+        let saffron_message_host: Arc<dyn codex_core::SaffronThreadMessageHost> =
+            Arc::new(crate::request_processors::SaffronMessageHost::new(
+                thread_processor.clone(),
+                turn_admission.clone(),
+            ));
+        message_host_handle.set(Arc::downgrade(&saffron_message_host));
         let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
             && config.features.enabled(codex_features::Feature::Goals)
         {
@@ -647,6 +657,7 @@ impl MessageProcessor {
             remote_control_processor,
             search_processor,
             saffron_goal_scheduler,
+            _saffron_message_host: saffron_message_host,
             thread_goal_processor,
             thread_queue_processor,
             thread_processor,

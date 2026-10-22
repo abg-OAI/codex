@@ -142,6 +142,11 @@ pub(crate) use skills::skills_load_input_from_config;
 mod saffron;
 
 pub use saffron::fork_thread::install as install_saffron_fork_thread;
+pub use saffron::thread_message::install as install_saffron_thread_message;
+pub use saffron::thread_message::Delivery as SaffronMessageDelivery;
+pub use saffron::thread_message::MessageSubmission as SaffronMessageSubmission;
+pub use saffron::thread_message::ThreadMessageHost as SaffronThreadMessageHost;
+pub use saffron::thread_message::ThreadMessageHostHandle as SaffronThreadMessageHostHandle;
 
 /// Installs Saffrodex-owned model guidance that accompanies goal tools.
 pub fn install_saffron_goal_guidance(
