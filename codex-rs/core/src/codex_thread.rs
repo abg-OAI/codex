@@ -331,6 +331,18 @@ impl CodexThread {
         reply_rx.await.map_err(|_| CodexErr::InternalAgentDied)
     }
 
+    /// Commits shutdown only if this successfully persisted turn is still the latest work.
+    /// Acceptance does not mean teardown has finished; await `wait_until_terminated` next.
+    pub async fn request_shutdown_after_turn(&self, expected_turn_id: String) -> CodexResult<bool> {
+        let (reply, receiver) = oneshot::channel();
+        self.submit(Op::ShutdownAfterTurn {
+            expected_turn_id,
+            reply,
+        })
+        .await?;
+        receiver.await.map_err(|_| CodexErr::InternalAgentDied)
+    }
+
     /// Wait until the underlying session loop has terminated.
     pub async fn wait_until_terminated(&self) {
         self.io.session_loop_termination.clone().await;
@@ -395,6 +407,9 @@ impl CodexThread {
         &self,
         goal: &codex_state::ThreadGoal,
     ) -> Result<bool, String> {
+        if crate::saffron::archive_self::pending(&self.session) {
+            return Ok(true);
+        }
         crate::saffron::goal_supervisor::start_checkin(&self.session, goal)
             .await
             .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
