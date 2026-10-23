@@ -111,6 +111,14 @@ async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
             .is_some(),
         "the helper should receive the Saffron supervisor action tools"
     );
+    for (index, request) in requests.iter().enumerate() {
+        let helper_guidance = request
+            .message_input_texts("developer")
+            .into_iter()
+            .filter(|text| text.contains("# Saffron Goal Supervisor"))
+            .count();
+        assert_eq!(helper_guidance, usize::from(index >= 2));
+    }
     assert!(
         requests[2]
             .message_input_texts("user")

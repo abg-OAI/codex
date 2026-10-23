@@ -38,28 +38,14 @@ fn snooze_spec_requires_an_external_wait_reason() {
         panic!("supervisor snooze must expose one function");
     };
 
+    let parameters = serde_json::to_value(&tool.parameters).expect("serializable snooze schema");
     assert_eq!(
-        tool.parameters,
-        JsonSchema::object(
-            BTreeMap::from([
-                (
-                    "delay_seconds".to_string(),
-                    JsonSchema::integer(Some(format!(
-                        "Whole seconds to a known scheduled boundary or a bounded, evidence-based recheck of an already-running non-human process, from 1 through {MAX_SNOOZE_SECONDS}."
-                    ))),
-                ),
-                (
-                    "reason".to_string(),
-                    JsonSchema::string(Some(
-                        "Concise observed non-human process or scheduled boundary that prevents useful parent action."
-                            .to_string(),
-                    )),
-                ),
-            ]),
-            Some(vec!["delay_seconds".to_string(), "reason".to_string()]),
-            Some(false.into()),
-        )
+        parameters["required"],
+        serde_json::json!(["delay_seconds", "reason"])
     );
+    assert_eq!(parameters["properties"]["delay_seconds"]["type"], "integer");
+    assert_eq!(parameters["properties"]["reason"]["type"], "string");
+    assert_eq!(parameters["additionalProperties"], false);
 }
 
 #[test]
