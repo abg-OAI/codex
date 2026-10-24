@@ -121,6 +121,7 @@ async fn blank_section_is_rejected_before_creation() {
         call_id: "blank-section".to_string(),
         tool_name: ToolName::namespaced("saffron", "fork_thread"),
         source: ToolCallSource::Direct,
+        environments: Default::default(),
         payload: ToolPayload::Function {
             arguments: json!({"prompt": "inspect", "section": " \t\n"}).to_string(),
         },
@@ -506,6 +507,7 @@ fn tool_invocation(
         call_id: "fork-call".to_string(),
         tool_name: ToolName::namespaced("saffron", "fork_thread"),
         source: ToolCallSource::Direct,
+        environments: Default::default(),
         payload: ToolPayload::Function {
             arguments: arguments.to_string(),
         },
