@@ -179,7 +179,7 @@ impl Kind {
                 "Wake the supervised parent with one concrete next task. Use this when the active goal can make useful progress now."
             }
             Self::Snooze => {
-                "Snooze only when every unfinished part depends on a future deadline or an already-running non-human process, and no useful parent action remains. Use supervisor_followup_parent for mixed work, unanswered questions, or missing user authority or information."
+                "Schedule the next useful checkpoint when nothing is due now. Use a deadline or an authorized observation of external state that can change independently. A pending user decision alone does not provide a checkpoint."
             }
             Self::Compact => {
                 "Request context compaction for the idle supervised parent. Use this only after an ignored corrective follow-up when context pressure is blocking useful progress."
@@ -208,13 +208,13 @@ impl Kind {
                     (
                         "delay_seconds".to_string(),
                         JsonSchema::integer(Some(format!(
-                            "Whole seconds to a known scheduled boundary or a bounded, evidence-based recheck of an already-running non-human process, from 1 through {MAX_SNOOZE_SECONDS}."
+                            "Whole seconds until the deadline or next useful observation, from 1 through {MAX_SNOOZE_SECONDS}."
                         ))),
                     ),
                     (
                         "reason".to_string(),
                         JsonSchema::string(Some(
-                            "Concise observed non-human process or scheduled boundary that prevents useful parent action."
+                            "Identify the deadline or the source to check and the change to look for."
                                 .to_string(),
                         )),
                     ),

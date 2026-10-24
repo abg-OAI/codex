@@ -717,10 +717,6 @@ async fn spawn_helper(
     // reminder would make a cold wake depend on the unloaded root's subscriber.
     let _ = config.features.disable(Feature::CurrentTimeReminder);
     config.current_time_reminder = None;
-    config.developer_instructions = Some(match config.developer_instructions.take() {
-        Some(existing) => format!("{existing}\n\n{}", include_str!("prompt.md")),
-        None => include_str!("prompt.md").to_string(),
-    });
     let parent_source = parent.session_source().await;
     let helper_path = AgentPath::root().join(HELPER_ROLE_NAME)?;
     let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
