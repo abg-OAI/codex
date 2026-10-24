@@ -5,6 +5,7 @@
 //! Saffron modules compose those primitives into complete features and export
 //! only the integration points that upstream registration needs.
 
+pub(crate) mod archive_self;
 pub(crate) mod await_exec;
 pub(crate) mod child_delegation;
 pub(crate) mod compaction_requests;
@@ -51,4 +52,5 @@ pub(crate) fn register_tools(
     goal_resume::register_root_if_available(session, turn_context, registry);
     fork_thread::register(session, turn_context, registry);
     thread_message::register(session, turn_context, registry);
+    archive_self::register(session, turn_context, registry);
 }
