@@ -402,6 +402,7 @@ impl TestHost {
                 call_id: "message-call".to_string(),
                 tool_name: ToolName::namespaced("saffron", "send_message_to_thread"),
                 source: ToolCallSource::Direct,
+                environments: Default::default(),
                 payload: ToolPayload::Function {
                     arguments: arguments.to_string(),
                 },

@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
-index 3627f608e70e9f237757bd1ebecaff540647df33..6adfc5d5a60edb1276f2c4c793cfb3a6bf2a1cbc 100644
+index 564df6c80fd00429eda1ebf66a5079c7daf96944..ea7723dc1b376bc9c6cc0fe647da53a1439e27dd 100644
 --- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 @@ -6,6 +6,7 @@ use app_test_support::MockResponsesConfig;
@@ -159,10 +159,10 @@ index 3627f608e70e9f237757bd1ebecaff540647df33..6adfc5d5a60edb1276f2c4c793cfb3a6
  async fn idle_root_goal_runs_hidden_saffron_supervisor() -> Result<()> {
      let server = responses::start_mock_server().await;
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index b9343e78e8a123b7dd935f801619e23927e06827..2b15d7f1988ea68ff81fb14c8a739da5dd8919c2 100644
+index 8f9514a9e7195fbdba6883f219ad790a4d13e1db..35b6b1c92ff63b1fd8a2028a6328ae222860436b 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -163,6 +163,14 @@ mod thread_spawn;
+@@ -164,6 +164,14 @@ mod thread_spawn;
  pub(crate) mod web_search;
  pub(crate) mod windows_sandbox_read_grants;
  pub use agent::control::ThreadEvictionOutcome;

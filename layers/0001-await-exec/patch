@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 390b658b60cee1f3823f37d2d096949a09235965..216cfd27f9288c764721041f1127dfc5c716b0c7 100644
+index 2c91c8e487fcd781ef8682d6ff471616eb3d3765..c32531405df51dde8af095dcf450a8188093db5c 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -139,6 +139,7 @@ mod skills;
+@@ -140,6 +140,7 @@ mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  #[cfg(test)]
  pub(crate) use skills::skills_load_input_from_config;
@@ -11,10 +11,10 @@ index 390b658b60cee1f3823f37d2d096949a09235965..216cfd27f9288c764721041f1127dfc5
  pub mod test_support;
  mod unified_exec;
 diff --git a/codex-rs/core/src/tools/handlers/unified_exec.rs b/codex-rs/core/src/tools/handlers/unified_exec.rs
-index 6eeaf861c12548086d780407c2d2e4ff00512bea..5ccd6c6dedeab9213515b2fb10457c37760c4f3f 100644
+index 50faf5259ae74c4d81236b681617843ac93bda56..d8496454d434a8ea1c0bab69620b92ec51916f51 100644
 --- a/codex-rs/core/src/tools/handlers/unified_exec.rs
 +++ b/codex-rs/core/src/tools/handlers/unified_exec.rs
-@@ -75,7 +75,11 @@ pub(crate) struct ResolvedCommand {
+@@ -111,7 +111,11 @@ pub(crate) struct ResolvedCommand {
      pub(crate) shell: ShellInvocation,
  }
 
@@ -28,7 +28,7 @@ index 6eeaf861c12548086d780407c2d2e4ff00512bea..5ccd6c6dedeab9213515b2fb10457c37
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 24b60f3ff2231a2e4a5e27dc7a93331a9aacd436..21f3e1b35a4dd10df27e2dd8c88586e323f58401 100644
+index 192deff7e1a73af7683d296e7d2aaafbf985232d..069b60d56a08e575e9c5ad4905495ac85579dbb3 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -39,7 +39,7 @@ index 24b60f3ff2231a2e4a5e27dc7a93331a9aacd436..21f3e1b35a4dd10df27e2dd8c88586e3
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -1257,6 +1258,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1264,6 +1265,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
      if features.enabled(Feature::UnifiedExec) {
          registry.add(ExecCommandHandler::new(options));
          registry.add(WriteStdinHandler);
@@ -48,10 +48,10 @@ index 24b60f3ff2231a2e4a5e27dc7a93331a9aacd436..21f3e1b35a4dd10df27e2dd8c88586e3
          // Managed requirements are the only configuration path that can keep
          // unified exec disabled. Preserve command execution without exposing a
 diff --git a/codex-rs/core/src/unified_exec/mod.rs b/codex-rs/core/src/unified_exec/mod.rs
-index c4ea0991abf73157f469fd9ca34a172300471a95..9c4bb6d4cfc97514f0fa175c6ad4c3aa3c3c62c7 100644
+index 4c47abb2de42710309e6975fe37ec64e25a6807a..5fac4668f58b19c28e19137a0120234d8d05e5a1 100644
 --- a/codex-rs/core/src/unified_exec/mod.rs
 +++ b/codex-rs/core/src/unified_exec/mod.rs
-@@ -62,6 +62,8 @@ pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
+@@ -63,6 +63,8 @@ pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
 
  pub(crate) use errors::UnifiedExecError;
  pub(crate) use process::UnifiedExecProcess;
@@ -91,10 +91,10 @@ index b3ddb029521bfe67e57e08114f60056f45b22a79..1f013200cba6ac679006576c4696a4db
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 5c4a429b3f3c0823400f885bf4c3e5494996fb55..77d5d20b00e5570261f18050b6f05d67031d05de 100644
+index 0ba92cb486fe0b78413e85b061ae8601063bcd7b..a9e06c636e1ce3614369931f7efdcdcbfbb85923 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
-@@ -109,6 +109,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
+@@ -110,6 +110,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
  const MAX_STDIN_APPROVAL_BYTES: usize = 8_000;
  const INTERRUPT: &str = "\u{3}";
 
@@ -107,10 +107,10 @@ index 5c4a429b3f3c0823400f885bf4c3e5494996fb55..77d5d20b00e5570261f18050b6f05d67
  ///
  /// In production builds this value should remain at its default (`false`) and
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index d64ef3a06dacf937013e00c2b0e670f7d065824a..32c74230be672de979aabcfd24cf1770dfffa0c6 100644
+index 9deb12935c48a0b57f1f86ba3963e757185ad775..dddc021fb94562d3567f5102ba9aeb356ef01199 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -206,6 +206,7 @@ mod rollout_compression;
+@@ -208,6 +208,7 @@ mod rollout_compression;
  mod rollout_list_find;
  mod safety_buffering;
  mod safety_check_downgrade;

@@ -271,6 +271,7 @@ fn invocation(session: Arc<Session>, turn: Arc<TurnContext>, arguments: &str) ->
         call_id: "archive-call".into(),
         tool_name: ToolName::namespaced("saffron", "archive_self"),
         source: ToolCallSource::Direct,
+        environments: Default::default(),
         payload: ToolPayload::Function {
             arguments: arguments.into(),
         },
