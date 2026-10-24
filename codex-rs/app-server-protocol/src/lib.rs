@@ -2,6 +2,7 @@ mod experimental_api;
 mod precomputed_exports;
 mod protocol;
 pub mod rpc;
+mod saffron;
 
 pub use experimental_api::*;
 pub use precomputed_exports::GenerateTsOptions;
