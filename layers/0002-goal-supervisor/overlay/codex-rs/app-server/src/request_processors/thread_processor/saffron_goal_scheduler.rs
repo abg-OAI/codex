@@ -66,7 +66,10 @@ impl ThreadRequestProcessor {
             )
             .await?;
         let (thread_history, _stored_thread) = self
-            .load_resume_initial_history_from_stored_thread(stored_thread)
+            .load_resume_initial_history_from_stored_thread(
+                stored_thread,
+                /*prepared_model_context*/ None,
+            )
             .await?;
         let history_cwd = thread_history.session_cwd();
         let mut request_overrides = None;
