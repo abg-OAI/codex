@@ -1889,10 +1889,10 @@ index 21d31dd791dd56850f72b17f869f10b168250c0e..789947cb35d0ecf7b15156aad4ea5108
      async fn input_queue_uses_unambiguous_trigger_parent_and_first_root() {
          let (parent, peer, root, root2) = (Some("a"), Some("b"), Some("r"), Some("s"));
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 00898d10b1f2ff47ac99fc092ed17e62da43ef8d..75c81080df72b5d1a5a4150d73faf797be970b96 100644
+index 96ee7c2c20bbb8aa1ab9e89f985412bcff2da567..4d65bc026d73103bbb60901e868220fc195c065c 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2616,6 +2616,10 @@ impl Session {
+@@ -2628,6 +2628,10 @@ impl Session {
          if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
              return;
          }
@@ -1903,7 +1903,7 @@ index 00898d10b1f2ff47ac99fc092ed17e62da43ef8d..75c81080df72b5d1a5a4150d73faf797
 
          self.services
              .agent_control
-@@ -2631,6 +2635,7 @@ impl Session {
+@@ -2643,6 +2647,7 @@ impl Session {
                          .cloned(),
                      status,
                      error_info,

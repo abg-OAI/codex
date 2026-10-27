@@ -215,7 +215,7 @@ index ab7f8e49ee4714ea03a5c9cec89c328deaf52174..9ab2d62e0545ab4c1e7e14a81ae99584
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 57b27926939a35ce2fc10b489cc713ade6240550..2345082c296602a785be6a7a756cefe4d25bcb23 100644
+index 9438f091fee60c86d9d692dd9bf0985c949b2131..d47a2462e841aedb220b85369aed835cbbfe9171 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -246,6 +246,7 @@ use codex_protocol::exec_output::StreamOutput;

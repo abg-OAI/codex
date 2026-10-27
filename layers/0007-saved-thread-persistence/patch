@@ -554,7 +554,7 @@ index 91d8b1f3a368ccce8efb61540514785cdd460e2e..ab7f8e49ee4714ea03a5c9cec89c328d
          startup_prewarm.abort().await;
      }
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 75c81080df72b5d1a5a4150d73faf797be970b96..57b27926939a35ce2fc10b489cc713ade6240550 100644
+index 4d65bc026d73103bbb60901e868220fc195c065c..9438f091fee60c86d9d692dd9bf0985c949b2131 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -265,6 +265,7 @@ mod mcp_prewarm;
@@ -593,7 +593,7 @@ index 75c81080df72b5d1a5a4150d73faf797be970b96..57b27926939a35ce2fc10b489cc713ad
      }
 
      pub(crate) async fn set_thread_memory_mode(
-@@ -3783,8 +3794,23 @@ impl Session {
+@@ -3795,8 +3806,23 @@ impl Session {
              .iter()
              .map(|envelope| envelope.item.clone())
              .collect::<Vec<_>>();
@@ -617,7 +617,7 @@ index 75c81080df72b5d1a5a4150d73faf797be970b96..57b27926939a35ce2fc10b489cc713ad
              state
                  .current_time_reminder
                  .note_recorded_items(&response_items);
-@@ -3824,7 +3850,8 @@ impl Session {
+@@ -3836,7 +3862,8 @@ impl Session {
              state
                  .history
                  .record_annotated_items(&mut items, model_info.truncation_policy.into());
@@ -627,7 +627,7 @@ index 75c81080df72b5d1a5a4150d73faf797be970b96..57b27926939a35ce2fc10b489cc713ad
          for image in image_preparations {
              self.services
                  .analytics_events_client
-@@ -3833,32 +3860,19 @@ impl Session {
+@@ -3845,32 +3872,19 @@ impl Session {
                      metadata: image,
                  });
          }
@@ -662,7 +662,7 @@ index 75c81080df72b5d1a5a4150d73faf797be970b96..57b27926939a35ce2fc10b489cc713ad
          if turn_context.config.memories.disable_on_external_context
              && let Some(item) = response_items
                  .iter()
-@@ -4247,24 +4261,27 @@ impl Session {
+@@ -4259,24 +4273,27 @@ impl Session {
          for mut recording in pending {
              let _ = recording.changed().await;
          }
@@ -693,7 +693,7 @@ index 75c81080df72b5d1a5a4150d73faf797be970b96..57b27926939a35ce2fc10b489cc713ad
          drop(boundary);
          self.send_raw_response_items(turn_context, items).await;
      }
-@@ -4376,8 +4393,10 @@ impl Session {
+@@ -4388,8 +4405,10 @@ impl Session {
          // Wait for accepted updates to finish persisting, then keep later updates from
          // overtaking the current settings snapshot while its checkpoint is written.
          let _settings_guard = thread_settings::acquire_persistence_lock(self).await;
@@ -705,7 +705,7 @@ index 75c81080df72b5d1a5a4150d73faf797be970b96..57b27926939a35ce2fc10b489cc713ad
              let complete_replacement =
                  matches!(&installation, CompactedHistoryInstallation::Complete(_));
              let (metadata, started_item) = match installation {
-@@ -4497,28 +4516,29 @@ impl Session {
+@@ -4509,28 +4528,29 @@ impl Session {
                      previous_turn_settings: state.previous_turn_settings(),
                  }),
              };
@@ -742,7 +742,7 @@ index 75c81080df72b5d1a5a4150d73faf797be970b96..57b27926939a35ce2fc10b489cc713ad
          {
              let mut state = self.state.lock().await;
              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
-@@ -4887,6 +4907,11 @@ impl Session {
+@@ -4909,6 +4929,11 @@ impl Session {
 
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
@@ -754,7 +754,7 @@ index 75c81080df72b5d1a5a4150d73faf797be970b96..57b27926939a35ce2fc10b489cc713ad
          if let Some(live_thread) = self.live_thread()
              && let Err(e) = live_thread.append_items(items).await
          {
-@@ -5115,11 +5140,12 @@ impl Session {
+@@ -5137,11 +5162,12 @@ impl Session {
                  thread_settings::applied_event(self).await,
              ));
          }

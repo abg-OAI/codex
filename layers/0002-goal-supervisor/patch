@@ -1117,10 +1117,10 @@ index 5ded792689cdc7fd179540545d9e792a6d057dab..d392c3a8f57f5f767e4f08560b26800e
          || sess.features.enabled(Feature::WakeOnAgentMessages)
          || sess.has_outstanding_durable_sleep()
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 073e7a19ee4a52f15543438820d2c2ed5376ac0d..00898d10b1f2ff47ac99fc092ed17e62da43ef8d 100644
+index aba497125ce18b608ad2ddeadcd4827ee0214cb5..96ee7c2c20bbb8aa1ab9e89f985412bcff2da567 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2460,6 +2460,7 @@ impl Session {
+@@ -2472,6 +2472,7 @@ impl Session {
 
      /// Record a terminal CodexErr before the app-server completion notification is reduced.
      pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {
@@ -1128,7 +1128,7 @@ index 073e7a19ee4a52f15543438820d2c2ed5376ac0d..00898d10b1f2ff47ac99fc092ed17e62
          self.services
              .analytics_events_client
              .track_turn_codex_error(TurnCodexErrorFact::from_codex_err(
-@@ -2612,6 +2613,9 @@ impl Session {
+@@ -2624,6 +2625,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }
