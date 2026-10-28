@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::ServerNotification;
+use crate::ThreadItem;
 use crate::build_turns_from_rollout_items;
 use crate::item_event_to_server_notification;
 use crate::project_rollout_line;
@@ -64,7 +65,7 @@ fn live_and_replayed_message_keep_identity_and_commentary() {
         RolloutItem::EventMsg(started),
         RolloutItem::EventMsg(completed),
     ]);
-    let expected = ThreadItem::AgentMessage {
+    let expected = ThreadItemPayload::AgentMessage {
         id: "incoming-message".into(),
         text: format!(
             "**Message from [worker \\[c\\]](thread://{sender})**\n\nFirst line.\n\n**Second line.**"
@@ -74,10 +75,14 @@ fn live_and_replayed_message_keep_identity_and_commentary() {
         delivery: None,
         questions: None,
     };
-    assert_eq!(live_start.item, expected);
-    assert_eq!(live_end.item, expected);
+    assert_eq!(live_start.item.payload, expected);
+    assert_eq!(live_start.item.started_at_ms, Some(1000));
+    assert_eq!(live_start.item.completed_at_ms, None);
+    assert_eq!(live_end.item.payload, expected);
+    assert_eq!(live_end.item.started_at_ms, Some(1000));
+    assert_eq!(live_end.item.completed_at_ms, Some(1001));
     assert_eq!(turns.len(), 1);
-    assert_eq!(turns[0].items, vec![expected]);
+    assert_eq!(turns[0].items, vec![live_end.item]);
     assert_eq!(serde_json::to_value(output).unwrap(), original);
 }
 
@@ -88,7 +93,7 @@ fn legacy_envelope_uses_sender_identity() {
     let item = thread_message(incoming_message(json!({
         "source_thread_id": sender, "input": "hello"
     })));
-    let ThreadItem::AgentMessage { text, .. } = item else {
+    let ThreadItemPayload::AgentMessage { text, .. } = item else {
         panic!("expected message")
     };
     assert_eq!(
@@ -121,7 +126,9 @@ fn paginated_history_stores_the_presented_message() {
     assert_eq!(changes.changed_items.len(), 1);
     let serialized = serde_json::to_string(&changes.changed_items[0].item).unwrap();
     let reloaded: ThreadItem = serde_json::from_str(&serialized).unwrap();
-    assert_eq!(reloaded, expected);
+    assert_eq!(reloaded.payload, expected);
+    assert_eq!(reloaded.started_at_ms, Some(1000));
+    assert_eq!(reloaded.completed_at_ms, Some(1001));
     let RolloutItem::EventMsg(EventMsg::ItemCompleted(event)) = line.item else {
         panic!("expected original completion event")
     };
@@ -137,7 +144,7 @@ fn sender_name_is_literal_but_message_markdown_is_preserved() {
         "source_thread_name": "worker](https://example.test)\n**other**",
         "input": "`body`"
     })));
-    let ThreadItem::AgentMessage { text, .. } = item else {
+    let ThreadItemPayload::AgentMessage { text, .. } = item else {
         panic!("expected message")
     };
     assert_eq!(
@@ -183,7 +190,7 @@ fn other_outputs_are_not_reclassified() {
         };
         assert_eq!(
             thread_message(output),
-            ThreadItem::FunctionCallOutput {
+            ThreadItemPayload::FunctionCallOutput {
                 id: "unchanged".into(),
                 name: name.into(),
                 namespace: Some(namespace.into()),

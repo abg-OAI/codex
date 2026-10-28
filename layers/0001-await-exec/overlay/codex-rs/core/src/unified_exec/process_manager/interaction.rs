@@ -10,13 +10,14 @@
 //! lock wins over its deadline. Once acquired, process exit wins over output
 //! and the deadline, and available output wins over the deadline.
 
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use codex_protocol::protocol::TruncationPolicy;
+use codex_utils_head_tail_buffer::HeadTailBuffer;
 use codex_utils_output_truncation::approx_tokens_from_byte_count;
+use codex_utils_path_uri::PathUri;
 use tokio::sync::OwnedMutexGuard;
 use tokio::time::Instant;
 
@@ -26,11 +27,12 @@ use super::finish_deferred_network_approval_for_session;
 use super::network_denial_message_for_session;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::network_approval::DeferredNetworkApproval;
+use crate::unified_exec::UNIFIED_EXEC_OUTPUT_MAX_BYTES;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::unified_exec::generate_chunk_id;
-use crate::unified_exec::head_tail_buffer::HeadTailBuffer;
+use crate::unified_exec::output::CapturedStream;
 use crate::unified_exec::process::OutputHandles;
 
 const POST_EXIT_OUTPUT_CLOSE_WAIT: Duration = Duration::from_millis(50);
@@ -67,6 +69,7 @@ pub(crate) struct ProcessInteraction<'a> {
     network_approval: Option<DeferredNetworkApproval>,
     call_id: String,
     hook_command: String,
+    tool_cwd: Option<PathUri>,
     process_id: i32,
     _guard: OwnedMutexGuard<()>,
 }
@@ -78,7 +81,7 @@ pub(crate) struct ProcessInteraction<'a> {
 /// originating command's event and hook identity.
 pub(crate) struct ProcessInteractionResult {
     outcome: ProcessInteractionOutcome,
-    output: HeadTailBuffer,
+    output: HeadTailBuffer<UNIFIED_EXEC_OUTPUT_MAX_BYTES>,
 }
 
 /// Live-session metadata captured when interaction acquisition times out.
@@ -95,6 +98,7 @@ struct ProcessInteractionOutcome {
     exit_code: Option<i32>,
     event_call_id: String,
     hook_command: String,
+    tool_cwd: Option<PathUri>,
 }
 
 impl UnifiedExecProcessManager {
@@ -110,7 +114,7 @@ impl UnifiedExecProcessManager {
         process_id: i32,
         deadline: Option<Instant>,
     ) -> Result<ProcessInteractionAcquisition<'_>, UnifiedExecError> {
-        let (process, call_id, hook_command) = {
+        let (process, call_id, hook_command, tool_cwd) = {
             let store = self.process_store.lock().await;
             let entry = store
                 .processes
@@ -120,6 +124,8 @@ impl UnifiedExecProcessManager {
                 Arc::clone(&entry.process),
                 entry.call_id.clone(),
                 entry.hook_command.clone(),
+                (entry.environment_id == codex_exec_server::LOCAL_ENVIRONMENT_ID)
+                    .then(|| entry.cwd.clone()),
             )
         };
 
@@ -147,6 +153,7 @@ impl UnifiedExecProcessManager {
                             exit_code: None,
                             event_call_id: call_id,
                             hook_command,
+                            tool_cwd,
                         },
                     },
                 ));
@@ -173,6 +180,7 @@ impl UnifiedExecProcessManager {
                 network_approval: entry.network_approval.clone(),
                 call_id: entry.call_id.clone(),
                 hook_command: entry.hook_command.clone(),
+                tool_cwd,
                 process_id: entry.process_id,
                 _guard: guard,
             },
@@ -325,6 +333,7 @@ impl ProcessInteraction<'_> {
                 exit_code,
                 event_call_id: self.call_id.clone(),
                 hook_command: self.hook_command.clone(),
+                tool_cwd: self.tool_cwd.clone(),
             };
             return Ok(ProcessInteractionResult { outcome, output });
         }
@@ -432,7 +441,7 @@ impl ProcessInteractionTimeout {
 impl ProcessInteractionOutcome {
     fn into_tool_output(
         self,
-        output: HeadTailBuffer,
+        output: HeadTailBuffer<UNIFIED_EXEC_OUTPUT_MAX_BYTES>,
         wall_time: Duration,
         truncation_policy: TruncationPolicy,
         max_output_tokens: Option<usize>,
@@ -440,19 +449,18 @@ impl ProcessInteractionOutcome {
         let original_token_count =
             usize::try_from(approx_tokens_from_byte_count(output.total_bytes()))
                 .unwrap_or(usize::MAX);
-        let output_omitted_bytes = NonZeroUsize::new(output.omitted_bytes());
 
         ExecCommandToolOutput {
             event_call_id: self.event_call_id,
             chunk_id: generate_chunk_id(),
             wall_time,
-            raw_output: output.to_bytes_with_omission_marker(),
+            raw_output: CapturedStream::from(&output),
             truncation_policy,
             max_output_tokens,
             process_id: self.process_id,
             exit_code: self.exit_code,
             original_token_count: Some(original_token_count),
-            output_omitted_bytes,
+            tool_cwd: self.tool_cwd,
             hook_command: Some(self.hook_command),
         }
     }

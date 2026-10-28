@@ -5,7 +5,7 @@
 //! only supplies an attributed commentary row to clients. Unrecognized payloads
 //! remain tool outputs rather than acquiring assistant-message semantics.
 
-use crate::ThreadItem;
+use crate::ThreadItemPayload;
 use codex_protocol::ThreadId;
 use codex_protocol::items::FunctionCallOutputItem;
 use codex_protocol::models::FunctionCallOutputBody;
@@ -13,7 +13,7 @@ use codex_protocol::models::MessagePhase;
 use serde::Deserialize;
 
 /// Presents a valid incoming Saffron message without changing its item identity.
-pub(crate) fn thread_message(output: FunctionCallOutputItem) -> ThreadItem {
+pub(crate) fn thread_message(output: FunctionCallOutputItem) -> ThreadItemPayload {
     let message = if output.namespace.as_deref() == Some("saffron")
         && output.name == "send_message_to_thread"
         && let FunctionCallOutputBody::Text(body) = &output.output
@@ -28,7 +28,7 @@ pub(crate) fn thread_message(output: FunctionCallOutputItem) -> ThreadItem {
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| message.source_thread_id.to_string());
         let label = escape_link_label(&sender);
-        return ThreadItem::AgentMessage {
+        return ThreadItemPayload::AgentMessage {
             id: output.id,
             text: format!(
                 "**Message from [{label}](thread://{})**\n\n{}",
@@ -40,7 +40,7 @@ pub(crate) fn thread_message(output: FunctionCallOutputItem) -> ThreadItem {
             questions: None,
         };
     }
-    ThreadItem::FunctionCallOutput {
+    ThreadItemPayload::FunctionCallOutput {
         id: output.id,
         name: output.name,
         namespace: output.namespace,

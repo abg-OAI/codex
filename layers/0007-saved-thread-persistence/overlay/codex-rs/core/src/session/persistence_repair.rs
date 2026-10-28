@@ -321,6 +321,10 @@ impl Session {
             compaction_response_id: None,
             latest_token_usage_record: state.latest_token_usage_record.clone(),
             resume_metadata: Some(CompactionResumeMetadata {
+                dynamic_tools: Some(Box::new(DynamicToolsSnapshot {
+                    thread_id: self.thread_id(),
+                    tools: state.persisted_dynamic_tools.to_vec(),
+                })),
                 multi_agent_version: self.multi_agent_version(),
                 last_started_turn_id: state.last_started_turn_id.clone(),
                 turn_attribution: state.turn_attribution.clone(),

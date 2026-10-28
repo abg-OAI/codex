@@ -504,10 +504,10 @@ index d3dfa5a32bb3fc33c5eba5c846a996a8c918ae11..63957c93264bc3f05a964c6af88e8e69
 +    goal_edit::register_root_if_available(session, turn_context, registry);
  }
 diff --git a/codex-rs/state/src/lib.rs b/codex-rs/state/src/lib.rs
-index 78aea77025ff7e4a35267035ccb8a1f2ed273c8f..d7499c6a1275ba97684aadb8ee659577b3f56261 100644
+index 4c9960624facc976c0dd37ec22046395e267e90f..b93200425c12c5c52f51010bb46742a3efc844d9 100644
 --- a/codex-rs/state/src/lib.rs
 +++ b/codex-rs/state/src/lib.rs
-@@ -97,6 +97,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
+@@ -101,6 +101,7 @@ pub use runtime::RemoteControlEnrollmentRecord;
  pub use runtime::SqliteIntegrityCheck;
  pub use runtime::SqliteQueueStore;
  pub use runtime::ThreadFilterOptions;
@@ -516,7 +516,7 @@ index 78aea77025ff7e4a35267035ccb8a1f2ed273c8f..d7499c6a1275ba97684aadb8ee659577
  pub use runtime::backup_runtime_db_for_fresh_start;
  pub use runtime::collect_runtime_db_backups;
 diff --git a/codex-rs/state/src/runtime.rs b/codex-rs/state/src/runtime.rs
-index 58dd668469dea74ee73f4bd58e734f59f37c8942..50792fda181ea3594a40dc53388a40bc479adc67 100644
+index 2ecd9592c69aa2c7aade3f083a5bb95b5dfd8233..b5f9c35d700fe78afce89b67a1e3e25b989b7703 100644
 --- a/codex-rs/state/src/runtime.rs
 +++ b/codex-rs/state/src/runtime.rs
 @@ -71,6 +71,7 @@ pub use goals::GoalAccountingMode;
