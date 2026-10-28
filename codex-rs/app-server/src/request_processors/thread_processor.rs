@@ -511,10 +511,12 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
 }
 
-/// Whether resume attaches a client or restores a cold runtime during daemon startup.
+/// Selects client attachment, daemon recovery, or restoration for immediate input.
 pub(crate) enum ThreadResumeTarget {
     Client(ConnectionRequestId),
     DaemonRecovery(Option<codex_app_server_transport::daemon_recovery::InterruptedTurn>),
+    /// Restores a root and admits input before entering its idle lifecycle.
+    Input(codex_core::TurnInputRequest),
 }
 
 /// Outcome of trying to satisfy a resume request from an already loaded thread.
@@ -3969,7 +3971,7 @@ impl ThreadRequestProcessor {
         app_server_client_version: Option<String>,
         client_mcp_extensions: ClientMcpExtensions,
         prepared_config: &mut Option<PreparedResumeConfig>,
-    ) -> Result<ControlFlow<()>, JSONRPCErrorError> {
+    ) -> Result<ControlFlow<Option<codex_core::TurnInputSubmission>>, JSONRPCErrorError> {
         if let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
             && self
                 .pending_thread_unloads
@@ -4006,7 +4008,7 @@ impl ThreadRequestProcessor {
                     // The listener may need this permit to finish the response.
                     drop(_thread_list_state_permit);
                     let _ = completion.await;
-                    return Ok(ControlFlow::Break(()));
+                    return Ok(ControlFlow::Break(None));
                 }
                 RunningThreadResumeResult::NotRunning(stored_thread) => stored_thread,
             },
@@ -4019,7 +4021,27 @@ impl ThreadRequestProcessor {
                         self.continue_daemon_turn(&params.thread_id, saved.clone())
                             .await;
                     }
-                    return Ok(ControlFlow::Break(()));
+                    return Ok(ControlFlow::Break(None));
+                }
+                None
+            }
+            ThreadResumeTarget::Input(input) => {
+                let thread_id = ThreadId::from_string(&params.thread_id)
+                    .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+                if let Ok(thread) = self.thread_manager.get_thread(thread_id).await {
+                    if thread
+                        .config_snapshot()
+                        .await
+                        .session_source
+                        .is_non_root_agent()
+                    {
+                        return Err(invalid_request("destination must be a root thread"));
+                    }
+                    let submitted = thread
+                        .start_or_steer_turn(input.clone())
+                        .await
+                        .map_err(|err| invalid_request(err.to_string()))?;
+                    return Ok(ControlFlow::Break(Some(submitted)));
                 }
                 None
             }
@@ -4081,6 +4103,13 @@ impl ThreadRequestProcessor {
             }
         };
         let (thread_history, resume_source_thread) = resume_result?;
+        if matches!(target, ThreadResumeTarget::Input(_))
+            && thread_history
+                .get_resumed_session_sources()
+                .is_none_or(|(source, _)| source.is_non_root_agent())
+        {
+            return Err(invalid_request("destination must be a saved root thread"));
+        }
         // Path-based resume can use an empty request thread ID. Coordinate once its real
         // identity is known; unrelated loaded threads never wait for this cold startup.
         let _goal_resume_guard = if let InitialHistory::Resumed(resumed) = &thread_history {
@@ -4126,7 +4155,7 @@ impl ThreadRequestProcessor {
             && !can_accept_direct_input(thread_history.get_multi_agent_version(), &source)
         {
             let ThreadResumeTarget::Client(request_id) = target else {
-                return Ok(ControlFlow::Break(()));
+                return Ok(ControlFlow::Break(None));
             };
             let child_thread_id = resumed_history.conversation_id;
             self.thread_manager
@@ -4164,7 +4193,7 @@ impl ThreadRequestProcessor {
                 RunningThreadResumeResult::Handled(completion) => {
                     drop(_thread_list_state_permit);
                     let _ = completion.await;
-                    Ok(ControlFlow::Break(()))
+                    Ok(ControlFlow::Break(None))
                 }
                 RunningThreadResumeResult::NotRunning(_) => Err(invalid_request(
                     "cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first, or use thread/read to inspect it",
@@ -4344,7 +4373,7 @@ impl ThreadRequestProcessor {
                     ThreadResumeTarget::Client(request_id) => {
                         self.request_trace_context(request_id).await
                     }
-                    ThreadResumeTarget::DaemonRecovery(_) => None,
+                    ThreadResumeTarget::DaemonRecovery(_) | ThreadResumeTarget::Input(_) => None,
                 },
                 client_mcp_extensions,
                 ..StartThreadOptions::new(config)
@@ -4362,18 +4391,36 @@ impl ThreadRequestProcessor {
                     self.thread_watch_manager
                         .upsert_thread(&thread_id.to_string())
                         .await;
-                    // Invoke idle work before arming subscriber-based unloading.
-                    codex_thread
-                        .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Completed)
-                        .await;
+                    let submission = if let ThreadResumeTarget::Input(input) = target {
+                        // Input owns this activation; a synthetic idle event could start
+                        // goal work before the requested message reaches the thread.
+                        Some(codex_thread.start_or_steer_turn(input.clone()).await)
+                    } else {
+                        codex_thread
+                            .emit_thread_idle_lifecycle_if_idle(ThreadIdleCause::Completed)
+                            .await;
+                        None
+                    };
                     if let ThreadResumeTarget::DaemonRecovery(Some(saved)) = target {
                         self.continue_daemon_turn(&thread_id.to_string(), saved.clone())
                             .await;
                     }
                     let state = self.thread_state_manager.thread_state(thread_id).await;
-                    self.ensure_listener_task_running(thread_id, Arc::clone(&codex_thread), state)
-                        .await?;
-                    return Ok(ControlFlow::Break(()));
+                    let listener = self
+                        .ensure_listener_task_running(thread_id, Arc::clone(&codex_thread), state)
+                        .await;
+                    if let Some(submission) = submission {
+                        // Admission may already be durable: listener failure must not
+                        // turn an accepted input into a retryable rejection.
+                        if let Err(error) = listener {
+                            tracing::warn!(%thread_id, error = %error.message, "input resume listener failed");
+                        }
+                        return submission
+                            .map(|value| ControlFlow::Break(Some(value)))
+                            .map_err(|err| invalid_request(err.to_string()));
+                    }
+                    listener?;
+                    return Ok(ControlFlow::Break(None));
                 };
                 let request_id = request_id.clone();
                 if let Err(err) = Self::set_app_server_client_info(
@@ -4384,7 +4431,7 @@ impl ThreadRequestProcessor {
                 .await
                 {
                     self.outgoing.send_error(request_id, err).await;
-                    return Ok(ControlFlow::Break(()));
+                    return Ok(ControlFlow::Break(None));
                 }
                 let instruction_sources = codex_thread.legacy_instruction_sources().await;
                 let SessionConfiguredEvent { rollout_path, .. } = session_configured;
@@ -4392,7 +4439,7 @@ impl ThreadRequestProcessor {
                     let error =
                         internal_error(format!("rollout path missing for thread {thread_id}"));
                     self.outgoing.send_error(request_id, error).await;
-                    return Ok(ControlFlow::Break(()));
+                    return Ok(ControlFlow::Break(None));
                 };
                 // Paginated JSONL is canonical, but its SQLite projection can lag after a
                 // previous write failure. Persist after reopening the live writer so legacy
@@ -4405,14 +4452,14 @@ impl ThreadRequestProcessor {
                         .map_err(thread_store_resume_read_error)
                 {
                     self.outgoing.send_error(request_id, error).await;
-                    return Ok(ControlFlow::Break(()));
+                    return Ok(ControlFlow::Break(None));
                 }
                 let materialized_turns = if paginated_resume && include_turns {
                     match self.paginated_thread_full_turns(thread_id).await {
                         Ok(turns) => Some(turns),
                         Err(error) => {
                             self.outgoing.send_error(request_id, error).await;
-                            return Ok(ControlFlow::Break(()));
+                            return Ok(ControlFlow::Break(None));
                         }
                     }
                 } else {
@@ -4447,7 +4494,7 @@ impl ThreadRequestProcessor {
                         self.outgoing
                             .send_error(request_id, internal_error(message))
                             .await;
-                        return Ok(ControlFlow::Break(()));
+                        return Ok(ControlFlow::Break(None));
                     }
                 };
                 thread.thread_source = codex_thread
@@ -4483,7 +4530,7 @@ impl ThreadRequestProcessor {
                             Ok(cursors) => cursors,
                             Err(error) => {
                                 self.outgoing.send_error(request_id, error).await;
-                                return Ok(ControlFlow::Break(()));
+                                return Ok(ControlFlow::Break(None));
                             }
                         }
                     } else {
@@ -4510,7 +4557,7 @@ impl ThreadRequestProcessor {
                         Ok(page) => Some(page),
                         Err(error) => {
                             self.outgoing.send_error(request_id, error).await;
-                            return Ok(ControlFlow::Break(()));
+                            return Ok(ControlFlow::Break(None));
                         }
                     }
                 } else {
@@ -4592,7 +4639,7 @@ impl ThreadRequestProcessor {
                 return Err(error);
             }
         }
-        Ok(ControlFlow::Break(()))
+        Ok(ControlFlow::Break(None))
     }
 
     async fn load_and_apply_persisted_resume_metadata(
@@ -6900,6 +6947,7 @@ fn build_thread_from_loaded_snapshot(
 }
 
 mod saffron_goal_scheduler;
+pub(crate) mod saffron_thread_message;
 
 #[cfg(test)]
 #[path = "thread_processor_tests.rs"]
