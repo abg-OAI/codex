@@ -14,7 +14,7 @@ index b056b43bc73adee0204e2c573f3c74c0f3abecae..5cbc00dd49e892a8998dbe61e88c2898
                                      // Tool bodies are not sender authorization evidence.
                                      TruncationPolicy::Bytes(0),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index 163e7d53e417eaa5b6da7e5d301b77373bd06f9d..183d0d4220f06d4f436bbf62b6291dd5781f42d8 100644
+index 3c6642301fd5e76c3198cf8b7d8c6d8cf3dbfe93..360e273a213238db3bb0dee697a0a9e827b53226 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
 @@ -19,6 +19,7 @@ use crate::hook_runtime::run_post_compact_hooks;
@@ -25,7 +25,7 @@ index 163e7d53e417eaa5b6da7e5d301b77373bd06f9d..183d0d4220f06d4f436bbf62b6291dd5
  use crate::session::RequestEffortUsage;
  use crate::session::session::Session;
  use crate::session::step_context::StepContext;
-@@ -401,7 +402,11 @@ async fn run_compact_task_inner_impl(
+@@ -405,7 +406,11 @@ async fn run_compact_task_inner_impl(
          get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default()
      };
      let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
@@ -38,7 +38,7 @@ index 163e7d53e417eaa5b6da7e5d301b77373bd06f9d..183d0d4220f06d4f436bbf62b6291dd5
 
      let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
      if let Some(summary_item) = new_history.last_mut() {
-@@ -580,19 +585,39 @@ pub(crate) struct CompactedUserMessage<'a> {
+@@ -584,19 +589,39 @@ pub(crate) struct CompactedUserMessage<'a> {
  }
 
  #[cfg(test)]
@@ -84,7 +84,7 @@ index 163e7d53e417eaa5b6da7e5d301b77373bd06f9d..183d0d4220f06d4f436bbf62b6291dd5
          .collect()
  }
 
-@@ -694,9 +719,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
+@@ -698,9 +723,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
      compacted_history
  }
 
@@ -96,7 +96,7 @@ index 163e7d53e417eaa5b6da7e5d301b77373bd06f9d..183d0d4220f06d4f436bbf62b6291dd5
      summary_text: &str,
  ) -> Vec<ResponseItemEnvelope> {
      build_compacted_history_with_limit(
-@@ -707,9 +733,10 @@ pub(crate) fn build_compacted_history(
+@@ -711,9 +737,10 @@ pub(crate) fn build_compacted_history(
      )
  }
 
@@ -108,7 +108,7 @@ index 163e7d53e417eaa5b6da7e5d301b77373bd06f9d..183d0d4220f06d4f436bbf62b6291dd5
      summary_text: &str,
      max_tokens: usize,
  ) -> Vec<ResponseItemEnvelope> {
-@@ -720,6 +747,26 @@ fn build_compacted_history_with_limit(
+@@ -724,6 +751,26 @@ fn build_compacted_history_with_limit(
              if remaining == 0 {
                  break;
              }
@@ -528,7 +528,7 @@ index a13b18ba448680976c0ce047aeb296e5c2c9d1ee..0646d7f00543840431cbe645725686c7
      let reviewer_compaction_hash = reviewer_compaction_hash(sess, turn_context).await;
      let installed = if let Some((prefix, model_info, cutoff_world_state)) = prefix {
 diff --git a/codex-rs/core/src/compact_tests.rs b/codex-rs/core/src/compact_tests.rs
-index cc80b0479b6ebe0e77b5b535ddd2d048fd451446..0ef07a60b2524cab6ffc49425ba81f3b45706b8f 100644
+index 790f0d7362bc9f4bcc47a1af1b2179768e00e5bf..7b2e66c2e0ba537e88c24e0231ed8627640c8c54 100644
 --- a/codex-rs/core/src/compact_tests.rs
 +++ b/codex-rs/core/src/compact_tests.rs
 @@ -242,6 +242,114 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
@@ -661,8 +661,8 @@ index cc80b0479b6ebe0e77b5b535ddd2d048fd451446..0ef07a60b2524cab6ffc49425ba81f3b
 +    })
  }
 
- #[test]
-@@ -379,7 +487,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+ #[tokio::test]
+@@ -428,7 +536,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
          ResponseItemEnvelope::new(ResponseItem::Other),
      ];
 
@@ -671,7 +671,7 @@ index cc80b0479b6ebe0e77b5b535ddd2d048fd451446..0ef07a60b2524cab6ffc49425ba81f3b
 
      if !preserve_content {
          item = user_message(expected_text);
-@@ -401,11 +509,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+@@ -450,11 +558,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
      };
      assert_eq!(
          collected,
@@ -685,7 +685,7 @@ index cc80b0479b6ebe0e77b5b535ddd2d048fd451446..0ef07a60b2524cab6ffc49425ba81f3b
      );
      assert_eq!(
          build_compacted_history(Vec::new(), &collected, "summary"),
-@@ -527,7 +635,10 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages(
+@@ -576,7 +684,10 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages(
      original.metadata = Some(CodexHarnessMetadata::default());
      let history = super::build_compacted_history_with_limit(
          Vec::new(),
@@ -697,7 +697,7 @@ index cc80b0479b6ebe0e77b5b535ddd2d048fd451446..0ef07a60b2524cab6ffc49425ba81f3b
          "SUMMARY",
          max_tokens,
      );
-@@ -656,7 +767,10 @@ fn build_compacted_history_preserves_user_message_passthrough_metadata(attribute
+@@ -705,7 +816,10 @@ fn build_compacted_history_preserves_user_message_passthrough_metadata(attribute
      };
      let history = build_compacted_history(
          Vec::new(),
@@ -710,12 +710,12 @@ index cc80b0479b6ebe0e77b5b535ddd2d048fd451446..0ef07a60b2524cab6ffc49425ba81f3b
      );
 
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
-index f39be3fb41fee1371036f393d5d1f62057225b60..3a214bf18c9a8c4b68f42f996eb61f5b5795303f 100644
+index 175f26e6ea0f00e40ae2efdf0e810643518dce30..e19f82e8692ba208e4843d4c31d452dea3af6b43 100644
 --- a/codex-rs/core/src/context_manager/history.rs
 +++ b/codex-rs/core/src/context_manager/history.rs
-@@ -614,6 +614,9 @@ impl ContextManager {
-     ) -> Vec<ResponseItemEnvelope> {
-         self.normalize_history(input_modalities);
+@@ -630,6 +630,9 @@ impl ContextManager {
+         )
+         .await;
          Arc::unwrap_or_clone(self.items)
 +            .into_iter()
 +            .filter(|item| !crate::saffron::compaction_requests::is_retired_annotation(item))
@@ -723,7 +723,7 @@ index f39be3fb41fee1371036f393d5d1f62057225b60..3a214bf18c9a8c4b68f42f996eb61f5b
      }
 
      /// Iterates over raw response items without exposing their history envelopes.
-@@ -676,6 +679,7 @@ impl ContextManager {
+@@ -692,6 +695,7 @@ impl ContextManager {
          let items_tokens = self
              .items
              .iter()
@@ -732,10 +732,10 @@ index f39be3fb41fee1371036f393d5d1f62057225b60..3a214bf18c9a8c4b68f42f996eb61f5b
              .fold(0i64, i64::saturating_add);
 
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index 70178c446f78bb419de5699bfe0f73bd8bd63170..0847b00d532dfb08edf8cfe4b1356d1dfd51877b 100644
+index b5eda994c83122622043bef8f5fe7a0e7d62e3a7..7e8208583f3fd0294fa1f3ed2c27d940f02d24a3 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
-@@ -56,6 +56,82 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
+@@ -60,6 +60,82 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
  const EXEC_FORMAT_MAX_TOKENS: usize = 2_500;
  const TEST_WAV_SAMPLE_RATE: u32 = 8_000;
 
@@ -831,7 +831,7 @@ index ce13be03f1986a62708aa751fef7e5d35d633a67..0e5b94605cafe76a6c7fe66b8627aa90
  pub(crate) mod goal_resume;
  pub(crate) mod goal_scheduler;
 diff --git a/codex-rs/core/src/session/rollout_reconstruction.rs b/codex-rs/core/src/session/rollout_reconstruction.rs
-index 7c8ae88b5dd59674df284c49c13cc4d99b614b54..edb32f7fbb809c180628ec264509ec6e31d16b56 100644
+index 1205827911262e75a802de1ad2371745dd7dd97c..cebc16d95fe9771fc2aa39dc96059f9f328688a8 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction.rs
 @@ -194,6 +194,10 @@ impl Session {
@@ -853,7 +853,7 @@ index 7c8ae88b5dd59674df284c49c13cc4d99b614b54..edb32f7fbb809c180628ec264509ec6e
          mut history: Self,
          truncation_policy: TruncationPolicy,
      ) -> RolloutReconstruction {
-@@ -532,8 +537,10 @@ impl ContextManager {
+@@ -534,8 +539,10 @@ impl ContextManager {
                          // prompt shape.
                          // TODO(ccunningham): if we drop support for None replacement_history compaction items,
                          // we can get rid of this second loop entirely and just build `history` directly in the first loop.
@@ -867,7 +867,7 @@ index 7c8ae88b5dd59674df284c49c13cc4d99b614b54..edb32f7fbb809c180628ec264509ec6e
                              Vec::new(),
                              &user_messages,
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index 86430a174fb2120f166b9afe721acbae395a339b..91b9c02a10316a37e15d57eef86bf340d2ab9dce 100644
+index c102a497434cf72e335d6507070c0bf346ed3578..43333a979e0684f574a5f15b1715d8e64f1f7375 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 @@ -1465,6 +1465,106 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
@@ -978,10 +978,10 @@ index 86430a174fb2120f166b9afe721acbae395a339b..91b9c02a10316a37e15d57eef86bf340
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index 7262a4b1b848d3fd1fbfafb909fea8c8cd371050..b5b12a86b257f99499b9d5c45db38f4747e3bcd1 100644
+index a716384f226025306d2e18cd06d222cb07730c20..890e2702eb021a62e06ca8ebfcb954ecd2965ff5 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
-@@ -65,6 +65,11 @@ pub struct ResponseItemEnvelope {
+@@ -66,6 +66,11 @@ pub struct ResponseItemEnvelope {
  ///
  #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
  pub struct CodexHarnessMetadata {
