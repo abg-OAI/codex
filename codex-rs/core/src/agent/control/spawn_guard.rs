@@ -1,6 +1,7 @@
 //! Owns a provisional child until the spawn result can be returned without yielding.
 
 use super::AgentTreeMembership;
+use crate::agent::registry::AgentRegistry;
 use crate::thread_manager::ThreadManagerState;
 use crate::thread_manager::thread_store_error_kind;
 use codex_agent_graph_store::AgentGraphStoreError;
@@ -20,6 +21,7 @@ pub(in crate::agent) enum SpawnOwner {
 pub(in crate::agent) struct PendingSpawn {
     state: Arc<ThreadManagerState>,
     pending: Option<(ThreadId, AgentTreeMembership)>,
+    agent_registry: Option<Arc<AgentRegistry>>,
     edge_write: Option<JoinHandle<()>>,
     owner: SpawnOwner,
 }
@@ -34,9 +36,15 @@ impl PendingSpawn {
         Self {
             state,
             pending: Some((child, membership)),
+            agent_registry: None,
             edge_write: None,
             owner,
         }
+    }
+
+    /// Roll back an agent registration if the pending spawn does not commit.
+    pub(super) fn track_agent_registration(&mut self, registry: Arc<AgentRegistry>) {
+        self.agent_registry = Some(registry);
     }
 
     pub(super) fn set_edge_write(&mut self, edge_write: JoinHandle<()>) {
@@ -57,6 +65,7 @@ impl PendingSpawn {
         let Some((_child, membership)) = self.pending.take() else {
             unreachable!("pending spawn must own agent-tree membership");
         };
+        self.agent_registry = None;
         membership
     }
 }
@@ -66,6 +75,9 @@ impl Drop for PendingSpawn {
         let Some((child, membership)) = self.pending.take() else {
             return;
         };
+        if let Some(registry) = self.agent_registry.take() {
+            registry.release_spawned_thread(child);
+        }
         let state = Arc::clone(&self.state);
         let teardown = membership.into_teardown_guard("child_spawn_cleanup", Some(child));
         let edge_write = self.edge_write.take();
