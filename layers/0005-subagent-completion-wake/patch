@@ -161,10 +161,10 @@ index 7438c609685c8e9f3198f67a5310ab8db133a7d5..c21fda88f74fe1df15672624996e1429
 
  #[allow(clippy::too_many_arguments)]
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor/saffron_goal_scheduler.rs b/codex-rs/app-server/src/request_processors/thread_processor/saffron_goal_scheduler.rs
-index fd59f736c8fb35a697961275e0d686cbadd41229..b6728a17183213f521a37f428864232f11d3c012 100644
+index 0879b97f5fe2a3d9bd3db8fa73578eea842c97b6..d3cee3d0f21c8fdb9e0196daba18965dc7c95feb 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor/saffron_goal_scheduler.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor/saffron_goal_scheduler.rs
-@@ -213,7 +213,7 @@ impl ThreadRequestProcessor {
+@@ -215,7 +215,7 @@ impl ThreadRequestProcessor {
                  }
                  pending_thread_unloads.insert(thread_id, tokio::sync::watch::channel(()).0);
              }

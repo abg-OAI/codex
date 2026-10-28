@@ -5,7 +5,7 @@ use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
 use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::ThreadArchivedNotification;
-use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadItemPayload;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadStartParams;
@@ -376,8 +376,8 @@ fn assistant_messages(saved: &ThreadReadResponse) -> Vec<&str> {
         .turns
         .iter()
         .flat_map(|turn| &turn.items)
-        .filter_map(|item| match item {
-            ThreadItem::AgentMessage { text, .. } => Some(text.as_str()),
+        .filter_map(|item| match &item.payload {
+            ThreadItemPayload::AgentMessage { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()

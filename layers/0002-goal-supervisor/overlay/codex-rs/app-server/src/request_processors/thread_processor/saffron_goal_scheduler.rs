@@ -81,7 +81,9 @@ impl ThreadRequestProcessor {
         let has_explicit_model_resume_override =
             has_model_resume_override(request_overrides.as_ref(), &typesafe_overrides);
         let persisted_settings = match &thread_history {
-            InitialHistory::Resumed(resumed) => latest_persisted_resume_settings(&resumed.history),
+            InitialHistory::Resumed(resumed) => {
+                PersistedResumeSettings::from_history(&resumed.history, resumed.conversation_id)
+            }
             InitialHistory::New | InitialHistory::Cleared | InitialHistory::Forked(_) => None,
         };
         let persisted_metadata = self

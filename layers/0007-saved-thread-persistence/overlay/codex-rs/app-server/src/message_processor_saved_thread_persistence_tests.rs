@@ -1,5 +1,6 @@
 use super::*;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadItemPayload;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadResumeParams;
@@ -41,8 +42,8 @@ fn marker(text: &str, turn_id: &str) -> ResponseItem {
 fn assert_live_message_once<'a>(items: impl Iterator<Item = &'a ThreadItem>) {
     assert_eq!(
         items
-            .filter_map(|item| match item {
-                ThreadItem::AgentMessage { text, .. } if text == LIVE_MESSAGE => {
+            .filter_map(|item| match &item.payload {
+                ThreadItemPayload::AgentMessage { text, .. } if text == LIVE_MESSAGE => {
                     Some(text.as_str())
                 }
                 _ => None,
