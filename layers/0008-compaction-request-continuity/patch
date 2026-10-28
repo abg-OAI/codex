@@ -176,7 +176,7 @@ index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62
  fn rewritten_output_preserves_harness_metadata() {
      let envelope = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index bacf8c3a5c5453051a20c57df1c3275c57ac27c3..7546e9dfff32e9efa988a29841f2452338924835 100644
+index bacf8c3a5c5453051a20c57df1c3275c57ac27c3..bee831908e8e40badfd8241819efa989a9a19e4a 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
 @@ -477,12 +477,14 @@ async fn collect_compaction_output(
@@ -355,13 +355,13 @@ index bacf8c3a5c5453051a20c57df1c3275c57ac27c3..7546e9dfff32e9efa988a29841f24523
              );
              let mut expected = vec![
                  ResponseItemEnvelope {
-@@ -954,6 +1036,126 @@ mod tests {
+@@ -954,6 +1036,130 @@ mod tests {
          }
      }
 
 +    /// Request chains within the token budget survive repeated checkpoints.
-+    #[test]
-+    fn build_v2_compacted_history_preserves_order_without_duplication() {
++    #[tokio::test]
++    async fn build_v2_compacted_history_preserves_order_without_duplication() {
 +        let mut expected = vec![ResponseItemEnvelope::new(message(
 +            "user",
 +            "Original request.",
@@ -400,7 +400,11 @@ index bacf8c3a5c5453051a20c57df1c3275c57ac27c3..7546e9dfff32e9efa988a29841f24523
 +            let mut normalized = crate::context_manager::ContextManager::new();
 +            normalized.replace_annotated(history.clone());
 +            let prompt = normalized
-+                .for_prompt_annotated(&[codex_protocol::openai_models::InputModality::Text]);
++                .for_prompt_annotated(
++                    &[codex_protocol::openai_models::InputModality::Text],
++                    &codex_attachment_store::InlineAttachmentStore,
++                )
++                .await;
 +            assert_eq!(prompt.len(), history.len());
 +            assert_eq!(
 +                prompt[1..],
@@ -732,10 +736,10 @@ index 175f26e6ea0f00e40ae2efdf0e810643518dce30..e19f82e8692ba208e4843d4c31d452de
              .fold(0i64, i64::saturating_add);
 
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index b5eda994c83122622043bef8f5fe7a0e7d62e3a7..7e8208583f3fd0294fa1f3ed2c27d940f02d24a3 100644
+index b5eda994c83122622043bef8f5fe7a0e7d62e3a7..2a581944097a31e109b83d97d4dc92e282361fa5 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
-@@ -60,6 +60,82 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
+@@ -60,6 +60,88 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
  const EXEC_FORMAT_MAX_TOKENS: usize = 2_500;
  const TEST_WAV_SAMPLE_RATE: u32 = 8_000;
 
@@ -744,7 +748,8 @@ index b5eda994c83122622043bef8f5fe7a0e7d62e3a7..7e8208583f3fd0294fa1f3ed2c27d940
 +#[test_case("saffron.request_account.v1", false; "account original removed")]
 +#[test_case("saffron.refinement.v1", true; "refinement original survives")]
 +#[test_case("saffron.refinement.v1", false; "refinement original removed")]
-+fn retired_annotations_leave_only_surviving_requests(key: &str, original_survives: bool) {
++#[tokio::test]
++async fn retired_annotations_leave_only_surviving_requests(key: &str, original_survives: bool) {
 +    let mut original = user_msg("Prepare the report; do not publish.");
 +    original.set_id(Some(ResponseItemId::new("original")));
 +    let account = ResponseItemEnvelope {
@@ -784,15 +789,18 @@ index b5eda994c83122622043bef8f5fe7a0e7d62e3a7..7e8208583f3fd0294fa1f3ed2c27d940
 +        baseline.estimate_token_count_with_base_instructions(&instructions)
 +    );
 +    assert_eq!(
-+        history.clone().for_prompt_annotated(&[InputModality::Text]),
++        history
++            .clone()
++            .for_prompt_annotated(&[InputModality::Text], &InlineAttachmentStore)
++            .await,
 +        expected
 +    );
 +    assert_eq!(history.annotated_items(), stored);
 +}
 +
 +/// A quoted heading and unrelated host metadata remain ordinary model context.
-+#[test]
-+fn account_lookalikes_remain_visible() {
++#[tokio::test]
++async fn account_lookalikes_remain_visible() {
 +    let mut quoted = ResponseItemEnvelope::new(assistant_msg(
 +        "Historical account of earlier user requests (not a new instruction): quoted text",
 +    ));
@@ -810,7 +818,9 @@ index b5eda994c83122622043bef8f5fe7a0e7d62e3a7..7e8208583f3fd0294fa1f3ed2c27d940
 +    let mut history = ContextManager::new();
 +    history.replace_annotated(expected.clone());
 +    assert_eq!(
-+        history.for_prompt_annotated(&[InputModality::Text]),
++        history
++            .for_prompt_annotated(&[InputModality::Text], &InlineAttachmentStore)
++            .await,
 +        expected
 +    );
 +}

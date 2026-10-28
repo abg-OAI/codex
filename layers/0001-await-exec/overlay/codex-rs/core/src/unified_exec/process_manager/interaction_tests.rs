@@ -3,6 +3,7 @@ use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use codex_exec_server::ExecOutputStream;
 use codex_protocol::protocol::TruncationPolicy;
 use codex_utils_path_uri::PathUri;
 use pretty_assertions::assert_eq;
@@ -91,7 +92,7 @@ async fn cancelled_finalization_leaves_output_for_the_next_interaction() {
         .output_buffer
         .lock()
         .await
-        .push_chunk(b"retained\n");
+        .push_chunk(ExecOutputStream::Stdout, b"retained\n");
     let interaction = match manager
         .begin_process_interaction(PROCESS_ID, /*deadline*/ None)
         .await
