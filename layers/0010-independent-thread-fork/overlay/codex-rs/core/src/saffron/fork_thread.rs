@@ -232,7 +232,7 @@ impl Handler {
         let options = StartThreadOptions {
             history_mode: Some(turn.history_mode),
             session_source: Some(turn.session_source.clone()),
-            dynamic_tools: turn.dynamic_tools.to_vec(),
+            dynamic_tools: session.dynamic_tools().await.to_vec(),
             inherited_environments: Some(invocation.step_context.environments.clone()),
             client_mcp_extensions: session.services.client_mcp_extensions.clone(),
             disabled_plugin_ids: Some(turn.disabled_plugin_ids.clone()),

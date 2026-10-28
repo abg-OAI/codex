@@ -174,7 +174,6 @@ fn fork_runs_from_completed_history_without_a_goal(
         turn.config = Arc::new(config.clone());
         turn.history_mode = history_mode;
         turn.sub_id = "unfinished".to_string();
-        assert!(turn.dynamic_tools.is_empty());
         let state = init_state_db(&config).await.expect("test state database");
         let auth = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
         let manager = Arc::new(ThreadManager::new(
@@ -237,6 +236,7 @@ fn fork_runs_from_completed_history_without_a_goal(
             arguments["reasoning_effort"] = json!(effort);
         }
         let invocation = tool_invocation(&source, turn, arguments);
+        assert!(invocation.session.dynamic_tools().await.is_empty());
         let inherited_effort = invocation
             .step_context
             .settings

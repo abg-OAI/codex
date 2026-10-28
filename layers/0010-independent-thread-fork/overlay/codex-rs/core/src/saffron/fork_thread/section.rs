@@ -70,9 +70,9 @@ pub(super) async fn place(
             reason: "inherit_section is false".to_string(),
         };
     }
-    let tools = &invocation.turn.dynamic_tools;
-    let list = desktop_tool(tools, "list_threads");
-    let move_tool = desktop_tool(tools, "move_thread_to_sidebar_section");
+    let tools = invocation.session.dynamic_tools().await;
+    let list = desktop_tool(&tools, "list_threads");
+    let move_tool = desktop_tool(&tools, "move_thread_to_sidebar_section");
     let listing: Listing = match request(invocation, list, json!({"limit": 50}), "list").await {
         Ok(listing) => listing,
         Err(reason) => return Outcome::Failed { reason },
@@ -94,7 +94,7 @@ pub(super) async fn place(
         };
     };
     let (section_id, created) = if let Some(name) = name {
-        match named_destination(invocation, &listing, name).await {
+        match named_destination(invocation, &tools, &listing, name).await {
             Ok(destination) => destination,
             Err(reason) => return Outcome::Failed { reason },
         }
@@ -154,6 +154,7 @@ pub(super) async fn place(
 /// Resolves a unique displayed name, creating only when the listing has no match.
 async fn named_destination(
     invocation: &ToolInvocation,
+    tools: &[DynamicToolSpec],
     listing: &Listing,
     name: &str,
 ) -> Result<(String, bool), String> {
@@ -170,7 +171,7 @@ async fn named_destination(
     if let Some(section) = found {
         return Ok((section.section_id.clone(), false));
     }
-    let create = desktop_tool(&invocation.turn.dynamic_tools, "create_sidebar_section");
+    let create = desktop_tool(tools, "create_sidebar_section");
     let section: Section = request(invocation, create, json!({"name": name}), "create").await?;
     if section.name != name || section.section_id.is_empty() {
         return Err("Desktop did not confirm the requested section creation; inspect sections before retrying".to_string());
@@ -610,7 +611,7 @@ mod tests {
             {"sectionId": "two", "name": "Research", "itemKeys": []},
         ]}))
         .unwrap();
-        let error = named_destination(&invocation, &listing, "Research")
+        let error = named_destination(&invocation, &[], &listing, "Research")
             .await
             .unwrap_err();
         assert!(error.contains("multiple sections"));
@@ -738,7 +739,7 @@ mod tests {
                 continue;
             };
             let legacy_name = format!("codex_app__{tool}");
-            let legacy_advertised = invocation.turn.dynamic_tools.iter().any(|spec| {
+            let legacy_advertised = invocation.session.dynamic_tools().await.iter().any(|spec| {
                 matches!(spec, DynamicToolSpec::Function(function) if function.name == legacy_name)
             });
             if legacy_advertised {

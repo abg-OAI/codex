@@ -767,6 +767,26 @@ index 9cba9c4260caa21b22eb6576ba01ea2bc5262b47..55d5548daa26330cffe5798519ce9a07
          if !keep
              || destination_history_mode == Some(ThreadHistoryMode::Paginated)
                  && matches!(
+diff --git a/codex-rs/core/src/agent/host/spawn.rs b/codex-rs/core/src/agent/host/spawn.rs
+index 9f539fee6d9f479600ad84e7cc5aff3168ca67eb..78e0aa803d0e3ef4d2d3ae9b7e1ff97d71d70cb1 100644
+--- a/codex-rs/core/src/agent/host/spawn.rs
++++ b/codex-rs/core/src/agent/host/spawn.rs
+@@ -13,6 +13,7 @@ use crate::agent::control::effective_spawn_config;
+ use crate::agent::control::fresh_child_history_and_tools;
+ use crate::agent::control::inherited_exec_policy_for_parent;
+ use crate::agent::history::prepare_forked_history;
++use crate::agent::types::AgentListingVisibility;
+ use crate::agent::types::AgentMetadata;
+ use crate::agent::types::LiveAgent;
+ use crate::codex_thread::CodexThread;
+@@ -262,6 +263,7 @@ pub(crate) async fn start_prepared(
+                 agent_path: Some(task_name.clone()),
+                 agent_nickname: child.thread.session_source.get_nickname(),
+                 agent_role: child.thread.session_source.get_agent_role(),
++                visibility: AgentListingVisibility::Listed,
+             },
+             status,
+         },
 diff --git a/codex-rs/core/src/agent/registry.rs b/codex-rs/core/src/agent/registry.rs
 index 4a34cf7bf267b44dd72f71cdaeec1da7e983361a..9228f21e8e27200c93e5adb4906ef72bb356e56b 100644
 --- a/codex-rs/core/src/agent/registry.rs

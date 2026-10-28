@@ -147,6 +147,10 @@ async fn cancelled_finalization_leaves_output_for_the_next_interaction() {
             /*max_output_tokens*/ None,
         );
 
-    assert_eq!(output.raw_output, b"retained\n");
+    assert_eq!(output.raw_output, CapturedStream::from("retained\n"));
+    assert_eq!(
+        output.tool_cwd,
+        Some(PathUri::parse("file:///tmp").unwrap())
+    );
     assert_eq!(output.process_id, Some(PROCESS_ID));
 }
