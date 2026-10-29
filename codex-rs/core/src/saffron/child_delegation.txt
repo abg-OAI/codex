@@ -1,0 +1,1 @@
+Any earlier instruction enabling proactive multi-agent delegation no longer applies. Complete your assigned work directly. Spawn sub-agents only when the user, your parent, or applicable AGENTS.md/skill instructions explicitly assign scoped work requiring further delegation. General encouragement to parallelize is not permission to subdivide your assignment.
