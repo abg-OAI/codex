@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 8c73218dafc2f8b1962794a74028f18c2fa15533..d1c57d411bbd7bfa06f747f3dc52988b185da18d 100644
+index e04a70a7cb947205b95bfd557370eed3066c0c23..cd1a309f7ceceec985887180bc9dda07623a1049 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -40,6 +40,8 @@ pub(crate) struct ThreadExtensionDependencies {
@@ -42,7 +42,7 @@ index b9e0a4b48d5f09a19f3d8f45a26dedac0952ee9e..c433f4a080b4694b7913d1fc9eb89f90
                          auth_manager: auth_manager.clone(),
                          state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 700ca723434fbc315acbd8a050d2cf870e7f36f1..d7f7a00690176c6daeffdc970f95a0554024ccfc 100644
+index e9eb8c3c5e22fc24b65c0587badbc888da02a15c..d743882cc26daf80b2e6d9617610316f5411c702 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -176,6 +176,7 @@ pub(crate) struct MessageProcessor {
@@ -94,7 +94,7 @@ index 700ca723434fbc315acbd8a050d2cf870e7f36f1..d7f7a00690176c6daeffdc970f95a055
          self.account_processor.clear_external_auth();
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
-@@ -908,6 +915,7 @@ impl MessageProcessor {
+@@ -916,6 +923,7 @@ impl MessageProcessor {
      }
 
      pub(crate) async fn drain_background_tasks(&self) {
@@ -103,10 +103,10 @@ index 700ca723434fbc315acbd8a050d2cf870e7f36f1..d7f7a00690176c6daeffdc970f95a055
          if let Some(worker) = &self.turn_cost_worker {
              worker.shutdown();
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 62116a5eaa44edfd2d92d1cf2a2225902e13fe03..af6f019cb2c9e7ba1b8a65384c61c78e7ce9ddba 100644
+index 3a949a3bff143d052a5f407c3787f3dc393f4c75..9ac41bf195f7210f9a8aab4df114a259c80554da 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -6946,6 +6946,7 @@ fn build_thread_from_loaded_snapshot(
+@@ -6956,6 +6956,7 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -127,10 +127,10 @@ index 325ebcb9f2fc399739a9ff4e68cef0952cbd5152..a5a89206b2a8284227d241b60d2af639
  mod saffron_goal_supervisor;
  mod saffron_goal_supervisor_history;
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 17501b877a027b83abe42ab080e360cae5540e76..c532d0ca0eeb755eba0f53692ad81763446d63ac 100644
+index 0b05876f400140e1926d11018066d549e4527dfa..f0d41a89bc1acb0238343a107be4bf4d704148ef 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -382,6 +382,18 @@ impl CodexThread {
+@@ -360,6 +360,18 @@ impl CodexThread {
          reply_rx.await.map_err(|_| CodexErr::InternalAgentDied)
      }
 
@@ -149,7 +149,7 @@ index 17501b877a027b83abe42ab080e360cae5540e76..c532d0ca0eeb755eba0f53692ad81763
      /// Wait until the underlying session loop has terminated.
      pub async fn wait_until_terminated(&self) {
          self.io.session_loop_termination.clone().await;
-@@ -469,6 +481,9 @@ impl CodexThread {
+@@ -447,6 +459,9 @@ impl CodexThread {
          &self,
          goal: &codex_state::ThreadGoal,
      ) -> Result<bool, String> {
@@ -160,7 +160,7 @@ index 17501b877a027b83abe42ab080e360cae5540e76..c532d0ca0eeb755eba0f53692ad81763
              .await
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 51971b43d47ad179f46f4e09c816abc5f8d55494..9417a72f710cbb66f1efc409e383ecd8006daa35 100644
+index 838b975b3a0a437a2d7ccc0d11f1526183df1d2b..cc3c5463d1fdcf0c3847f3edf49c83bbbcd0627d 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -142,6 +142,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
@@ -215,7 +215,7 @@ index d5fbb9191bec2d75a9a3e2565001298a4af7e46d..7d68fe8540d7ba7fdc9ee89032d4cff9
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 053bd8fbb681154874b5ef3a24221aba1af8967c..1d55862c14eeead3f5ddc21c68dd85fd3775a4af 100644
+index e72d499b7f1320e7b83fe239629d038f9d1e70c3..ccabffd236dd25b9241476929cb9567dada2667b 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -245,6 +245,7 @@ use codex_protocol::exec_output::StreamOutput;
@@ -227,7 +227,7 @@ index 053bd8fbb681154874b5ef3a24221aba1af8967c..1d55862c14eeead3f5ddc21c68dd85fd
  pub(crate) mod context_window;
  mod daemon_recovery;
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 6184b340891107e2cb32d4028159a0d721a49255..be71af75fce92a1985610ff14cc5166d4c39b810 100644
+index fca648a560a8c46544d9d34c6e7d54c848ce918c..2fe1ba81dc0db541865f500cb44d6400ccf5efb9 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -706,7 +706,8 @@ impl Session {
@@ -241,7 +241,7 @@ index 6184b340891107e2cb32d4028159a0d721a49255..be71af75fce92a1985610ff14cc5166d
      }
 
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index 5cd4d77e0e389aafb4c0a8d583e96f8d5737da09..9b02222010a1138f554059940260186cbccffe79 100644
+index e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6..e4ba85106bde3d6d266fa2b9ce717c105b351757 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
 @@ -582,20 +582,41 @@ pub(crate) async fn run_turn(
@@ -317,10 +317,10 @@ index 1e0c9afff47dd2b052a815a824516b5c09ef5717..e6ee1f29e056984ce6c0e5519b7a0d32
              state.turn_attribution = Some(attribution);
          }
 diff --git a/codex-rs/core/src/state/session.rs b/codex-rs/core/src/state/session.rs
-index ebfc5817cb733502c391acfe2007dda27c0df730..056ec6fbf2a665eab1cd235673293495d59c6ac0 100644
+index 968f3425fb8f37bcc5c833a583dd36e360d512d8..c7245266b601392a41f658bb15749f9c0d96e9d5 100644
 --- a/codex-rs/core/src/state/session.rs
 +++ b/codex-rs/core/src/state/session.rs
-@@ -91,6 +91,8 @@ pub(crate) struct SessionState {
+@@ -90,6 +90,8 @@ pub(crate) struct SessionState {
      /// Latest task admitted in this runtime, retained across completion and history edits.
      /// Cleared by standalone settings changes to invalidate pending continuation.
      pub(crate) last_started_turn_id: Option<String>,
@@ -329,7 +329,7 @@ index ebfc5817cb733502c391acfe2007dda27c0df730..056ec6fbf2a665eab1cd235673293495
      /// Latest regular turn, retained across completion, settings changes, and compaction.
      pub(crate) turn_attribution: Option<TurnAttribution>,
      /// Runtime accounting state for the active auto-compaction window.
-@@ -141,6 +143,7 @@ impl SessionState {
+@@ -139,6 +141,7 @@ impl SessionState {
              additional_context: AdditionalContextStore::default(),
              previous_turn_settings: None,
              last_started_turn_id: None,
@@ -382,7 +382,7 @@ index ffb17eb8a71ff616509860ac39a606d4831ae8e6..dd8064bc278de17680d2b016f83edc19
                  // including when cancellation drops the handler future.
                  let _admitted_timing = work_timing.map(|(gate, work)| {
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index da3bf0d41c7482ebfdca08db36883166e3ae78e8..ad0521373e7e3af8243a3155924b8e2360fbe9c8 100644
+index ad122c4d48f54d835a4c207a51cd535e27e5faf2..7f6b846f2a60e2a44e892151d29e963b114ba1ac 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
 @@ -917,6 +917,13 @@ pub enum Op {

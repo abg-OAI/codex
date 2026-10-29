@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/agent/control/sender_context.rs b/codex-rs/core/src/agent/control/sender_context.rs
-index b056b43bc73adee0204e2c573f3c74c0f3abecae..5cbc00dd49e892a8998dbe61e88c2898913b0981 100644
+index 9a0cd514f937e7809c7258dd123e39cab2a665e0..fc0b6344b6ea45a84270a133c67c777280fcbfd6 100644
 --- a/codex-rs/core/src/agent/control/sender_context.rs
 +++ b/codex-rs/core/src/agent/control/sender_context.rs
-@@ -99,6 +99,10 @@ impl LocalAgentRuntime {
+@@ -95,6 +95,10 @@ impl LocalAgentRuntime {
                                  ContextManager::reconstruct_rollout(
                                      &stored.items,
                                      meta.history_mode,
@@ -14,7 +14,7 @@ index b056b43bc73adee0204e2c573f3c74c0f3abecae..5cbc00dd49e892a8998dbe61e88c2898
                                      // Tool bodies are not sender authorization evidence.
                                      TruncationPolicy::Bytes(0),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index 3c6642301fd5e76c3198cf8b7d8c6d8cf3dbfe93..360e273a213238db3bb0dee697a0a9e827b53226 100644
+index 2f6a91de7054cf67bcda1dc9ee5955d82e9d14dc..b53f358bb346dbfd73ab37de2c7265547d974440 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
 @@ -19,6 +19,7 @@ use crate::hook_runtime::run_post_compact_hooks;
@@ -176,7 +176,7 @@ index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62
  fn rewritten_output_preserves_harness_metadata() {
      let envelope = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index bacf8c3a5c5453051a20c57df1c3275c57ac27c3..bee831908e8e40badfd8241819efa989a9a19e4a 100644
+index 85a3e6c91d34e074fcc05688afc8662a2fdd8510..73724193e34c9a43e296d575cb1625c1a79fdf3f 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
 @@ -477,12 +477,14 @@ async fn collect_compaction_output(
@@ -289,7 +289,7 @@ index bacf8c3a5c5453051a20c57df1c3275c57ac27c3..bee831908e8e40badfd8241819efa989
          )
      }
 
-@@ -885,6 +915,57 @@ mod tests {
+@@ -886,6 +916,57 @@ mod tests {
          );
      }
 
@@ -347,7 +347,7 @@ index bacf8c3a5c5453051a20c57df1c3275c57ac27c3..bee831908e8e40badfd8241819efa989
      #[test]
      fn build_v2_compacted_history_preserves_retained_metadata_sidecar() {
          let retained = message("user", "keep", /*phase*/ None);
-@@ -929,6 +1010,7 @@ mod tests {
+@@ -930,6 +1011,7 @@ mod tests {
                  output.clone(),
                  &features,
                  RetainedImageBudget::Disabled,
@@ -355,7 +355,7 @@ index bacf8c3a5c5453051a20c57df1c3275c57ac27c3..bee831908e8e40badfd8241819efa989
              );
              let mut expected = vec![
                  ResponseItemEnvelope {
-@@ -954,6 +1036,130 @@ mod tests {
+@@ -955,6 +1037,130 @@ mod tests {
          }
      }
 
@@ -714,10 +714,10 @@ index 790f0d7362bc9f4bcc47a1af1b2179768e00e5bf..7b2e66c2e0ba537e88c24e0231ed8627
      );
 
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
-index 175f26e6ea0f00e40ae2efdf0e810643518dce30..e19f82e8692ba208e4843d4c31d452dea3af6b43 100644
+index 12fff896a84b0fb69709c40d257758e2df81fde4..b2c3639bdeca6381b17305660aba160295786699 100644
 --- a/codex-rs/core/src/context_manager/history.rs
 +++ b/codex-rs/core/src/context_manager/history.rs
-@@ -630,6 +630,9 @@ impl ContextManager {
+@@ -628,6 +628,9 @@ impl ContextManager {
          )
          .await;
          Arc::unwrap_or_clone(self.items)
@@ -727,7 +727,7 @@ index 175f26e6ea0f00e40ae2efdf0e810643518dce30..e19f82e8692ba208e4843d4c31d452de
      }
 
      /// Iterates over raw response items without exposing their history envelopes.
-@@ -692,6 +695,7 @@ impl ContextManager {
+@@ -690,6 +693,7 @@ impl ContextManager {
          let items_tokens = self
              .items
              .iter()
@@ -736,7 +736,7 @@ index 175f26e6ea0f00e40ae2efdf0e810643518dce30..e19f82e8692ba208e4843d4c31d452de
              .fold(0i64, i64::saturating_add);
 
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index b5eda994c83122622043bef8f5fe7a0e7d62e3a7..2a581944097a31e109b83d97d4dc92e282361fa5 100644
+index 7e80afe42b72e84389703749cf09b1b385fc7c19..5f7951f93879cd068883cd28ab1b480dbfdf62d7 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
 @@ -60,6 +60,88 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;

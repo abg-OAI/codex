@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
-index 7438c609685c8e9f3198f67a5310ab8db133a7d5..c21fda88f74fe1df15672624996e14291390efc3 100644
+index 04297d52c2ad354ef57042bd0e1d3bc588afe6fb..72fa8c4ee09f50af3d5f701710c5505a6007436e 100644
 --- a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
-@@ -130,6 +130,12 @@ pub(super) enum ThreadShutdownResult {
+@@ -128,6 +128,12 @@ pub(super) enum ThreadShutdownResult {
      TimedOut,
  }
 
@@ -15,7 +15,7 @@ index 7438c609685c8e9f3198f67a5310ab8db133a7d5..c21fda88f74fe1df15672624996e1429
  pub(super) enum EnsureConversationListenerResult {
      Attached,
      ConnectionClosed,
-@@ -529,7 +535,7 @@ pub(super) async fn ensure_listener_task_running(
+@@ -732,7 +738,7 @@ async fn start_listener(
                          pending_thread_unloads.lock().await.remove(&conversation_id);
                          return;
                      }
@@ -24,21 +24,21 @@ index 7438c609685c8e9f3198f67a5310ab8db133a7d5..c21fda88f74fe1df15672624996e1429
                          thread_manager.clone(),
                          outgoing_for_task.clone(),
                          pending_thread_unloads.clone(),
-@@ -538,8 +544,11 @@ pub(super) async fn ensure_listener_task_running(
+@@ -741,8 +747,11 @@ async fn start_listener(
                          conversation_id,
                          conversation.clone(),
                      )
 -                    .await;
--                    break;
+-                    break false;
 +                    .await
 +                    {
-+                        break;
++                        break false;
 +                    }
 +                    unloading_state.note_thread_activity_observed();
                  }
              }
-         }
-@@ -565,7 +574,15 @@ pub(super) async fn wait_for_thread_shutdown(thread: &Arc<CodexThread>) -> Threa
+         };
+@@ -858,7 +867,15 @@ pub(super) async fn wait_for_thread_shutdown(thread: &Arc<CodexThread>) -> Threa
      }
  }
 
@@ -55,7 +55,7 @@ index 7438c609685c8e9f3198f67a5310ab8db133a7d5..c21fda88f74fe1df15672624996e1429
      thread_manager: Arc<ThreadManager>,
      outgoing: Arc<OutgoingMessageSender>,
      pending_thread_unloads: PendingThreadUnloads,
-@@ -573,7 +590,20 @@ pub(super) async fn unload_thread_without_subscribers(
+@@ -866,7 +883,20 @@ pub(super) async fn unload_thread_without_subscribers(
      thread_watch_manager: ThreadWatchManager,
      thread_id: ThreadId,
      thread: Arc<CodexThread>,
@@ -77,7 +77,7 @@ index 7438c609685c8e9f3198f67a5310ab8db133a7d5..c21fda88f74fe1df15672624996e1429
      info!("thread {thread_id} has no subscribers and is idle; shutting down");
 
      // Any pending app-server -> client requests for this thread can no longer be
-@@ -584,52 +614,41 @@ pub(super) async fn unload_thread_without_subscribers(
+@@ -877,52 +907,41 @@ pub(super) async fn unload_thread_without_subscribers(
      thread_state_manager.remove_thread_state(thread_id).await;
 
      tokio::spawn(async move {
@@ -1490,10 +1490,10 @@ index 66eb053fb12a5665201852fda3a4864b79b0cfe6..dd7618be8749021dc6c491b8636d2813
  fn reservation_drop_releases_slot() {
      let registry = Arc::new(AgentRegistry::default());
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 51fe323c057503bc391c60a5fe63b1a84fd21d2a..f0010bfc4714c83aefabd8c11f3ef0d6325cd4eb 100644
+index 13821599c4c5081454ff74c8ba867a9fe55a557d..f67660203bb25381e7084d396d0a74c73ca13855 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -371,6 +371,17 @@ impl CodexThread {
+@@ -349,6 +349,17 @@ impl CodexThread {
          self.io.shutdown_and_wait().await
      }
 
@@ -1511,7 +1511,7 @@ index 51fe323c057503bc391c60a5fe63b1a84fd21d2a..f0010bfc4714c83aefabd8c11f3ef0d6
      /// Wait until the underlying session loop has terminated.
      pub async fn wait_until_terminated(&self) {
          self.io.session_loop_termination.clone().await;
-@@ -473,7 +484,7 @@ impl CodexThread {
+@@ -451,7 +462,7 @@ impl CodexThread {
      /// deferred core task is not discarded before its durable state changes.
      #[doc(hidden)]
      pub async fn should_retain_while_idle(&self) -> bool {
@@ -1905,10 +1905,10 @@ index 923f9f56288ee4c48c5c646137bd095f73d891c0..ffbc2dbbaaf0f4817a4a3490a47d65b8
      async fn input_queue_uses_unambiguous_trigger_parent_and_first_root() {
          let (parent, peer, root, root2) = (Some("a"), Some("b"), Some("r"), Some("s"));
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index a24503a6dbf947863f998d6ded99f58c9f2d508c..c5df733ff7f6c1afff2985db1679ac01587d95e7 100644
+index 6c0a27d315281908e8d32f7a86c86103977dc43f..b4cb1d605bb95b1e4cb864608dd7748cc0648f83 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2638,6 +2638,10 @@ impl Session {
+@@ -2650,6 +2650,10 @@ impl Session {
          if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
              return;
          }
@@ -1919,7 +1919,7 @@ index a24503a6dbf947863f998d6ded99f58c9f2d508c..c5df733ff7f6c1afff2985db1679ac01
 
          self.services
              .agent_control
-@@ -2653,6 +2657,7 @@ impl Session {
+@@ -2665,6 +2669,7 @@ impl Session {
                          .cloned(),
                      status,
                      error_info,
@@ -1928,7 +1928,7 @@ index a24503a6dbf947863f998d6ded99f58c9f2d508c..c5df733ff7f6c1afff2985db1679ac01
                  &self.services.rollout_thread_trace,
              )
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 8e2d7b31c89eca370df2fdf7560c7607ce5d4139..5d742777bf68b1f74fcf22404dd065633c96940c 100644
+index a41f1471e4300986b7b5e0c7b80f82eba8407156..d7a2982d4dd87e6df73c4872c05c23b8c6a74a30 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -702,6 +702,20 @@ impl Session {
@@ -2152,7 +2152,7 @@ index f8481e813a85b1149c4337ffa2483dd95935b6cb..633418f6122f175f5181ae0ba21ff2af
              self.emit_thread_idle_lifecycle_if_idle(idle_cause).await;
          }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index b0f8095c861cfef4344f6aa1ceb5a8117e24e270..52ea7b3c25f842c982b690cefbef02dab875121a 100644
+index b56485d7419e07ec28a5fbb20bfc7b22e7ada62a..04e2d63b34de3252fc7a4f08fb934cb59a39dc1e 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
 @@ -153,9 +153,11 @@ fn capture_test_op(op: &Op) -> Option<Op> {
@@ -2168,10 +2168,10 @@ index b0f8095c861cfef4344f6aa1ceb5a8117e24e270..52ea7b3c25f842c982b690cefbef02da
          Op::Shutdown => Some(Op::Shutdown),
          _ => None,
 diff --git a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
-index 9582a977e096bdd07fd8874d79a3cbbd3edbdb6c..0869411add4f4798e9a72ef73520d2a863b59228 100644
+index d5a8dcc9eb088326e1acb7eb4883c825655cf9fa..b743623c25fe841de4db43616b33f0efa7041305 100644
 --- a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
 +++ b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
-@@ -2024,7 +2024,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
+@@ -2026,7 +2026,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
                                  if communication.author == worker_path
                                      && communication.recipient == AgentPath::root()
                                      && communication.other_recipients.is_empty()
@@ -2180,7 +2180,7 @@ index 9582a977e096bdd07fd8874d79a3cbbd3edbdb6c..0869411add4f4798e9a72ef73520d2a8
                              {
                                  Some(communication.content)
                              }
-@@ -2171,8 +2171,7 @@ async fn multi_agent_v2_interrupted_turn_does_not_notify_parent() {
+@@ -2173,8 +2173,7 @@ async fn multi_agent_v2_interrupted_turn_does_not_notify_parent() {
                      Op::InterAgentCommunication { communication, .. }
                          if communication.author.as_str() == "/root/worker"
                              && communication.recipient == AgentPath::root()
@@ -2636,7 +2636,7 @@ index 2dfa42279c18f10aa851718201905273cbb3b1bf..f0e07bed5108ed20358a34b8dc88ca48
          .await?;
      wait_for_event(&test.codex, |event| {
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index 1e3efd5da394b1ad0e2c05efcfbb72680167af83..da3bf0d41c7482ebfdca08db36883166e3ae78e8 100644
+index 8c419c536c5a55f1354b7929eae67dc79c674350..ad122c4d48f54d835a4c207a51cd535e27e5faf2 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
 @@ -800,6 +800,9 @@ pub enum Op {
