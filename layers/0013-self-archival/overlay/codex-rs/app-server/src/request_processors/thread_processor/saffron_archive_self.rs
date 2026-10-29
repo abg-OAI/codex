@@ -65,23 +65,25 @@ impl ThreadRequestProcessor {
             .thread_state(request.thread_id)
             .await;
         let drain = {
-            let mut state = thread_state.lock().await;
-            state
-                .listener_matches(&thread)
-                .then(|| state.register_shutdown_drain_waiter())
+            let state = thread_state.lock().await;
+            if state.listener_matches(&thread) {
+                state.shutdown_drain.clone()
+            } else {
+                None
+            }
         };
         if !thread
             .request_shutdown_after_turn(request.turn_id.clone())
             .await?
         {
-            thread_state.lock().await.take_shutdown_drain_waiter();
             return Ok(());
         }
         tokio::time::timeout(Duration::from_secs(10), thread.wait_until_terminated()).await?;
-        if let Some(drain) = drain {
+        if let Some(mut drain) = drain {
             // Core termination does not imply that the client listener has
             // delivered the final message and completion event ahead of shutdown.
-            tokio::time::timeout(Duration::from_secs(10), drain).await??;
+            tokio::time::timeout(Duration::from_secs(10), drain.wait_for(|drained| *drained))
+                .await??;
         }
         // Shutdown closes the live recorder. Remove only that stopped runtime
         // so native archival reads saved history instead of persisting it again.

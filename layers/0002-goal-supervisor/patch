@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index c8c772fd7c9cc679e9a86e066369998a06a15e4e..68b309edf177816df34e0e5dbbad916b6568299c 100644
+index 1d27abbfa412b8efcbf495a32ce040225c44a186..e6fdfa53a1f4865b143dcd9c10f196145075d3ac 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -3053,6 +3053,7 @@ dependencies = [
@@ -11,7 +11,7 @@ index c8c772fd7c9cc679e9a86e066369998a06a15e4e..68b309edf177816df34e0e5dbbad916b
   "test-case",
   "test-log",
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index ad859af12339337547b257a892eca3dcc85fe50f..b2e30feb2ef61f5ea055f96d29cb28193fbe40b6 100644
+index 733df70ed545b29b7e5ef3ef8a9bf37e474cad0d..6bf099d48a8ba44b1e3cc3d579547751bd824590 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -97,6 +97,7 @@ pub(crate) fn thread_extensions(
@@ -23,7 +23,7 @@ index ad859af12339337547b257a892eca3dcc85fe50f..b2e30feb2ef61f5ea055f96d29cb2819
      codex_git_attribution::install(
          &mut builder,
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 81d3de09ef519a81fd8b24f4af59a10cf69c576d..758d20ed24c384fbd558f3e5b0839cd1ee0b3639 100644
+index 417165a6352dbf2ad44a40d155f570f596a1c594..48cd8192aa8f10f755e5964df697d0126f494743 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -79,6 +79,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
@@ -87,10 +87,10 @@ index 81d3de09ef519a81fd8b24f4af59a10cf69c576d..758d20ed24c384fbd558f3e5b0839cd1
 
      pub(crate) async fn process_request(
 diff --git a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
-index fe7602cf2c55bce4ff0758563a16d24b05c362b7..7438c609685c8e9f3198f67a5310ab8db133a7d5 100644
+index a6d8250d60259befb9c233b0bfdb6bbffffc76e2..04297d52c2ad354ef57042bd0e1d3bc588afe6fb 100644
 --- a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
-@@ -407,6 +407,10 @@ pub(super) async fn ensure_listener_task_running(
+@@ -614,6 +614,10 @@ async fn start_listener(
                          unloading_state.note_thread_activity_observed();
                          continue;
                      }
@@ -101,8 +101,8 @@ index fe7602cf2c55bce4ff0758563a16d24b05c362b7..7438c609685c8e9f3198f67a5310ab8d
                      {
                          let mut pending_thread_unloads = pending_thread_unloads.lock().await;
                          if pending_thread_unloads.contains_key(&conversation_id) {
-@@ -549,6 +553,10 @@ pub(super) async fn ensure_listener_task_running(
-     Ok(())
+@@ -842,6 +846,10 @@ async fn start_listener(
+     ListenerStartOutcome::Started { attached }
  }
 
 +#[cfg(test)]
@@ -113,10 +113,10 @@ index fe7602cf2c55bce4ff0758563a16d24b05c362b7..7438c609685c8e9f3198f67a5310ab8d
      match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_and_wait()).await {
          Ok(Ok(())) => ThreadShutdownResult::Complete,
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 0e7c82e51cb8dd8f3913c07f540767f6fa0c7314..c506f5b2aa76b8ccc4801c7c5a08c9c3971582db 100644
+index 1ef252dcbf47f9346a7539c39a7ca9a3807a290f..7e3648b31811db24c21fd2ed506bd1ef4d4630f5 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -297,6 +297,15 @@ fn has_model_resume_override(
+@@ -310,6 +310,15 @@ fn has_model_resume_override(
              .is_some_and(|overrides| overrides.contains_key("model_reasoning_effort"))
  }
 
@@ -132,7 +132,7 @@ index 0e7c82e51cb8dd8f3913c07f540767f6fa0c7314..c506f5b2aa76b8ccc4801c7c5a08c9c3
  fn has_permission_override(
      request_overrides: Option<&HashMap<String, serde_json::Value>>,
      typesafe_overrides: &ConfigOverrides,
-@@ -6887,6 +6896,8 @@ fn build_thread_from_loaded_snapshot(
+@@ -6897,6 +6906,8 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -156,7 +156,7 @@ index 032f5e5a32e869991559119dadfc40ca32745d07..f501bf015217829d6baf845c2369de8f
  mod selected_capability_stack;
  mod selected_environment;
 diff --git a/codex-rs/core/BUILD.bazel b/codex-rs/core/BUILD.bazel
-index 54f8376a79d550d7198e6c1b248eb2357096a6ec..b60cb98c3483a786cb944f576b6353006a801a77 100644
+index 4c04c5d6b40f7f625e14ce5726b2e59b2e559603..72d0e3bef6b642df131c2e87c5d2f7cb0d2a637f 100644
 --- a/codex-rs/core/BUILD.bazel
 +++ b/codex-rs/core/BUILD.bazel
 @@ -2,7 +2,10 @@ load("//:defs.bzl", "codex_rust_crate")
@@ -991,10 +991,10 @@ index 2b3626fd51528b1eaeb29b32114cc3e52aa91c8d..583ddd0b7cb4b82f318ae365a2081637
 
  #[derive(Clone, Debug, PartialEq, Eq)]
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index c7e27be9891ed8f499eea330ebfc7a10548dc936..51fe323c057503bc391c60a5fe63b1a84fd21d2a 100644
+index 968d331a5e303cccef4d6c340a571ffc33f8bff7..13821599c4c5081454ff74c8ba867a9fe55a557d 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -450,6 +450,38 @@ impl CodexThread {
+@@ -428,6 +428,38 @@ impl CodexThread {
              .await
      }
 
@@ -1033,7 +1033,7 @@ index c7e27be9891ed8f499eea330ebfc7a10548dc936..51fe323c057503bc391c60a5fe63b1a8
      #[doc(hidden)]
      pub async fn ensure_rollout_materialized(&self) {
          self.session
-@@ -1387,6 +1419,10 @@ impl CodexThread {
+@@ -1370,6 +1402,10 @@ impl CodexThread {
          let multi_agent_version = self
              .multi_agent_version()
              .unwrap_or_else(|| config.multi_agent_version_from_features());
@@ -1046,7 +1046,7 @@ index c7e27be9891ed8f499eea330ebfc7a10548dc936..51fe323c057503bc391c60a5fe63b1a8
      }
  }
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 456c93b792f063f57d1adf020cd4ee5a12ccaa0f..206865c521de3b67c27b1edb1e5ff95c3c383b2c 100644
+index eee378b0cd7537ebb59ee305fd2ad15a77b8de5a..485d0d864dd5c08483035ef155743bcce65eda5a 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -141,6 +141,14 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
@@ -1123,10 +1123,10 @@ index 128bc7d5bf772695ae43632f9c806f6f0f799c79..582d9017cbb6258facaa79efa85cf5f7
          || sess.features.enabled(Feature::WakeOnAgentMessages)
          || sess.has_outstanding_durable_sleep()
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index bc2f4c24f577c80924803308733b11c2cfcbba48..a24503a6dbf947863f998d6ded99f58c9f2d508c 100644
+index cc418ca5ed5bcc695784212f3682e94d74c0e5e3..6c0a27d315281908e8d32f7a86c86103977dc43f 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2474,6 +2474,7 @@ impl Session {
+@@ -2486,6 +2486,7 @@ impl Session {
 
      /// Record a terminal CodexErr before the app-server completion notification is reduced.
      pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {
@@ -1134,7 +1134,7 @@ index bc2f4c24f577c80924803308733b11c2cfcbba48..a24503a6dbf947863f998d6ded99f58c
          self.services
              .analytics_events_client
              .track_turn_codex_error(TurnCodexErrorFact::from_codex_err(
-@@ -2634,6 +2635,9 @@ impl Session {
+@@ -2646,6 +2647,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }

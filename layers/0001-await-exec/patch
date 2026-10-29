@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 7f3363ada375717c2538a85836ef9b9d5a34bad5..456c93b792f063f57d1adf020cd4ee5a12ccaa0f 100644
+index 61400a1386f8b3fc8879df611ab10c151b4b1357..eee378b0cd7537ebb59ee305fd2ad15a77b8de5a 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -140,6 +140,7 @@ mod skills;
@@ -91,7 +91,7 @@ index f9afaaa41d5349e519ca45585bcd05954655dd4d..75c70778c547fc08ee4318f31465b3fb
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index c8b319c998ffce057c0492df5daea5116757d370..d0d8ed8cf6e9b89d5e9527e56ec4f63b0f2a26b9 100644
+index 2a2eb2afe0e94c26871e51a1e0f2c1882c0b15e4..3b785c9dba7c33237fe2800e98b3e36634aceb6f 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
 @@ -108,6 +108,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
