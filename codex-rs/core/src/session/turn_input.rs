@@ -442,6 +442,12 @@ async fn start_or_steer(
                 .maybe_emit_model_warnings_for_turn(turn_context.as_ref())
                 .await;
             let mut task_input = merge_additional_context_input(session, additional_context).await;
+            task_input.extend(
+                session
+                    .input_queue
+                    .drain_queue_only_mailbox_input_items()
+                    .await,
+            );
             if has_explicit_input {
                 task_input.push(
                     pending_turn_input(
@@ -593,6 +599,12 @@ async fn start_if_idle(
 
     let mut task_input = merge_additional_context_input(session, additional_context).await;
     let sender_messages = capture_sender_user_messages(session, &mut input).await;
+    task_input.extend(
+        session
+            .input_queue
+            .drain_queue_only_mailbox_input_items()
+            .await,
+    );
     match kind {
         TurnStartKind::User => {
             session.clear_connector_selection().await;
