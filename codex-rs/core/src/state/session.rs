@@ -90,6 +90,8 @@ pub(crate) struct SessionState {
     /// Latest task admitted in this runtime, retained across completion and history edits.
     /// Cleared by standalone settings changes to invalidate pending continuation.
     pub(crate) last_started_turn_id: Option<String>,
+    /// Successful terminal persistence in this runtime; invalidated by a new task.
+    pub(crate) last_completed_turn_id: Option<String>,
     /// Latest regular turn, retained across completion, settings changes, and compaction.
     pub(crate) turn_attribution: Option<TurnAttribution>,
     /// Runtime accounting state for the active auto-compaction window.
@@ -139,6 +141,7 @@ impl SessionState {
             additional_context: AdditionalContextStore::default(),
             previous_turn_settings: None,
             last_started_turn_id: None,
+            last_completed_turn_id: None,
             turn_attribution: None,
             auto_compact_window: AutoCompactWindow::new_with_ids(auto_compact_window_ids),
             async_compaction: crate::session::async_compaction::AsyncCompactionState::default(),
