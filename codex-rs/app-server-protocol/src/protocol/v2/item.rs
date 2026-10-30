@@ -966,12 +966,7 @@ impl From<CoreTurnItem> for ThreadItemPayload {
                     questions: agent.questions,
                 }
             }
-            CoreTurnItem::FunctionCallOutput(output) => Self::FunctionCallOutput {
-                id: output.id,
-                name: output.name,
-                namespace: output.namespace,
-                output: output.output,
-            },
+            CoreTurnItem::FunctionCallOutput(output) => crate::saffron::thread_message(output),
             CoreTurnItem::Plan(plan) => Self::Plan {
                 id: plan.id,
                 text: plan.text,
