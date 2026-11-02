@@ -545,6 +545,7 @@ enabled = false
                             crate::thread_sample::SampleResponseRegistry::default(),
                         ),
                         cloud_skill_provider: None,
+                        thread_message_host: None,
                         event_sink: Arc::new(NoopExtensionEventSink),
                         auth_manager: auth_manager.clone(),
                         state_db: Some(state_db.clone()),
