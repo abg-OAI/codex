@@ -409,6 +409,7 @@ mod tests {
             call_id: "placement-test".to_string(),
             tool_name: ToolName::namespaced("saffron", "fork_thread"),
             source: ToolCallSource::Direct,
+            native_call: None,
             environments: Default::default(),
             payload: ToolPayload::Function {
                 arguments: "{}".to_string(),
@@ -712,6 +713,7 @@ mod tests {
                 call_id: "explicit-section-test".to_string(),
                 tool_name: ToolName::namespaced("saffron", "fork_thread"),
                 source: ToolCallSource::Direct,
+                native_call: None,
                 environments: Default::default(),
                 payload: ToolPayload::Function {
                     arguments: "{}".to_string(),
@@ -781,6 +783,7 @@ mod tests {
             call_id: "timeout-test".to_string(),
             tool_name: ToolName::namespaced("saffron", "fork_thread"),
             source: ToolCallSource::Direct,
+            native_call: None,
             environments: Default::default(),
             payload: ToolPayload::Function {
                 arguments: "{}".to_string(),
@@ -830,6 +833,7 @@ mod tests {
             call_id: "opt-out-test".to_string(),
             tool_name: ToolName::namespaced("saffron", "fork_thread"),
             source: ToolCallSource::Direct,
+            native_call: None,
             environments: Default::default(),
             payload: ToolPayload::Function {
                 arguments: "{}".to_string(),
@@ -863,6 +867,7 @@ mod tests {
             call_id: "ended-turn-test".to_string(),
             tool_name: ToolName::namespaced("saffron", "fork_thread"),
             source: ToolCallSource::Direct,
+            native_call: None,
             environments: Default::default(),
             payload: ToolPayload::Function {
                 arguments: "{}".to_string(),
