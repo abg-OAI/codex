@@ -176,7 +176,7 @@ index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62
  fn rewritten_output_preserves_harness_metadata() {
      let envelope = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index 85a3e6c91d34e074fcc05688afc8662a2fdd8510..73724193e34c9a43e296d575cb1625c1a79fdf3f 100644
+index f84dc6e1bbc120840a1f56c584b66fe190e4672b..5459bf3018b9f1759c19ef6b2e1b73a3d3764aa0 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
 @@ -477,12 +477,14 @@ async fn collect_compaction_output(
@@ -487,10 +487,10 @@ index 85a3e6c91d34e074fcc05688afc8662a2fdd8510..73724193e34c9a43e296d575cb1625c1
      fn retained_history_truncation_preserves_metadata() {
          let item = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs b/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs
-index a4db94d5e12296d4d4cf8347e042a60311eeeccd..e7a5022290e3d69bf54ff0b2cb5e02213dbcc4c9 100644
+index cec85187adc06404093fd9802566f3a848981088..9758a63fd4650d9339bc26439a66cbcee0c4c9fb 100644
 --- a/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs
 +++ b/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs
-@@ -47,6 +47,7 @@ fn trim(items: Vec<ResponseItem>, max_tokens: usize) -> Vec<ResponseItem> {
+@@ -48,6 +48,7 @@ fn trim(items: Vec<ResponseItem>, max_tokens: usize) -> Vec<ResponseItem> {
          items.into_iter().map(ResponseItemEnvelope::new).collect(),
          max_tokens,
          RetainedImageBudget::Enabled,
@@ -498,7 +498,7 @@ index a4db94d5e12296d4d4cf8347e042a60311eeeccd..e7a5022290e3d69bf54ff0b2cb5e0221
      )
      .into_iter()
      .map(ResponseItemEnvelope::into_item)
-@@ -146,6 +147,7 @@ fn image_treatment_preserves_text_only_boundary_behavior() {
+@@ -151,6 +152,7 @@ fn image_treatment_preserves_text_only_boundary_behavior() {
                  vec![source.clone()],
                  max_tokens,
                  RetainedImageBudget::Enabled,
@@ -506,7 +506,7 @@ index a4db94d5e12296d4d4cf8347e042a60311eeeccd..e7a5022290e3d69bf54ff0b2cb5e0221
              ),
              truncate_retained_messages_for_remote_compaction(vec![source.clone()], max_tokens),
          );
-@@ -171,7 +173,8 @@ fn image_treatment_preserves_client_developer_boundary_behavior() {
+@@ -176,7 +178,8 @@ fn image_treatment_preserves_client_developer_boundary_behavior() {
              truncate_retained_messages(
                  vec![source.clone()],
                  max_tokens,
@@ -532,10 +532,10 @@ index a13b18ba448680976c0ce047aeb296e5c2c9d1ee..0646d7f00543840431cbe645725686c7
      let reviewer_compaction_hash = reviewer_compaction_hash(sess, turn_context).await;
      let installed = if let Some((prefix, model_info, cutoff_world_state)) = prefix {
 diff --git a/codex-rs/core/src/compact_tests.rs b/codex-rs/core/src/compact_tests.rs
-index 790f0d7362bc9f4bcc47a1af1b2179768e00e5bf..7b2e66c2e0ba537e88c24e0231ed8627640c8c54 100644
+index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f403277cb2cba 100644
 --- a/codex-rs/core/src/compact_tests.rs
 +++ b/codex-rs/core/src/compact_tests.rs
-@@ -242,6 +242,114 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
+@@ -243,6 +243,114 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
      items.into_iter().map(ResponseItemEnvelope::new).collect()
  }
 
@@ -650,7 +650,7 @@ index 790f0d7362bc9f4bcc47a1af1b2179768e00e5bf..7b2e66c2e0ba537e88c24e0231ed8627
  fn raw(items: Vec<ResponseItemEnvelope>) -> Vec<ResponseItem> {
      items
          .into_iter()
-@@ -263,12 +371,12 @@ fn user_message(text: &str) -> ResponseItem {
+@@ -264,12 +372,12 @@ fn user_message(text: &str) -> ResponseItem {
      }
  }
 
@@ -666,7 +666,7 @@ index 790f0d7362bc9f4bcc47a1af1b2179768e00e5bf..7b2e66c2e0ba537e88c24e0231ed8627
  }
 
  #[tokio::test]
-@@ -428,7 +536,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+@@ -429,7 +537,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
          ResponseItemEnvelope::new(ResponseItem::Other),
      ];
 
@@ -675,7 +675,7 @@ index 790f0d7362bc9f4bcc47a1af1b2179768e00e5bf..7b2e66c2e0ba537e88c24e0231ed8627
 
      if !preserve_content {
          item = user_message(expected_text);
-@@ -450,11 +558,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+@@ -451,11 +559,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
      };
      assert_eq!(
          collected,
@@ -689,7 +689,7 @@ index 790f0d7362bc9f4bcc47a1af1b2179768e00e5bf..7b2e66c2e0ba537e88c24e0231ed8627
      );
      assert_eq!(
          build_compacted_history(Vec::new(), &collected, "summary"),
-@@ -576,7 +684,10 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages(
+@@ -577,7 +685,10 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages(
      original.metadata = Some(CodexHarnessMetadata::default());
      let history = super::build_compacted_history_with_limit(
          Vec::new(),
@@ -701,7 +701,7 @@ index 790f0d7362bc9f4bcc47a1af1b2179768e00e5bf..7b2e66c2e0ba537e88c24e0231ed8627
          "SUMMARY",
          max_tokens,
      );
-@@ -705,7 +816,10 @@ fn build_compacted_history_preserves_user_message_passthrough_metadata(attribute
+@@ -706,7 +817,10 @@ fn build_compacted_history_preserves_user_message_passthrough_metadata(attribute
      };
      let history = build_compacted_history(
          Vec::new(),
@@ -714,10 +714,10 @@ index 790f0d7362bc9f4bcc47a1af1b2179768e00e5bf..7b2e66c2e0ba537e88c24e0231ed8627
      );
 
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
-index 12fff896a84b0fb69709c40d257758e2df81fde4..b2c3639bdeca6381b17305660aba160295786699 100644
+index 621d3b7ee125210bcdff13e4efc809a9198cc6e3..dae686dfc3b0fdb929b3aeba974cbf541accdbf4 100644
 --- a/codex-rs/core/src/context_manager/history.rs
 +++ b/codex-rs/core/src/context_manager/history.rs
-@@ -628,6 +628,9 @@ impl ContextManager {
+@@ -655,6 +655,9 @@ impl ContextManager {
          )
          .await;
          Arc::unwrap_or_clone(self.items)
@@ -727,7 +727,7 @@ index 12fff896a84b0fb69709c40d257758e2df81fde4..b2c3639bdeca6381b17305660aba1602
      }
 
      /// Iterates over raw response items without exposing their history envelopes.
-@@ -690,6 +693,7 @@ impl ContextManager {
+@@ -717,6 +720,7 @@ impl ContextManager {
          let items_tokens = self
              .items
              .iter()
@@ -736,10 +736,10 @@ index 12fff896a84b0fb69709c40d257758e2df81fde4..b2c3639bdeca6381b17305660aba1602
              .fold(0i64, i64::saturating_add);
 
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index 7e80afe42b72e84389703749cf09b1b385fc7c19..5f7951f93879cd068883cd28ab1b480dbfdf62d7 100644
+index 42895a8db2061710f35d42bdd06c339afad56aa9..4835a154e65747f45c57b73a92b627c4dc117739 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
-@@ -60,6 +60,88 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
+@@ -61,6 +61,88 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
  const EXEC_FORMAT_MAX_TOKENS: usize = 2_500;
  const TEST_WAV_SAMPLE_RATE: u32 = 8_000;
 
