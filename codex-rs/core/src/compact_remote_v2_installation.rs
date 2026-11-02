@@ -199,6 +199,10 @@ async fn build_and_install_compaction(
         } else {
             RetainedImageBudget::Disabled
         },
+        &turn_context
+            .session_source
+            .get_agent_path()
+            .unwrap_or_else(codex_protocol::AgentPath::root),
     );
     let reviewer_compaction_hash = reviewer_compaction_hash(sess, turn_context).await;
     let installed = if let Some((prefix, model_info, cutoff_world_state)) = prefix {
