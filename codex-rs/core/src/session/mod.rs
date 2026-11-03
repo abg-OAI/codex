@@ -246,6 +246,7 @@ use codex_protocol::exec_output::StreamOutput;
 
 pub(crate) mod async_compaction;
 mod code_mode_warning;
+mod completion_shutdown;
 mod config_refresh;
 pub(crate) mod context_window;
 mod daemon_recovery;

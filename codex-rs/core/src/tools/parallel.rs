@@ -300,6 +300,7 @@ impl ToolCallRuntime {
                 }
                 .or_cancel_tool(&invocation_cancellation_token)
                 .await?;
+                crate::saffron::archive_self::terminal::admit_tool(&turn)?;
                 // Publish the completed path before releasing the admission lock,
                 // including when cancellation drops the handler future.
                 let _admitted_timing = work_timing.map(|(gate, work)| {
