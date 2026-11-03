@@ -564,7 +564,7 @@ index 733c91d875db9fd3c0088fed036d35a07c4a1881..073e7fa4306bcce3eb330e9dd39e365c
                      context,
                      start_options,
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 0aec92c984f090d47f5c77f83dfbbe0acc5f7f1e..7895f7401ab249c049a62ea873e928fe5dbaebb0 100644
+index 0aec92c984f090d47f5c77f83dfbbe0acc5f7f1e..453af4cabe8a949c6407f5f848bc451c1ac82680 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
 @@ -31,7 +31,13 @@ use crate::context::world_state::IncrementalToolsHint;
@@ -621,7 +621,7 @@ index 0aec92c984f090d47f5c77f83dfbbe0acc5f7f1e..7895f7401ab249c049a62ea873e928fe
 +        _cancellation_token: CancellationToken,
 +    ) -> SessionTaskResult {
 +        self.finish.notified().await;
-+        Ok(Some("done".to_string()))
++        crate::tasks::completed_task_result("done".to_string())
 +    }
 +}
 +
@@ -2040,10 +2040,25 @@ index fc27d02f83f3cc18de7c281bb39ee25f5c6b861a..f0fd9e38abfacdc59b1dff94167afa2f
          CodexErr::Fatal("initial input missing from the task awaiting host admission".into())
      })
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index c27299906a530d8703eb509dbaede8c1b06b78ad..4b72c3dcc30a26d87560151403fe9ee11e9bf858 100644
+index c27299906a530d8703eb509dbaede8c1b06b78ad..0c41f47bf12c06ca9064d7885f467087fe20b9b8 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -85,6 +85,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
+@@ -78,6 +78,14 @@ static ACTIVE_TURNS: Gauge = Gauge::new("core.turns.active");
+
+ pub(crate) type SessionTaskResult = CodexResult<Option<regular::RegularTaskOutput>>;
+
++#[cfg(test)]
++pub(crate) fn completed_task_result(last_agent_message: String) -> SessionTaskResult {
++    Ok(Some(regular::RegularTaskOutput {
++        last_agent_message: Some(last_agent_message),
++        mcp_startup_requirements: McpStartupRequirements::default(),
++    }))
++}
++
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub(crate) enum InterruptedTurnHistoryMarker {
+     Disabled,
+@@ -85,6 +93,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
      Developer,
  }
 
@@ -2056,7 +2071,7 @@ index c27299906a530d8703eb509dbaede8c1b06b78ad..4b72c3dcc30a26d87560151403fe9ee1
  impl InterruptedTurnHistoryMarker {
      pub(crate) fn from_config_and_version(
          config: &Config,
-@@ -333,7 +339,6 @@ impl Session {
+@@ -333,7 +347,6 @@ impl Session {
          let cancellation_token = CancellationToken::new();
          let done = Arc::new(Notify::new());
 
@@ -2064,7 +2079,7 @@ index c27299906a530d8703eb509dbaede8c1b06b78ad..4b72c3dcc30a26d87560151403fe9ee1
          let turn_state = {
              let mut active = self.active_turn.lock().await;
              let turn = active.get_or_insert_with(ActiveTurn::default);
-@@ -341,6 +346,10 @@ impl Session {
+@@ -341,6 +354,10 @@ impl Session {
              turn.finishing = None;
              Arc::clone(&turn.turn_state)
          };
@@ -2075,7 +2090,7 @@ index c27299906a530d8703eb509dbaede8c1b06b78ad..4b72c3dcc30a26d87560151403fe9ee1
          turn_state.lock().await.token_usage_at_turn_start = token_usage_at_turn_start.clone();
          self.input_queue
              .extend_pending_input_for_turn_state(turn_state.as_ref(), pending_items)
-@@ -374,6 +383,12 @@ impl Session {
+@@ -374,6 +391,12 @@ impl Session {
                  None,
              ),
          };
@@ -2088,7 +2103,7 @@ index c27299906a530d8703eb509dbaede8c1b06b78ad..4b72c3dcc30a26d87560151403fe9ee1
          let done_clone = Arc::clone(&done);
          let session = Arc::clone(self);
          let ctx = Arc::clone(&turn_context);
-@@ -474,7 +489,8 @@ impl Session {
+@@ -474,7 +497,8 @@ impl Session {
              task,
              cancellation_token,
              turn_context: Arc::clone(&turn_context),
@@ -2098,7 +2113,7 @@ index c27299906a530d8703eb509dbaede8c1b06b78ad..4b72c3dcc30a26d87560151403fe9ee1
              pending_admission_input,
              _diagnostics_guard: ACTIVE_TURNS.track(),
              _timer: timer,
-@@ -623,6 +639,24 @@ impl Session {
+@@ -623,6 +647,24 @@ impl Session {
      }
 
      pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
@@ -2123,7 +2138,7 @@ index c27299906a530d8703eb509dbaede8c1b06b78ad..4b72c3dcc30a26d87560151403fe9ee1
          let mut aborted_turn = false;
          let mut active_turn_to_clear = None;
          if let Some(mut active_turn) = self.take_active_turn(&reason).await {
-@@ -647,8 +681,16 @@ impl Session {
+@@ -647,8 +689,16 @@ impl Session {
              // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
              self.input_queue.clear_pending(&active_turn).await;
          }
@@ -2142,7 +2157,7 @@ index c27299906a530d8703eb509dbaede8c1b06b78ad..4b72c3dcc30a26d87560151403fe9ee1
          }
      }
 
-@@ -728,7 +770,13 @@ impl Session {
+@@ -728,7 +778,13 @@ impl Session {
              regular_output.is_some() && turn_context.terminal_error.lock().await.is_none();
          let finishing = CancellationToken::new();
          let finish_recording = finishing.clone().drop_guard();
@@ -2157,7 +2172,7 @@ index c27299906a530d8703eb509dbaede8c1b06b78ad..4b72c3dcc30a26d87560151403fe9ee1
              let mut active = self.active_turn.lock().await;
              let active_turn = active.as_mut()?;
              if !Arc::ptr_eq(&active_turn.task.as_ref()?.turn_context, &turn_context) {
-@@ -742,11 +790,13 @@ impl Session {
+@@ -742,11 +798,13 @@ impl Session {
                      return regular_output.map(|output| output.mcp_startup_requirements);
                  }
              }
@@ -2172,7 +2187,7 @@ index c27299906a530d8703eb509dbaede8c1b06b78ad..4b72c3dcc30a26d87560151403fe9ee1
                  task.pending_admission_input.is_some().then_some(task.task),
                  task.pending_admission_input.unwrap_or_default(),
              )
-@@ -985,6 +1035,8 @@ impl Session {
+@@ -985,6 +1043,8 @@ impl Session {
              // The parent can request another review as soon as it receives this event.
              self.send_event(turn_context.as_ref(), event).await;
          }
