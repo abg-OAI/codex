@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::CodexAppsToolsCache;
+use crate::ThreadStoreBuilder;
 use crate::build_models_manager;
 use crate::init_state_db;
 use crate::session::step_context::StepContext;
@@ -11,7 +12,6 @@ use crate::tasks::SessionTask;
 use crate::tasks::SessionTaskResult;
 use crate::thread_manager::NewThread;
 use crate::thread_manager::StartThreadOptions;
-use crate::thread_manager::thread_store_from_config;
 use crate::tools::context::ToolCallSource;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_login::AuthManager;
@@ -355,7 +355,7 @@ impl TestHost {
                 Arc::new(crate::test_support::EmptyUserInstructionsProvider),
                 None,
                 crate::passthrough_image_store(),
-                thread_store_from_config(&config, Some(state)),
+                ThreadStoreBuilder::from_config(&config, Some(state)).build(),
                 None,
                 "message-test".to_string(),
                 None,

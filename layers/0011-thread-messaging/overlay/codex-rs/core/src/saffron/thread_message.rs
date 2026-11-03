@@ -257,6 +257,9 @@ impl Handler {
                 .await
                 .map_err(invalid)?;
             match submitted {
+                TurnInputSubmission::Accepted => {
+                    unreachable!("response item input returns a turn outcome")
+                }
                 TurnInputSubmission::Started { turn_id, .. } => (Delivery::Started, turn_id),
                 TurnInputSubmission::Steered { turn_id, .. } => (Delivery::Steered, turn_id),
                 TurnInputSubmission::NotSubmitted { reason } => {

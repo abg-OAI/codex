@@ -120,6 +120,9 @@ impl ThreadRequestProcessor {
 /// Converts native admission without turning a rejection into a receipt.
 fn accepted(submission: TurnInputSubmission) -> Result<SaffronMessageSubmission, String> {
     let (turn_id, status) = match submission {
+        TurnInputSubmission::Accepted => {
+            unreachable!("response item input returns a turn outcome")
+        }
         TurnInputSubmission::Started { turn_id, .. } => (turn_id, SaffronMessageDelivery::Started),
         TurnInputSubmission::Steered { turn_id, .. } => (turn_id, SaffronMessageDelivery::Steered),
         TurnInputSubmission::NotSubmitted { reason } => {

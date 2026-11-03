@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 51573406cbac98747a83e8b6fa7594b2b6c59063..d0d9e105d9ead7bc98e385279f0233b24b088ab0 100644
+index 884f61fefbbe03e180e4b2f099fcafdb435b0c9b..89d9ecb7697a1d8217bdad6c75030ad04a412216 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -143,6 +143,7 @@ mod skills;
@@ -28,7 +28,7 @@ index ec7a7d24aa87a8b28d9380f2aa8338b541c18057..aadd9c59752cbec9014448ff255615f2
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 80ffe7b138915910d3953bf2ffdc9c3dd0db8826..b5d92509255d090e1ae519d4d683813349862e93 100644
+index eb8d9a628ae66f2f4c0cc851db1fa04a7abb60eb..f606dcbabed675c54556f01411238dcd232aec10 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::CodexAppsToolsCache;
+use crate::ThreadStoreBuilder;
 use crate::build_models_manager;
 use crate::init_state_db;
 use crate::session::step_context::StepContext;
@@ -9,7 +10,6 @@ use crate::session::tests::make_session_and_context;
 use crate::session::tests::update_selected_settings_for_test;
 use crate::session::tests::update_turn_settings_for_test;
 use crate::thread_manager::NewThread;
-use crate::thread_manager::thread_store_from_config;
 use crate::tools::context::ToolCallSource;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_extension_api::TurnStartAdmission;
@@ -188,7 +188,7 @@ fn fork_runs_from_completed_history_without_a_goal(
             Arc::new(crate::test_support::EmptyUserInstructionsProvider),
             None,
             crate::passthrough_image_store(),
-            thread_store_from_config(&config, Some(Arc::clone(&state))),
+            ThreadStoreBuilder::from_config(&config, Some(Arc::clone(&state))).build(),
             None,
             "fork-test".to_string(),
             None,
@@ -437,7 +437,7 @@ fn rejected_start_returns_the_created_thread() -> anyhow::Result<()> {
             Arc::new(crate::test_support::EmptyUserInstructionsProvider),
             None,
             crate::passthrough_image_store(),
-            thread_store_from_config(&config, None),
+            ThreadStoreBuilder::from_config(&config, None).build(),
             None,
             "fork-rejected-test".to_string(),
             None,
