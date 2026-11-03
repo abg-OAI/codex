@@ -11,10 +11,26 @@ index 35a41b68cd308976d051d74d56faf25614bdec02..432db1606badf29f8350f80a85aec397
          .await;
      assert!(matches!(
 diff --git a/codex-rs/core/src/environment_connection_tests.rs b/codex-rs/core/src/environment_connection_tests.rs
-index a4094268fec031a9000882ffb4270d0b853fd53c..236656d7d9df477d7cb0384cd554dcdfa16869ae 100644
+index a4094268fec031a9000882ffb4270d0b853fd53c..5230070c791ef45f4458f896a2ca0ccfd996bb9a 100644
 --- a/codex-rs/core/src/environment_connection_tests.rs
 +++ b/codex-rs/core/src/environment_connection_tests.rs
-@@ -140,12 +140,12 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
+@@ -122,6 +122,15 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
+             Recovery::TimesOut => Err(-32010),
+         };
+         initialize(&mut socket, Some("session"), result).await;
++        if recovery == Recovery::TimesOut {
++            // Let the client process the rejection and enter backoff before the
++            // test advances time past the attach deadline.
++            while let Some(Ok(message)) = socket.next().await {
++                if matches!(message, Message::Close(_)) {
++                    break;
++                }
++            }
++        }
+         let _ = response_sent.send(());
+         finished.await.unwrap();
+     }));
+@@ -140,12 +149,12 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
              EnvironmentConnectionState::Recovering
          );
          assert!(received.try_recv().is_err());
@@ -29,7 +45,7 @@ index a4094268fec031a9000882ffb4270d0b853fd53c..236656d7d9df477d7cb0384cd554dcdf
      );
      raw.wait_for(|state| *state == EnvironmentConnectionState::Recovering)
          .await
-@@ -159,7 +159,7 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
+@@ -159,7 +168,7 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
      if recovery == Recovery::TimesOut {
          response_rx.await.unwrap();
          assert!(received.try_recv().is_err());
