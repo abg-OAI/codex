@@ -37,6 +37,7 @@ fn live_and_replayed_message_keep_identity_and_commentary() {
         thread_id: receiver,
         turn_id: "receiving-turn".into(),
         item: TurnItem::FunctionCallOutput(output.clone()),
+        content_token_count: None,
         started_at_ms: Some(1000),
         completed_at_ms: 1001,
     });
@@ -118,6 +119,7 @@ fn paginated_history_stores_the_presented_message() {
             thread_id: ThreadId::new(),
             turn_id: "receiving-turn".into(),
             item: TurnItem::FunctionCallOutput(output),
+            content_token_count: None,
             started_at_ms: Some(1000),
             completed_at_ms: 1001,
         })),

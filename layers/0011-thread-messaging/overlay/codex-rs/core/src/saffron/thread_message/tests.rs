@@ -3,7 +3,7 @@
 use super::*;
 use crate::CodexAppsToolsCache;
 use crate::ThreadStoreBuilder;
-use crate::build_models_manager;
+use crate::build_startup_models;
 use crate::init_state_db;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
@@ -16,6 +16,7 @@ use crate::tools::context::ToolCallSource;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
+use codex_models_manager::manager::ModelCatalogSettings;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -346,8 +347,12 @@ impl TestHost {
             install(&mut builder, manager.clone(), None);
             ThreadManager::new(
                 &config,
-                Arc::clone(&auth),
-                build_models_manager(&config, Arc::clone(&auth)),
+                build_startup_models(
+                    &config,
+                    Arc::clone(&auth),
+                    "message-test".to_string(),
+                    Arc::new(ModelCatalogSettings::disk(config.codex_home.to_path_buf())),
+                ),
                 CodexAppsToolsCache::default(),
                 SessionSource::Exec,
                 Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -357,7 +362,6 @@ impl TestHost {
                 crate::passthrough_image_store(),
                 ThreadStoreBuilder::from_config(&config, Some(state)).build(),
                 None,
-                "message-test".to_string(),
                 None,
                 None,
             )
