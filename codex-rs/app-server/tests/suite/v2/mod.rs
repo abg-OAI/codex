@@ -23,6 +23,7 @@ mod bedrock_service_tier;
 mod bedrock_setup;
 mod client_metadata;
 mod code_mode_host;
+mod saffron_thread_message;
 mod collaboration_mode_list;
 #[cfg(unix)]
 mod command_exec;
