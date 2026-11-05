@@ -232,6 +232,18 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.materialize.outputs.release_tag }}
 
+      - name: Free Linux runner disk space
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          df -h .
+          sudo rm -rf -- \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/share/dotnet
+          df -h .
+
       - name: Install Linux build dependencies
         if: ${{ runner.os == 'Linux' }}
         shell: bash
@@ -293,6 +305,11 @@ jobs:
             cargo build --target ${{ matrix.target }} --release --timings \
               --bin codex --bin codex-code-mode-host
           fi
+
+      - name: Report Linux build disk usage
+        if: ${{ always() && runner.os == 'Linux' }}
+        shell: bash
+        run: df -h .
 
       - name: Upload Cargo timings
         if: always()
