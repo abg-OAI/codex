@@ -61,6 +61,7 @@ fn trim(items: Vec<ResponseItem>, max_tokens: usize) -> Vec<ResponseItem> {
         max_tokens,
         RetainedImageBudget::Enabled,
         &FileAudioDurations::default(),
+        None,
     )
     .into_iter()
     .map(ResponseItemEnvelope::into_item)
@@ -169,6 +170,7 @@ fn file_audio_is_charged_and_atomic_in_both_image_budget_modes() {
                 budget,
                 image_budget,
                 &FileAudioDurations::default(),
+                None,
             )
             .into_iter()
             .map(ResponseItemEnvelope::into_item)
@@ -215,6 +217,7 @@ fn file_audio_cutoff_does_not_backfill_older_uncharged_media() {
             max_tokens,
             image_budget,
             &FileAudioDurations::default(),
+            None,
         )
         .into_iter()
         .map(ResponseItemEnvelope::into_item)
@@ -269,6 +272,7 @@ fn older_media_keeps_both_labels_or_is_dropped_after_file_audio_fits() {
                     budget,
                     image_budget,
                     &FileAudioDurations::default(),
+                    None,
                 );
                 let [
                     ResponseItemEnvelope {
@@ -365,7 +369,8 @@ fn image_treatment_preserves_text_only_boundary_behavior() {
                 vec![source.clone()],
                 max_tokens,
                 RetainedImageBudget::Enabled,
-                &FileAudioDurations::default()
+                &FileAudioDurations::default(),
+                None,
             ),
             truncate_retained_messages_for_remote_compaction(
                 vec![source.clone()],
@@ -396,7 +401,8 @@ fn image_treatment_preserves_client_developer_boundary_behavior() {
                 vec![source.clone()],
                 max_tokens,
                 RetainedImageBudget::Enabled,
-                &FileAudioDurations::default()
+                &FileAudioDurations::default(),
+                None,
             ),
             truncate_retained_messages_for_remote_compaction(
                 vec![source.clone()],
