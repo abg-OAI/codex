@@ -1,8 +1,8 @@
-diff --git a/codex-rs/app-server/src/agent_message_board.rs b/codex-rs/app-server/src/agent_message_board.rs
-index 3399a5adb1e395bdc8d7f48967e88aadf1688ee7..57ae186c296c7b8a38cf8733f0796994a316beea 100644
---- a/codex-rs/app-server/src/agent_message_board.rs
-+++ b/codex-rs/app-server/src/agent_message_board.rs
-@@ -264,6 +264,7 @@ impl MessageBoardHost for LocalBoardHost {
+diff --git a/codex-rs/agent-message-board-host/src/lib.rs b/codex-rs/agent-message-board-host/src/lib.rs
+index bffc8dee78fac39d4a24a14e7c11a596e7b59184..9c458dfa9aa36a2cf03ec7dcaca7e78fdc6722c1 100644
+--- a/codex-rs/agent-message-board-host/src/lib.rs
++++ b/codex-rs/agent-message-board-host/src/lib.rs
+@@ -266,6 +266,7 @@ impl MessageBoardHost for LocalBoardHost {
                  .submit(Op::InterAgentCommunication {
                      communication,
                      start_options: Default::default(),
@@ -199,10 +199,10 @@ index 7ddb2cbb156b9e7c3e78a64cba89567880b38000..16dba0567a653d1475ef626c6568da33
 
  /// Settings shared by the tree. A service tier of `None` restores the default tier.
 diff --git a/codex-rs/core/src/agent/control.rs b/codex-rs/core/src/agent/control.rs
-index 91386b35246fd7e146d4a21697a91d09349eb7c1..68372745c44381594c197ca3fce04c519bcddeb4 100644
+index e1bac1a86da408db25d07d722163d7e53dc54c21..fc324e36e38d14791c9c4f40f3336a9aa55263b7 100644
 --- a/codex-rs/core/src/agent/control.rs
 +++ b/codex-rs/core/src/agent/control.rs
-@@ -183,6 +183,31 @@ impl LocalAgentControl {
+@@ -182,6 +182,31 @@ impl LocalAgentControl {
          self.send_inter_agent_communication_after_capacity_check(
              agent_id,
              &state,
@@ -234,7 +234,7 @@ index 91386b35246fd7e146d4a21697a91d09349eb7c1..68372745c44381594c197ca3fce04c51
              communication,
              agent_communication_context,
              start_options,
-@@ -244,18 +269,50 @@ impl LocalAgentControl {
+@@ -243,18 +268,50 @@ impl LocalAgentControl {
          &self,
          agent_id: ThreadId,
          state: &Arc<ThreadManagerState>,
@@ -293,7 +293,7 @@ index 91386b35246fd7e146d4a21697a91d09349eb7c1..68372745c44381594c197ca3fce04c51
      }
 
      async fn submit_inter_agent_communication(
-@@ -265,6 +322,7 @@ impl LocalAgentControl {
+@@ -264,6 +321,7 @@ impl LocalAgentControl {
          mut communication: InterAgentCommunication,
          context: AgentCommunicationContext,
          start_options: TurnStartOptions,
@@ -301,7 +301,7 @@ index 91386b35246fd7e146d4a21697a91d09349eb7c1..68372745c44381594c197ca3fce04c51
      ) -> CodexResult<String> {
          let observers = state.extensions.message_lifecycle_contributors();
          let delivery = (!observers.is_empty()).then(|| {
-@@ -306,6 +364,7 @@ impl LocalAgentControl {
+@@ -305,6 +363,7 @@ impl LocalAgentControl {
              context,
              log_content.as_deref(),
              start_options,
@@ -309,7 +309,7 @@ index 91386b35246fd7e146d4a21697a91d09349eb7c1..68372745c44381594c197ca3fce04c51
              |op, parent_turn_id, root_turn_id| {
                  state.send_op(agent_id, op, parent_turn_id, root_turn_id, delivery)
              },
-@@ -774,6 +833,7 @@ async fn submit_loaded_agent_communication<F>(
+@@ -773,6 +832,7 @@ async fn submit_loaded_agent_communication<F>(
      context: AgentCommunicationContext,
      log_content: Option<&str>,
      start_options: TurnStartOptions,
@@ -317,7 +317,7 @@ index 91386b35246fd7e146d4a21697a91d09349eb7c1..68372745c44381594c197ca3fce04c51
      submit: impl FnOnce(Op, Option<String>, Option<String>) -> F,
  ) -> CodexResult<String>
  where
-@@ -791,6 +851,7 @@ where
+@@ -790,6 +850,7 @@ where
          Op::InterAgentCommunication {
              communication,
              start_options,
@@ -528,7 +528,7 @@ index e098af644029594341ba168adc038fd2a357d9fa..a7f4883230ef600f1905fcefc32acd28
      tokio::pin!(delivery);
      assert!(futures::poll!(delivery.as_mut()).is_pending());
 diff --git a/codex-rs/core/src/agent/control/runtime.rs b/codex-rs/core/src/agent/control/runtime.rs
-index c473206ab41bd5b49a5d644bebc85c9bc2f7d90a..baaa5b3afe1f3369eba78780d3f3e01a9c835c84 100644
+index fa05eafb5925b1760871a375c729cfd596fd23d0..b39e7b15b2579be518539007c06556900f053104 100644
 --- a/codex-rs/core/src/agent/control/runtime.rs
 +++ b/codex-rs/core/src/agent/control/runtime.rs
 @@ -8,6 +8,7 @@ use crate::agent::api::AgentControl;
@@ -536,18 +536,18 @@ index c473206ab41bd5b49a5d644bebc85c9bc2f7d90a..baaa5b3afe1f3369eba78780d3f3e01a
  use crate::config::RolloutBudgetConfig;
  use crate::rollout_budget::RolloutBudget;
 +use crate::saffron::subagent_completion::AncestorTurnRetention;
+ use crate::session::session::Session;
+ use crate::state::ContextWindowIdGenerator;
  use crate::thread_manager::AgentTreeShutdownFailure;
- use crate::thread_manager::AgentTreeShutdownFailureReason;
- use crate::thread_manager::AgentTreeShutdownReport;
-@@ -193,6 +194,7 @@ pub(crate) struct LocalAgentRuntime {
-     /// Captured at construction so delegates retain their manager's allocation policy.
-     pub(super) thread_id_generator: ThreadIdGenerator,
+@@ -198,6 +199,7 @@ pub(crate) struct LocalAgentRuntime {
+     pub(crate) item_id_generator: ItemIdGenerator,
+     pub(crate) context_window_id_generator: ContextWindowIdGenerator,
      pub(super) agent_execution_limiter: Arc<AgentExecutionLimiter>,
 +    pub(super) ancestor_turn_retention: Arc<AncestorTurnRetention>,
      /// Session-scoped state shared by the root thread and every cloned sub-agent control handle.
      pub(super) rollout_budget: Arc<RolloutBudget>,
      /// The user-selected root routing tier, shared by the entire agent tree.
-@@ -223,6 +225,7 @@ impl LocalAgentRuntime {
+@@ -230,6 +232,7 @@ impl LocalAgentRuntime {
              shutdown: CancellationToken::new(),
              shutdown_state: Arc::default(),
              agent_execution_limiter: Arc::default(),
@@ -588,7 +588,7 @@ index 3d04086694e7e7495087a3243b5bc6feb7e077dc..36b97340f2c919418b9bb4f76821fb92
                      context,
                      start_options,
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 285b0ab4e2e1914ee8f7f973017d563ddb6bed8a..c7fb52c659a66900c1e7b90ca9c69ea752219267 100644
+index f286b37d4e71f99042a463cf55c8fe127d35ac08..65aca03ecd5d77dda1974be94a2305396c0b193b 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
 @@ -31,7 +31,13 @@ use crate::context::world_state::IncrementalToolsHint;
@@ -984,7 +984,7 @@ index 285b0ab4e2e1914ee8f7f973017d563ddb6bed8a..c7fb52c659a66900c1e7b90ca9c69ea7
          },
      );
      let captured = harness
-@@ -4634,6 +4984,448 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
+@@ -4641,6 +4991,448 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
      assert!(!has_subagent_notification(root_history.raw_items()));
  }
 
@@ -1433,7 +1433,7 @@ index 285b0ab4e2e1914ee8f7f973017d563ddb6bed8a..c7fb52c659a66900c1e7b90ca9c69ea7
  #[tokio::test]
  async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
      let harness = AgentControlHarness::new().await;
-@@ -4701,6 +5493,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
+@@ -4708,6 +5500,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -1514,10 +1514,10 @@ index 66eb053fb12a5665201852fda3a4864b79b0cfe6..dd7618be8749021dc6c491b8636d2813
  fn reservation_drop_releases_slot() {
      let registry = Arc::new(AgentRegistry::default());
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 6730c8f0f9dfeda0a0c39ee26d22b446a42600e2..694df189ac347968b8ff2cce322e6088a6c06a1f 100644
+index 6978ba5c23cfea1712801c226bc268652d953095..0f03141f4245550d33aa6c9772d39f172a4360d6 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -381,6 +381,17 @@ impl CodexThread {
+@@ -386,6 +386,17 @@ impl CodexThread {
          self.io.shutdown_and_wait().await
      }
 
@@ -1535,7 +1535,7 @@ index 6730c8f0f9dfeda0a0c39ee26d22b446a42600e2..694df189ac347968b8ff2cce322e6088
      /// Wait until the underlying session loop has terminated.
      pub async fn wait_until_terminated(&self) {
          self.io.session_loop_termination.clone().await;
-@@ -483,7 +494,7 @@ impl CodexThread {
+@@ -488,7 +499,7 @@ impl CodexThread {
      /// deferred core task is not discarded before its durable state changes.
      #[doc(hidden)]
      pub async fn should_retain_while_idle(&self) -> bool {
@@ -1676,7 +1676,7 @@ index bbf370dcee9e195db7421179ca0964cebfaae9ec..65bceba2c0024a2765555d14f9e074d9
                      review(&sess, &config, sub.id.clone(), review_request).await;
                      false
 diff --git a/codex-rs/core/src/session/input_queue.rs b/codex-rs/core/src/session/input_queue.rs
-index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd27a92b19 100644
+index 955491e708aaaaf5d066a873b713a99fb69e6e9c..5c33715f12a9fe9d5f1339ff62f431316eaf1d95 100644
 --- a/codex-rs/core/src/session/input_queue.rs
 +++ b/codex-rs/core/src/session/input_queue.rs
 @@ -1,5 +1,6 @@
@@ -1686,7 +1686,7 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
  use crate::state::ActiveTurn;
  use crate::state::MailboxDeliveryPhase;
  use crate::state::TurnState;
-@@ -132,6 +133,7 @@ pub(crate) struct InputQueue {
+@@ -136,6 +137,7 @@ pub(crate) struct InputQueue {
  pub(crate) struct PendingMailboxCommunication {
      pub(crate) communication: crate::PendingAgentMessage,
      start_options: TurnStartOptions,
@@ -1694,7 +1694,7 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
      _diagnostics_guard: GaugeGuard,
  }
 
-@@ -172,6 +174,7 @@ impl InputQueue {
+@@ -176,6 +178,7 @@ impl InputQueue {
                      .map(|communication| PendingMailboxCommunication {
                          communication,
                          start_options: TurnStartOptions::default(),
@@ -1702,7 +1702,7 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
                          _diagnostics_guard: PENDING_MAILBOX_MESSAGES.track(),
                      }),
              );
-@@ -205,6 +208,32 @@ impl InputQueue {
+@@ -209,6 +212,32 @@ impl InputQueue {
          &self,
          communication: crate::PendingAgentMessage,
          start_options: TurnStartOptions,
@@ -1735,7 +1735,7 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
      ) {
          let mut pending = self.mailbox_pending_mails.lock().await;
          // Mail retained while unloaded precedes new submissions to the loaded session.
-@@ -212,6 +241,7 @@ impl InputQueue {
+@@ -216,6 +245,7 @@ impl InputQueue {
          pending.push_back(PendingMailboxCommunication {
              communication,
              start_options,
@@ -1743,7 +1743,7 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
              _diagnostics_guard: PENDING_MAILBOX_MESSAGES.track(),
          });
          self.activity_tx.send_replace(InputQueueActivity::Mailbox);
-@@ -251,6 +281,14 @@ impl InputQueue {
+@@ -255,6 +285,14 @@ impl InputQueue {
              })
      }
 
@@ -1758,7 +1758,7 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
      pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
          self.mailbox_pending_mails
              .lock()
-@@ -265,8 +303,53 @@ impl InputQueue {
+@@ -269,8 +307,53 @@ impl InputQueue {
          pending.drain(..).collect()
      }
 
@@ -1813,7 +1813,7 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
          // A later follow-up supersedes the earlier choice, including an omitted choice.
          let mut start_options = pending_mails
              .iter()
-@@ -343,6 +426,7 @@ impl InputQueue {
+@@ -347,6 +430,7 @@ impl InputQueue {
          turn_state.clear_pending_waiters();
          // Pending mail can own extension attachments whose destructors need the lock released.
          let pending_input = std::mem::take(&mut turn_state.pending_input);
@@ -1821,7 +1821,7 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
          drop(turn_state);
          drop(pending_input);
      }
-@@ -436,7 +520,7 @@ impl InputQueue {
+@@ -440,7 +524,7 @@ impl InputQueue {
          &self,
          active_turn: &Mutex<Option<ActiveTurn>>,
      ) -> (Vec<TurnInput>, TurnStartOptions) {
@@ -1830,7 +1830,7 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
              let mut active = active_turn.lock().await;
              match active.as_mut() {
                  Some(active_turn) => {
-@@ -448,15 +532,25 @@ impl InputQueue {
+@@ -452,15 +536,25 @@ impl InputQueue {
                      } else {
                          Vec::new()
                      };
@@ -1859,7 +1859,7 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
          if pending_input.is_empty() {
              (mailbox_items, start_options)
          } else {
-@@ -780,6 +874,68 @@ mod tests {
+@@ -796,6 +890,68 @@ mod tests {
          assert!(!input_queue.has_pending_mailbox_items().await);
      }
 
@@ -1929,10 +1929,10 @@ index b1100b12e80f7a53d498801e42e3ba64659029c8..c91e121afd4bb12fa3ad8997d19861bd
      async fn input_queue_uses_unambiguous_trigger_parent_and_first_root() {
          let (parent, peer, root, root2) = (Some("a"), Some("b"), Some("r"), Some("s"));
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 9782263804fed52faaf9c6b9f5eee5a19c42b318..647bd92230b5bf416b2198487826d55f45f2a5c2 100644
+index c531dfeee056a9d2223e892cc9e53a7f11aee70f..baffc983202165f8f328ee11d31112b169b217a3 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2735,6 +2735,10 @@ impl Session {
+@@ -2769,6 +2769,10 @@ impl Session {
          if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
              return;
          }
@@ -1943,7 +1943,7 @@ index 9782263804fed52faaf9c6b9f5eee5a19c42b318..647bd92230b5bf416b2198487826d55f
 
          self.services
              .agent_control
-@@ -2750,6 +2754,7 @@ impl Session {
+@@ -2784,6 +2788,7 @@ impl Session {
                          .cloned(),
                      status,
                      error_info,
@@ -1952,10 +1952,10 @@ index 9782263804fed52faaf9c6b9f5eee5a19c42b318..647bd92230b5bf416b2198487826d55f
                  &self.services.rollout_thread_trace,
              )
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 5cc388cd4030de36b6dcf451fd06e553e9289a10..af91e703c61e58e401dc815e4d69a07a8beadbcc 100644
+index dde89e55fa17cad73336e304bd34f4f990ad78e0..dc986fc6ef8166ecc8584c3b8503734a9b729394 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -727,6 +727,20 @@ impl Session {
+@@ -744,6 +744,20 @@ impl Session {
          self.services.agent_control.identity()
      }
 
@@ -1977,10 +1977,10 @@ index 5cc388cd4030de36b6dcf451fd06e553e9289a10..af91e703c61e58e401dc815e4d69a07a
          let state = self.state.lock().await;
          state.session_configuration.originator.clone()
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index fec9bd7a1a79cf2e952a511eb4917c07c7586756..d7e2aa84525677c867c72042ca61b5b1054e7815 100644
+index 0229b165dced962a5aabcaae93b14fce892b2c2d..d7a49b4184bbf07920473acc5e6f92cae3a361e2 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
-@@ -467,6 +467,12 @@ async fn start_or_steer(
+@@ -472,6 +472,12 @@ async fn start_or_steer(
                  .await;
              let mut task_input =
                  merge_additional_context_input(session, &turn_context, additional_context).await;
@@ -1993,7 +1993,7 @@ index fec9bd7a1a79cf2e952a511eb4917c07c7586756..d7e2aa84525677c867c72042ca61b5b1
              if has_explicit_input {
                  task_input.push(
                      pending_turn_input(
-@@ -619,6 +625,12 @@ async fn start_if_idle(
+@@ -624,6 +630,12 @@ async fn start_if_idle(
      let mut task_input =
          merge_additional_context_input(session, &turn_context, additional_context).await;
      let sender_messages = capture_sender_user_messages(session, &mut input).await;
@@ -2019,7 +2019,7 @@ index 44c59cd0f1967fbac3326dcc64352a3e4c4a4bc1..58740fc301b3ae73493763677fd12ce3
      .await;
      Ok(TurnInputSubmission::Accepted)
 diff --git a/codex-rs/core/src/state/turn.rs b/codex-rs/core/src/state/turn.rs
-index 79dad90719406066a63c1914feb6876bbaff5cce..e317368e3484161092d97fe85f080416cf4a5c71 100644
+index 4dedfc461b17b7c7bb4038309871086348562aed..6a7959cd435a31c6b09fc596e563825df1ae5a74 100644
 --- a/codex-rs/core/src/state/turn.rs
 +++ b/codex-rs/core/src/state/turn.rs
 @@ -21,6 +21,7 @@ use tokio::sync::oneshot;
@@ -2037,8 +2037,8 @@ index 79dad90719406066a63c1914feb6876bbaff5cce..e317368e3484161092d97fe85f080416
 -    pub(crate) _agent_execution_guard: Option<AgentExecutionGuard>,
 +    pub(crate) agent_execution_guard: Option<AgentExecutionGuard>,
 +    pub(crate) ancestor_turn_retention_guard: Option<AncestorTurnRetentionGuard>,
-     /// Initial input still owned by Core while the host decides whether the task may run.
-     pub(crate) pending_admission_input: Option<Vec<TurnInput>>,
+     /// Unrecorded input retained during host admission or preparation that can wait on the roster.
+     pub(crate) pending_initial_input: Option<Vec<TurnInput>>,
      pub(crate) _diagnostics_guard: GaugeGuard,
 @@ -102,6 +104,9 @@ pub(crate) struct TurnState {
      pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
@@ -2051,7 +2051,7 @@ index 79dad90719406066a63c1914feb6876bbaff5cce..e317368e3484161092d97fe85f080416
      pub(crate) tool_calls: u64,
      pub(crate) has_memory_citation: bool,
 diff --git a/codex-rs/core/src/tasks/admission.rs b/codex-rs/core/src/tasks/admission.rs
-index e796ed93dce78e91cdc0aafe640429cc362f474b..eccb3153eb0703b5822dc6a27f44ababbfdddbe7 100644
+index 40baba5f700f513eeb5e3563183dca211a46b152..12b11047ebd30a33539eb452b7ae63718eca7569 100644
 --- a/codex-rs/core/src/tasks/admission.rs
 +++ b/codex-rs/core/src/tasks/admission.rs
 @@ -60,7 +60,7 @@ pub(super) async fn admit(
@@ -2060,11 +2060,11 @@ index e796ed93dce78e91cdc0aafe640429cc362f474b..eccb3153eb0703b5822dc6a27f44abab
          .ok_or_else(|| CodexErr::new(CodexErrorDetails::TurnAborted))?;
 -    task._agent_execution_guard = Some(guard);
 +    task.agent_execution_guard = Some(guard);
-     task.pending_admission_input.take().ok_or_else(|| {
+     task.pending_initial_input.take().ok_or_else(|| {
          CodexErr::Fatal("initial input missing from the task awaiting host admission".into())
      })
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 26a42a70eedaee022af6b447fc211b37b3c318f5..4701228d3e583e8685e75bad9af2d66e8cb92baf 100644
+index 178de78298ef1ab10b67432682af187e99fbe6ba..e17979fd4d2b7a35406405f675f64bac59f00e5f 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -78,6 +78,14 @@ static ACTIVE_TURNS: Gauge = Gauge::new("core.turns.active");
@@ -2134,10 +2134,10 @@ index 26a42a70eedaee022af6b447fc211b37b3c318f5..4701228d3e583e8685e75bad9af2d66e
 -            _agent_execution_guard: agent_execution_guard,
 +            agent_execution_guard,
 +            ancestor_turn_retention_guard,
-             pending_admission_input,
+             pending_initial_input,
              _diagnostics_guard: ACTIVE_TURNS.track(),
              _timer: timer,
-@@ -628,6 +652,24 @@ impl Session {
+@@ -630,6 +654,24 @@ impl Session {
      }
 
      pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
@@ -2162,7 +2162,7 @@ index 26a42a70eedaee022af6b447fc211b37b3c318f5..4701228d3e583e8685e75bad9af2d66e
          let mut aborted_turn = false;
          let mut active_turn_to_clear = None;
          if let Some(mut active_turn) = self.take_active_turn(&reason).await {
-@@ -652,8 +694,16 @@ impl Session {
+@@ -654,8 +696,16 @@ impl Session {
              // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
              self.input_queue.clear_pending(&active_turn).await;
          }
@@ -2181,7 +2181,7 @@ index 26a42a70eedaee022af6b447fc211b37b3c318f5..4701228d3e583e8685e75bad9af2d66e
          }
      }
 
-@@ -733,7 +783,13 @@ impl Session {
+@@ -735,7 +785,13 @@ impl Session {
              regular_output.is_some() && turn_context.terminal_error.lock().await.is_none();
          let finishing = CancellationToken::new();
          let finish_recording = finishing.clone().drop_guard();
@@ -2196,7 +2196,7 @@ index 26a42a70eedaee022af6b447fc211b37b3c318f5..4701228d3e583e8685e75bad9af2d66e
              let mut active = self.active_turn.lock().await;
              let active_turn = active.as_mut()?;
              if !Arc::ptr_eq(&active_turn.task.as_ref()?.turn_context, &turn_context) {
-@@ -747,11 +803,13 @@ impl Session {
+@@ -749,13 +805,17 @@ impl Session {
                      return regular_output.map(|output| output.mcp_startup_requirements);
                  }
              }
@@ -2204,14 +2204,20 @@ index 26a42a70eedaee022af6b447fc211b37b3c318f5..4701228d3e583e8685e75bad9af2d66e
 +            let mut task = active_turn.task.take()?;
              task.handle.detach();
              active_turn.finishing = Some(finishing);
++            let unadmitted_task =
++                (task.agent_execution_guard.is_none() && task.pending_initial_input.is_some())
++                    .then_some(task.task);
              (
                  Arc::clone(&active_turn.turn_state),
+-                (task._agent_execution_guard.is_none() && task.pending_initial_input.is_some())
+-                    .then_some(task.task),
 +                task.agent_execution_guard.take(),
 +                task.ancestor_turn_retention_guard.take(),
-                 task.pending_admission_input.is_some().then_some(task.task),
-                 task.pending_admission_input.unwrap_or_default(),
++                unadmitted_task,
+                 task.pending_initial_input.unwrap_or_default(),
              )
-@@ -991,6 +1049,8 @@ impl Session {
+         };
+@@ -994,6 +1054,8 @@ impl Session {
              // The parent can request another review as soon as it receives this event.
              self.send_event(turn_context.as_ref(), event).await;
          }
@@ -2237,7 +2243,7 @@ index c11fda446e92feb84cd0e393faf9161f2479d1b0..9bc1d854b6b2ceca4f2d502164cbc1fa
          Op::Shutdown => Some(Op::Shutdown),
          _ => None,
 diff --git a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
-index 254f60302999198dba5057787ac7a89e3f34e51f..86d7d80d6af1f1d905ac762d7bf10e7936b62228 100644
+index 36f24c7f37a5d3d79b657dfdca46f0d504729bf0..e2bcf8586d6f048602f16828418587d57c2d3f98 100644
 --- a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
 +++ b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
 @@ -2029,7 +2029,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
@@ -2260,10 +2266,10 @@ index 254f60302999198dba5057787ac7a89e3f34e51f..86d7d80d6af1f1d905ac762d7bf10e79
                          Some(communication.content)
                      }
 diff --git a/codex-rs/core/tests/suite/agent_control_tests.rs b/codex-rs/core/tests/suite/agent_control_tests.rs
-index 540f2adedafb1bc31607cfbc6a7cc4e73b62b862..0742e52cefdd4a20edf1a3a95664c4347c2ab7b6 100644
+index f615864844fd4771af6cc00a1bc16547d6af3042..6045a65b2c37319692dfce0ab7790ec0b75ac169 100644
 --- a/codex-rs/core/tests/suite/agent_control_tests.rs
 +++ b/codex-rs/core/tests/suite/agent_control_tests.rs
-@@ -768,6 +768,7 @@ async fn agent_mail_wakes_completed_root_when_enabled(
+@@ -819,6 +819,7 @@ async fn agent_mail_wakes_completed_root_when_enabled(
              .submit(Op::InterAgentCommunication {
                  communication: message,
                  start_options: Default::default(),
@@ -2340,7 +2346,7 @@ index f286d292f3d1e1f5ad8edbadfa3c04befd68d5e0..b4b1a7dca9dca15163d1074a1b82d54b
              .await?;
          // The response fences the submission queue before the tool can finish.
 diff --git a/codex-rs/core/tests/suite/guardian_history.rs b/codex-rs/core/tests/suite/guardian_history.rs
-index fdb2f0a85808500d43456774d51dcd03d680cc9f..776ec63316d1d5be2fd9d6552640ea75c2616ce4 100644
+index cf86b062cc4910b5ce6906c5fe8e77b5b9f632b0..6081ac782ba915f235e1b9660856fa1e21bac02a 100644
 --- a/codex-rs/core/tests/suite/guardian_history.rs
 +++ b/codex-rs/core/tests/suite/guardian_history.rs
 @@ -482,6 +482,7 @@ async fn guardian_history_uses_deltas_between_eviction_batches(
@@ -2801,10 +2807,10 @@ index 44c26e15ec025cc5689237a01e4fa53e6c03c582..5da3dea0bb7cf1a109940c49fc30dd14
      Ok(())
  }
 diff --git a/codex-rs/core/tests/suite/turn_input_submission.rs b/codex-rs/core/tests/suite/turn_input_submission.rs
-index 23a6b17c38362857c322d83e298fce3292450d2b..23c2a2d350c33f71a303ed506d4e699c4d7dcd90 100644
+index 1c505abfd797c5983c1fa8e879b767d6a67cecca..8ee62595e192093f4ca018a9a105d4b5045410a6 100644
 --- a/codex-rs/core/tests/suite/turn_input_submission.rs
 +++ b/codex-rs/core/tests/suite/turn_input_submission.rs
-@@ -158,6 +158,7 @@ async fn turn_extension_data_is_captured_for_automatic_turns() -> anyhow::Result
+@@ -198,6 +198,7 @@ async fn turn_extension_data_is_captured_for_automatic_turns() -> anyhow::Result
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2812,7 +2818,7 @@ index 23a6b17c38362857c322d83e298fce3292450d2b..23c2a2d350c33f71a303ed506d4e699c
          })
          .await?;
      let automatic_id = wait_for_event_match(&thread, |event| match event {
-@@ -527,6 +528,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()>
+@@ -567,6 +568,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()>
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2833,7 +2839,7 @@ index 9bfcbfa98a8756d9690b68df3595003e200efbb5..7aa59eaae649e60d726bec4edf599b93
          .await?;
      codex.submit(Op::RealtimeConversationListVoices).await?;
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index e6d7448dfe12d5e8e169c98c8372369ee533c7c1..d28cd57b34adb7cd3fcdab9e9f504b91f4f2b9f4 100644
+index 89ef2fed24a5df19dab680fb8ea6e8b561d67edc..05cd2074b4bb15c469dcad3e9fdcb7a478b90414 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
 @@ -817,6 +817,9 @@ pub enum Op {
