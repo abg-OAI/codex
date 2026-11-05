@@ -141,12 +141,12 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
             EnvironmentConnectionState::Recovering
         );
         assert!(received.try_recv().is_err());
-        tokio::time::advance(Duration::from_secs(8)).await;
+        tokio::time::advance(Duration::from_secs(14)).await;
     }
     ready_rx.await.unwrap();
     assert_eq!(
         disconnected_at.elapsed(),
-        Duration::from_secs(8 * retries as u64)
+        Duration::from_secs(14 * retries as u64)
     );
     raw.wait_for(|state| *state == EnvironmentConnectionState::Recovering)
         .await
