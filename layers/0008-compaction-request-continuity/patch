@@ -777,7 +777,7 @@ index 8ead85ad215a70887df3036a3a3fc449dc1e2fbf..a3f3dff329826205ab5fe5b97617e8d0
                  estimate_item_token_count_with_audio(&envelope.item, &self.file_audio_durations)
              })
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index d49bb423b4ac9b4c9f98258028ad1b0d38d8e56e..57b06f14b784cbd0764c7935f06ced8980509bb5 100644
+index d49bb423b4ac9b4c9f98258028ad1b0d38d8e56e..6378f146b4fbf74f2b4299e5f1c852359a85dcf7 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
 @@ -85,6 +85,88 @@ fn sampling_checkpoint_excludes_input_appended_during_request() {
@@ -792,7 +792,7 @@ index d49bb423b4ac9b4c9f98258028ad1b0d38d8e56e..57b06f14b784cbd0764c7935f06ced89
 +#[tokio::test]
 +async fn retired_annotations_leave_only_surviving_requests(key: &str, original_survives: bool) {
 +    let mut original = user_msg("Prepare the report; do not publish.");
-+    original.set_id(Some(ResponseItemId::new("original")));
++    original.set_id(Some(ResponseItemId::with_suffix("original", "request")));
 +    let account = ResponseItemEnvelope {
 +        item: assistant_msg("The earlier request was already completed."),
 +        metadata: Some(CodexHarnessMetadata {
