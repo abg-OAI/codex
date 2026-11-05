@@ -94,7 +94,7 @@ pub(crate) fn is_delivery(item: &ResponseItem, metadata: Option<&CodexHarnessMet
     else {
         return false;
     };
-    if namespace == "saffron" && name == "send_message_to_thread" {
+    if namespace == "saffron" && matches!(name.as_str(), "send_message_to_thread" | "fork_thread") {
         return true;
     }
     name == "send_message_to_thread"
