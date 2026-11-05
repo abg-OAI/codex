@@ -176,7 +176,7 @@ index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62
  fn rewritten_output_preserves_harness_metadata() {
      let envelope = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index dd9b28978066d9c16c50c85b9fd37d861d66ed7f..119948cf4a0fc617b6a3013999acec55273ddd2b 100644
+index dd9b28978066d9c16c50c85b9fd37d861d66ed7f..344c2d2ef1ae478421e9bf9775e3acd86a621f7d 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
 @@ -490,6 +490,7 @@ async fn collect_compaction_output(
@@ -366,7 +366,7 @@ index dd9b28978066d9c16c50c85b9fd37d861d66ed7f..119948cf4a0fc617b6a3013999acec55
              );
              let mut expected = vec![
                  ResponseItemEnvelope {
-@@ -1077,6 +1166,134 @@ mod tests {
+@@ -1077,6 +1166,135 @@ mod tests {
          }
      }
 
@@ -411,6 +411,7 @@ index dd9b28978066d9c16c50c85b9fd37d861d66ed7f..119948cf4a0fc617b6a3013999acec55
 +
 +            let mut normalized = crate::context_manager::ContextManager::default();
 +            normalized.replace_annotated(history.clone());
++            let normalized_history = normalized.annotated_items().to_vec();
 +            let prompt = normalized
 +                .for_prompt_annotated(
 +                    &[codex_protocol::openai_models::InputModality::Text],
@@ -420,7 +421,7 @@ index dd9b28978066d9c16c50c85b9fd37d861d66ed7f..119948cf4a0fc617b6a3013999acec55
 +            assert_eq!(prompt.len(), history.len());
 +            assert_eq!(
 +                prompt[1..],
-+                history[1..],
++                normalized_history[1..],
 +                "standalone outputs need no fabricated tool calls"
 +            );
 +        }
@@ -777,10 +778,10 @@ index 8ead85ad215a70887df3036a3a3fc449dc1e2fbf..a3f3dff329826205ab5fe5b97617e8d0
                  estimate_item_token_count_with_audio(&envelope.item, &self.file_audio_durations)
              })
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index d49bb423b4ac9b4c9f98258028ad1b0d38d8e56e..6378f146b4fbf74f2b4299e5f1c852359a85dcf7 100644
+index d49bb423b4ac9b4c9f98258028ad1b0d38d8e56e..53b5918e1bb243cae8d4c42c584f2f3e968b55cc 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
-@@ -85,6 +85,88 @@ fn sampling_checkpoint_excludes_input_appended_during_request() {
+@@ -85,6 +85,103 @@ fn sampling_checkpoint_excludes_input_appended_during_request() {
      );
  }
 
@@ -817,6 +818,16 @@ index d49bb423b4ac9b4c9f98258028ad1b0d38d8e56e..6378f146b4fbf74f2b4299e5f1c85235
 +    }
 +    stored.push(later.clone());
 +    expected.push(later);
++    for (index, envelope) in stored.iter_mut().enumerate() {
++        let metadata = envelope.metadata.get_or_insert_default();
++        metadata.history_sequence = Some(index as u64 + 1);
++        metadata.sampled_through_sequence = Some(0);
++    }
++    for (index, envelope) in expected.iter_mut().enumerate() {
++        let metadata = envelope.metadata.get_or_insert_default();
++        metadata.history_sequence = Some(index as u64 + 2);
++        metadata.sampled_through_sequence = Some(0);
++    }
 +    let mut history = ContextManager::default();
 +    history.replace_annotated(stored.clone());
 +    let mut baseline = ContextManager::default();
@@ -852,10 +863,15 @@ index d49bb423b4ac9b4c9f98258028ad1b0d38d8e56e..6378f146b4fbf74f2b4299e5f1c85235
 +        )]),
 +        ..Default::default()
 +    });
-+    let expected = vec![
++    let mut expected = vec![
 +        ResponseItemEnvelope::new(user_msg("Explain this quotation.")),
 +        quoted,
 +    ];
++    for (index, envelope) in expected.iter_mut().enumerate() {
++        let metadata = envelope.metadata.get_or_insert_default();
++        metadata.history_sequence = Some(index as u64 + 1);
++        metadata.sampled_through_sequence = Some(0);
++    }
 +    let mut history = ContextManager::default();
 +    history.replace_annotated(expected.clone());
 +    assert_eq!(
@@ -918,10 +934,10 @@ index 930d410a6e10336d541dfb05323b6f1ae9f15c03..cc296773047b9287466d8f2d1b9971da
                              Vec::new(),
                              &user_messages,
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index 66e07fdaf223aa6f85a1e88100d8c2522adca21f..4bf2f3b075e0c78ce37981a7894e832737d3b936 100644
+index 66e07fdaf223aa6f85a1e88100d8c2522adca21f..88ba52831e9f891d201b4b67ee76e251f490e595 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-@@ -1485,6 +1485,106 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
+@@ -1485,6 +1485,114 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
      assert_eq!(reconstructed.window_id, Some(initial_window_id));
  }
 
@@ -930,7 +946,7 @@ index 66e07fdaf223aa6f85a1e88100d8c2522adca21f..4bf2f3b075e0c78ce37981a7894e8327
 +#[test_case("/root/vegetables", false; "sibling child")]
 +#[test_case("/root", false; "parent")]
 +fn legacy_replay_scopes_assignments_to_receiver(agent_path: &str, retained: bool) {
-+    let assignment = ResponseItemEnvelope::new(ResponseItem::AgentMessage {
++    let mut assignment = ResponseItemEnvelope::new(ResponseItem::AgentMessage {
 +        id: None,
 +        author: "/root".to_owned(),
 +        recipient: "/root/fruit".to_owned(),
@@ -963,6 +979,9 @@ index 66e07fdaf223aa6f85a1e88100d8c2522adca21f..4bf2f3b075e0c78ce37981a7894e8327
 +        ContextManager::default(),
 +        codex_utils_output_truncation::TruncationPolicy::Bytes(10_000),
 +    );
++    let metadata = assignment.metadata.get_or_insert_default();
++    metadata.history_sequence = Some(1);
++    metadata.sampled_through_sequence = Some(0);
 +    assert_eq!(reconstructed.history.contains(&assignment), retained);
 +}
 +
@@ -970,11 +989,11 @@ index 66e07fdaf223aa6f85a1e88100d8c2522adca21f..4bf2f3b075e0c78ce37981a7894e8327
 +#[tokio::test]
 +async fn compaction_delivery_survives_rollout_replay_and_next_compaction() {
 +    let (session, turn_context) = make_session_and_context().await;
-+    let assignment = crate::saffron::compaction_requests::tests::admitted_delivery(
++    let mut assignment = crate::saffron::compaction_requests::tests::admitted_delivery(
 +        "Investigate the orchard export instead.",
 +        2,
 +    );
-+    let steer = crate::saffron::compaction_requests::tests::admitted_delivery(
++    let mut steer = crate::saffron::compaction_requests::tests::admitted_delivery(
 +        "Inspect its midnight batch first.",
 +        3,
 +    );
@@ -1010,6 +1029,11 @@ index 66e07fdaf223aa6f85a1e88100d8c2522adca21f..4bf2f3b075e0c78ce37981a7894e8327
 +    let replayed = session
 +        .reconstruct_history_from_rollout(&turn_context, &[restored])
 +        .await;
++    for (envelope, sequence) in [(&mut assignment, 2), (&mut steer, 3)] {
++        let metadata = envelope.metadata.get_or_insert_default();
++        metadata.history_sequence = Some(sequence);
++        metadata.sampled_through_sequence = Some(0);
++    }
 +    assert_eq!(replayed.history[1], assignment);
 +    assert_eq!(replayed.history[2], steer);
 +    let next = crate::compact::build_compacted_history(
