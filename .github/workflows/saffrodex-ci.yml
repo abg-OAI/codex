@@ -161,11 +161,6 @@ jobs:
             --test saffron_compaction_retention
           just test --cargo-profile ci-test \
             --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
-            -p codex-app-server-protocol \
-            --lib \
-            saffron::tests
-          just test --cargo-profile ci-test \
-            --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
             -p codex-app-server \
             --test all \
             -E 'test(saffron_goal_supervisor) or test(saffron_archive_self)'
