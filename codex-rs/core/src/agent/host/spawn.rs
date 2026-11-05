@@ -11,6 +11,7 @@ use crate::agent::control::effective_spawn_config;
 use crate::agent::control::fresh_child_history_and_tools;
 use crate::agent::control::inherited_exec_policy_for_parent;
 use crate::agent::history::prepare_forked_history;
+use crate::agent::types::AgentListingVisibility;
 use crate::agent::types::AgentMetadata;
 use crate::agent::types::LiveAgent;
 use crate::codex_thread::CodexThread;
@@ -177,6 +178,7 @@ pub(super) async fn create_spawn(
                 agent_path: Some(task_name.clone()),
                 agent_nickname: child.thread.session_source.get_nickname(),
                 agent_role: child.thread.session_source.get_agent_role(),
+                visibility: AgentListingVisibility::Listed,
             },
             status,
         },
