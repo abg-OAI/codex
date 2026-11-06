@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
-index 306854319fd5d952186206a9c87a7ceeb8574df8..be2c37671ce574eb1cac73fc2ffb00316c715630 100644
+index e548b2f1503cf3cf31fa705c73e46c3b20a91435..4ad09f9286b6230e5bd1d9401b205184d69e55b2 100644
 --- a/codex-rs/core/src/saffron/mod.rs
 +++ b/codex-rs/core/src/saffron/mod.rs
 @@ -6,6 +6,7 @@

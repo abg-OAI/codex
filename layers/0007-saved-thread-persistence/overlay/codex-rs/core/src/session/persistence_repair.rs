@@ -251,7 +251,6 @@ impl Session {
                         thread_id: self.thread_id,
                         turn_id,
                         item,
-                        content_token_count: None,
                         started_at_ms: None,
                         completed_at_ms: recovered_at_ms,
                     },
@@ -325,7 +324,6 @@ impl Session {
             compaction_response_id: None,
             latest_token_usage_record: state.latest_token_usage_record.clone(),
             resume_metadata: Some(CompactionResumeMetadata {
-                rejected_audio_file_ids: history.rejected_audio_file_ids(),
                 dynamic_tools: Some(Box::new(DynamicToolsSnapshot {
                     thread_id: self.thread_id(),
                     tools: state.persisted_dynamic_tools.to_vec(),

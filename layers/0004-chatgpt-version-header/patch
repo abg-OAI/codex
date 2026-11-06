@@ -1,5 +1,5 @@
 diff --git a/codex-rs/model-provider-info/src/lib.rs b/codex-rs/model-provider-info/src/lib.rs
-index 7d0e1a8c81fbc936c0e644105ac7f2c5966d17e7..dba80d34174e46f040532a43f78bf6e0480f8507 100644
+index 96408491631e40298676bb79a6766b79a5abefad..568169e73b60fb1b3c3c862e42d820bbf393b6f6 100644
 --- a/codex-rs/model-provider-info/src/lib.rs
 +++ b/codex-rs/model-provider-info/src/lib.rs
 @@ -110,6 +110,18 @@ const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer su
