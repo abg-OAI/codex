@@ -1,3 +1,15 @@
+diff --git a/codex-rs/agent-message-board-host/src/lib.rs b/codex-rs/agent-message-board-host/src/lib.rs
+index fc60220721708251d2c2198df14a62700bff1326..591bfbfe64f8237ab1e910b2044d5cdd48d6b43d 100644
+--- a/codex-rs/agent-message-board-host/src/lib.rs
++++ b/codex-rs/agent-message-board-host/src/lib.rs
+@@ -253,6 +253,7 @@ impl MessageBoardHost for LocalBoardHost {
+                 .submit(Op::InterAgentCommunication {
+                     communication,
+                     start_options: Default::default(),
++                    accepted: None,
+                 })
+                 .await?;
+             Ok(NotificationDelivery::Accepted)
 diff --git a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
 index 2222902b4ab7bceff5a955a93f2fcd5555259862..e50bc700fed0d5aea97934a36ca9a6e95ceb5907 100644
 --- a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
@@ -503,6 +515,18 @@ index e16b1ccab468677ef3ee69d756c07afee8d09934..fdc122756b5baee2bf76574a59a702da
  }
 
  #[cfg(test)]
+diff --git a/codex-rs/core/src/agent/control/residency_tests.rs b/codex-rs/core/src/agent/control/residency_tests.rs
+index e098af644029594341ba168adc038fd2a357d9fa..a7f4883230ef600f1905fcefc32acd28df30abf4 100644
+--- a/codex-rs/core/src/agent/control/residency_tests.rs
++++ b/codex-rs/core/src/agent/control/residency_tests.rs
+@@ -74,6 +74,7 @@ async fn residency_slot_reservation_unloads_oldest_idle_v2_agent() {
+     let delivery = first.thread.submit(Op::InterAgentCommunication {
+         communication: communication.clone(),
+         start_options: Default::default(),
++        accepted: None,
+     });
+     tokio::pin!(delivery);
+     assert!(futures::poll!(delivery.as_mut()).is_pending());
 diff --git a/codex-rs/core/src/agent/control/runtime.rs b/codex-rs/core/src/agent/control/runtime.rs
 index fa05eafb5925b1760871a375c729cfd596fd23d0..b39e7b15b2579be518539007c06556900f053104 100644
 --- a/codex-rs/core/src/agent/control/runtime.rs
@@ -2224,6 +2248,30 @@ index c8fb0da58a6c545b5fb61d39abff190b53387ce6..ec2233b4d50a958e175776e60817ceb2
                      {
                          Some(communication.content)
                      }
+diff --git a/codex-rs/core/tests/suite/agent_control_tests.rs b/codex-rs/core/tests/suite/agent_control_tests.rs
+index 4ad158d4002bdcda6b4f8bc897664fb218f929d8..034f0d326f62629fb20e442c9c74ab311202b6b2 100644
+--- a/codex-rs/core/tests/suite/agent_control_tests.rs
++++ b/codex-rs/core/tests/suite/agent_control_tests.rs
+@@ -1085,6 +1085,7 @@ async fn agent_mail_wakes_completed_root_when_enabled(
+             .submit(Op::InterAgentCommunication {
+                 communication: message,
+                 start_options: Default::default(),
++                accepted: None,
+             })
+             .await?;
+     }
+diff --git a/codex-rs/core/tests/suite/agent_message_wake.rs b/codex-rs/core/tests/suite/agent_message_wake.rs
+index e2fd1b5ad916df5526ec6634383ee9f665715082..b1233423cf74b3f2a06201033f85a3371c21fdfb 100644
+--- a/codex-rs/core/tests/suite/agent_message_wake.rs
++++ b/codex-rs/core/tests/suite/agent_message_wake.rs
+@@ -176,6 +176,7 @@ async fn pending_agent_message_wake_respects_control_changes(
+             trigger_turn,
+         ),
+         start_options: Default::default(),
++        accepted: None,
+     };
+     let first_mail = "First deferred worker update.";
+     let second_mail = "Worker update after stop.";
 diff --git a/codex-rs/core/tests/suite/compact_remote.rs b/codex-rs/core/tests/suite/compact_remote.rs
 index faa68b07f02e6fcf61048047d8f4663d88f183b6..9804146c734e6313b4e9ecabab2e62df5ca8ba95 100644
 --- a/codex-rs/core/tests/suite/compact_remote.rs
@@ -2268,6 +2316,50 @@ index faa68b07f02e6fcf61048047d8f4663d88f183b6..9804146c734e6313b4e9ecabab2e62df
          })
          .await?;
      wait_for_turn_complete(&codex).await;
+diff --git a/codex-rs/core/tests/suite/critical_path_runtime.rs b/codex-rs/core/tests/suite/critical_path_runtime.rs
+index f286d292f3d1e1f5ad8edbadfa3c04befd68d5e0..b4b1a7dca9dca15163d1074a1b82d54b06ff50e4 100644
+--- a/codex-rs/core/tests/suite/critical_path_runtime.rs
++++ b/codex-rs/core/tests/suite/critical_path_runtime.rs
+@@ -505,6 +505,7 @@ async fn spawned_child_has_independent_timing_and_parent_wait_is_tools(
+                     /*trigger_turn*/ true,
+                 ),
+                 start_options: Default::default(),
++                accepted: None,
+             })
+             .await?;
+         // The response fences the submission queue before the tool can finish.
+diff --git a/codex-rs/core/tests/suite/guardian_history.rs b/codex-rs/core/tests/suite/guardian_history.rs
+index cf86b062cc4910b5ce6906c5fe8e77b5b9f632b0..6081ac782ba915f235e1b9660856fa1e21bac02a 100644
+--- a/codex-rs/core/tests/suite/guardian_history.rs
++++ b/codex-rs/core/tests/suite/guardian_history.rs
+@@ -482,6 +482,7 @@ async fn guardian_history_uses_deltas_between_eviction_batches(
+                 /*trigger_turn*/ true,
+             ),
+             start_options: Default::default(),
++            accepted: None,
+         })
+         .await?;
+     wait_for_event(&test.codex, |event| {
+diff --git a/codex-rs/core/tests/suite/guardian_retry.rs b/codex-rs/core/tests/suite/guardian_retry.rs
+index 30fdbc6e9061ce57db17881b1337c4f3fb963866..a8dd2f2affa224e8ac07b12b72c1084be3d163af 100644
+--- a/codex-rs/core/tests/suite/guardian_retry.rs
++++ b/codex-rs/core/tests/suite/guardian_retry.rs
+@@ -130,6 +130,7 @@ async fn interrupted_guardian_review_preserves_evidence_once(
+                     /*trigger_turn*/ true,
+                 ),
+                 start_options: Default::default(),
++                accepted: None,
+             })
+             .await?;
+         if evidence == "committed-evidence" {
+@@ -304,6 +305,7 @@ async fn guardian_retry_executes_only_after_a_completed_approval() -> Result<()>
+                 /*trigger_turn*/ true,
+             ),
+             start_options: Default::default(),
++            accepted: None,
+         })
+         .await?;
+     let mut reviews = Vec::new();
 diff --git a/codex-rs/core/tests/suite/models_cache_auth.rs b/codex-rs/core/tests/suite/models_cache_auth.rs
 index 8dd6f14bee8cd972e9d85547f6d9a69df51fcc0c..d82d99bef37413e17f3fb93f3601cd0bcf42c161 100644
 --- a/codex-rs/core/tests/suite/models_cache_auth.rs
@@ -2312,8 +2404,20 @@ index 6312e5342acdabdc133983c4c9bf179e63f7b0f2..c2ee290fa7a96976aaf35054217ef20c
                  })
                  .await?;
          }
+diff --git a/codex-rs/core/tests/suite/scenarios_guardian_agent_messages_tests.rs b/codex-rs/core/tests/suite/scenarios_guardian_agent_messages_tests.rs
+index 514b9145044ece404255cf328f5590ca6d0b9aac..18d8404909df3cdc14574d2771f226b908851fc6 100644
+--- a/codex-rs/core/tests/suite/scenarios_guardian_agent_messages_tests.rs
++++ b/codex-rs/core/tests/suite/scenarios_guardian_agent_messages_tests.rs
+@@ -275,6 +275,7 @@ async fn encrypted_parent_reply_survives_incremental_guardian_reviews(
+         .submit(Op::InterAgentCommunication {
+             communication,
+             start_options: Default::default(),
++            accepted: None,
+         })
+         .await?;
+     wait_for_event(&test.codex, |event| {
 diff --git a/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs b/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs
-index 7474c1d7743190f95b66fb3646586bedcb12fa45..40be2b0c9f5b90bd8cb2f939b2c20eb468ec1e66 100644
+index 7474c1d7743190f95b66fb3646586bedcb12fa45..cb222941da60ff6da83997eeb60a3e2a47450fdc 100644
 --- a/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs
 +++ b/codex-rs/core/tests/suite/scenarios_mailbox_preemption_tests.rs
 @@ -131,6 +131,7 @@ async fn mailbox_preemption_preserves_response_when_deferred(
@@ -2324,8 +2428,28 @@ index 7474c1d7743190f95b66fb3646586bedcb12fa45..40be2b0c9f5b90bd8cb2f939b2c20eb4
              })
              .await?;
      }
+@@ -529,6 +530,7 @@ async fn start_mailbox_preemption(
+                     /*trigger_turn*/ false,
+                 ),
+                 start_options: Default::default(),
++                accepted: None,
+             })
+             .await?;
+     }
+diff --git a/codex-rs/core/tests/suite/scenarios_turn_input_agent_message.rs b/codex-rs/core/tests/suite/scenarios_turn_input_agent_message.rs
+index 236c583de355790ca17bc1e4bda9236966f09705..d23dbb1a1270b5c355cf76af9f9907d16a60c821 100644
+--- a/codex-rs/core/tests/suite/scenarios_turn_input_agent_message.rs
++++ b/codex-rs/core/tests/suite/scenarios_turn_input_agent_message.rs
+@@ -143,6 +143,7 @@ async fn agent_followup_preserves_native_boundaries(
+                 /*trigger_turn*/ false,
+             ),
+             start_options: Default::default(),
++            accepted: None,
+         })
+         .await?;
+     child.submit(Op::RealtimeConversationListVoices).await?;
 diff --git a/codex-rs/core/tests/suite/subagent_notifications.rs b/codex-rs/core/tests/suite/subagent_notifications.rs
-index 44c26e15ec025cc5689237a01e4fa53e6c03c582..9193354e03f4485db4cc4ed4d5ab5ba6b68dcdf5 100644
+index 44c26e15ec025cc5689237a01e4fa53e6c03c582..5da3dea0bb7cf1a109940c49fc30dd14dfe9222f 100644
 --- a/codex-rs/core/tests/suite/subagent_notifications.rs
 +++ b/codex-rs/core/tests/suite/subagent_notifications.rs
 @@ -45,6 +45,7 @@ use codex_thread_store::LoadThreadHistoryParams;
@@ -2604,7 +2728,15 @@ index 44c26e15ec025cc5689237a01e4fa53e6c03c582..9193354e03f4485db4cc4ed4d5ab5ba6
 
      submit_turn_with_trigger(&test, SPAWN_REQUESTER_PROMPT, "composer").await?;
      let requester_thread_id = created_threads.recv().await?;
-@@ -3278,51 +3503,7 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn(
+@@ -3228,6 +3453,7 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn(
+                     /*trigger_turn*/ false,
+                 ),
+                 start_options: TurnStartOptions::default(),
++                accepted: None,
+             })
+             .await?;
+         worker_followup_turn_id =
+@@ -3278,51 +3504,7 @@ async fn multi_agent_v2_peer_followup_completion_notifies_initiating_turn(
          )
      );
 
@@ -2658,10 +2790,18 @@ index 44c26e15ec025cc5689237a01e4fa53e6c03c582..9193354e03f4485db4cc4ed4d5ab5ba6
      Ok(())
  }
 diff --git a/codex-rs/core/tests/suite/turn_input_submission.rs b/codex-rs/core/tests/suite/turn_input_submission.rs
-index 1c505abfd797c5983c1fa8e879b767d6a67cecca..45fe8dee6d4b7b7e77d6737dfba783d068975e00 100644
+index 1c505abfd797c5983c1fa8e879b767d6a67cecca..8ee62595e192093f4ca018a9a105d4b5045410a6 100644
 --- a/codex-rs/core/tests/suite/turn_input_submission.rs
 +++ b/codex-rs/core/tests/suite/turn_input_submission.rs
-@@ -567,6 +567,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()>
+@@ -198,6 +198,7 @@ async fn turn_extension_data_is_captured_for_automatic_turns() -> anyhow::Result
+                 /*trigger_turn*/ true,
+             ),
+             start_options: Default::default(),
++            accepted: None,
+         })
+         .await?;
+     let automatic_id = wait_for_event_match(&thread, |event| match event {
+@@ -567,6 +568,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()>
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2669,6 +2809,18 @@ index 1c505abfd797c5983c1fa8e879b767d6a67cecca..45fe8dee6d4b7b7e77d6737dfba783d0
          })
          .await?;
      wait_for_event(&test.codex, |event| {
+diff --git a/codex-rs/core/tests/suite/wake_reservation.rs b/codex-rs/core/tests/suite/wake_reservation.rs
+index 9bfcbfa98a8756d9690b68df3595003e200efbb5..7aa59eaae649e60d726bec4edf599b93b01eeda1 100644
+--- a/codex-rs/core/tests/suite/wake_reservation.rs
++++ b/codex-rs/core/tests/suite/wake_reservation.rs
+@@ -181,6 +181,7 @@ async fn interrupt_during_wake_context_construction_does_not_start_turn() -> any
+                 /*trigger_turn*/ false,
+             ),
+             start_options: Default::default(),
++            accepted: None,
+         })
+         .await?;
+     codex.submit(Op::RealtimeConversationListVoices).await?;
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
 index 58e3b3cf92cc02e55a1fd61d4aac6e080a9059c7..197d95614cb978ea22889c9a5a78bbbe4fa2f97a 100644
 --- a/codex-rs/protocol/src/protocol.rs
