@@ -60,7 +60,7 @@ pub(super) async fn admit(
         .filter(|task| Arc::ptr_eq(&task.turn_context, context))
         .filter(|_| !cancellation.is_cancelled())
         .ok_or_else(|| CodexErr::new(CodexErrorDetails::TurnAborted))?;
-    task._agent_execution_guard = Some(guard);
+    task.agent_execution_guard = Some(guard);
     task.pending_initial_input.take().ok_or_else(|| {
         CodexErr::Fatal("initial input missing from the task awaiting host admission".into())
     })

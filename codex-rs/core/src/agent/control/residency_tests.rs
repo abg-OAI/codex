@@ -74,6 +74,7 @@ async fn residency_slot_reservation_unloads_oldest_idle_v2_agent() {
     let delivery = first.thread.submit(Op::InterAgentCommunication {
         communication: communication.clone(),
         start_options: Default::default(),
+        accepted: None,
     });
     tokio::pin!(delivery);
     assert!(futures::poll!(delivery.as_mut()).is_pending());
