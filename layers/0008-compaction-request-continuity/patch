@@ -176,7 +176,7 @@ index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62
  fn rewritten_output_preserves_harness_metadata() {
      let envelope = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index 5656fb486b47a64ed75096d604078eba88212d82..751e66af805cbd67a81bedf0f235135a0b993e6c 100644
+index 5656fb486b47a64ed75096d604078eba88212d82..99bf324d6c130adba46131524cff916d3ddf4b00 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
 @@ -491,6 +491,7 @@ async fn collect_compaction_output(
@@ -289,7 +289,7 @@ index 5656fb486b47a64ed75096d604078eba88212d82..751e66af805cbd67a81bedf0f235135a
          )
      }
 
-@@ -1002,6 +1028,58 @@ mod tests {
+@@ -1002,6 +1028,68 @@ mod tests {
          );
      }
 
@@ -341,14 +341,24 @@ index 5656fb486b47a64ed75096d604078eba88212d82..751e66af805cbd67a81bedf0f235135a
 +        );
 +        assert_eq!(
 +            history,
-+            vec![older_request.into(), assignment, checkpoint.into()]
++            vec![
++                older_request.into(),
++                assignment,
++                ResponseItemEnvelope {
++                    item: checkpoint,
++                    metadata: Some(CodexHarnessMetadata {
++                        compaction_without_file_error_sources: true,
++                        ..Default::default()
++                    }),
++                },
++            ]
 +        );
 +    }
 +
      #[test]
      fn build_v2_compacted_history_preserves_retained_metadata_sidecar() {
          let retained = message("user", "keep", /*phase*/ None);
-@@ -1047,6 +1125,7 @@ mod tests {
+@@ -1047,6 +1135,7 @@ mod tests {
                  &features,
                  RetainedImageBudget::Disabled,
                  &FileAudioDurations::default(),
@@ -356,7 +366,7 @@ index 5656fb486b47a64ed75096d604078eba88212d82..751e66af805cbd67a81bedf0f235135a
              );
              let mut expected = vec![
                  ResponseItemEnvelope {
-@@ -1078,6 +1157,134 @@ mod tests {
+@@ -1078,6 +1167,135 @@ mod tests {
          }
      }
 
@@ -401,6 +411,7 @@ index 5656fb486b47a64ed75096d604078eba88212d82..751e66af805cbd67a81bedf0f235135a
 +
 +            let mut normalized = crate::context_manager::ContextManager::default();
 +            normalized.replace_annotated(history.clone());
++            let recorded = normalized.annotated_items().to_vec();
 +            let prompt = normalized
 +                .for_prompt_annotated(
 +                    &[codex_protocol::openai_models::InputModality::Text],
@@ -410,7 +421,7 @@ index 5656fb486b47a64ed75096d604078eba88212d82..751e66af805cbd67a81bedf0f235135a
 +            assert_eq!(prompt.len(), history.len());
 +            assert_eq!(
 +                prompt[1..],
-+                history[1..],
++                recorded[1..],
 +                "standalone outputs need no fabricated tool calls"
 +            );
 +        }
@@ -767,10 +778,10 @@ index 3e8221ba33b70690fb1641fdae6d7a7dbcbf35c0..8c40e60529f750bbe877b3c9b9284cd8
                  estimate_item_token_count_with_audio(&envelope.item, &self.file_audio_durations)
              })
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index 334a764d00d3ff11861df258e68393910e72ae21..a867e766e0bc72e82a79750cce5734bfe8253b58 100644
+index 334a764d00d3ff11861df258e68393910e72ae21..f0298b885161aac79ea8617686f567fc58664f48 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
-@@ -84,6 +84,88 @@ fn sampling_checkpoint_excludes_input_appended_during_request() {
+@@ -84,6 +84,95 @@ fn sampling_checkpoint_excludes_input_appended_during_request() {
      );
  }
 
@@ -799,14 +810,16 @@ index 334a764d00d3ff11861df258e68393910e72ae21..a867e766e0bc72e82a79750cce5734bf
 +    };
 +    let later = ResponseItemEnvelope::new(user_msg("Continue without publishing."));
 +    let mut stored = vec![account];
-+    let mut expected = Vec::new();
 +    if original_survives {
-+        let original = ResponseItemEnvelope::new(original);
-+        stored.push(original.clone());
-+        expected.push(original);
++        stored.push(ResponseItemEnvelope::new(original));
 +    }
-+    stored.push(later.clone());
-+    expected.push(later);
++    stored.push(later);
++    for (index, envelope) in stored.iter_mut().enumerate() {
++        let metadata = envelope.metadata.get_or_insert_default();
++        metadata.history_sequence = Some(index as u64 + 1);
++        metadata.sampled_through_sequence = Some(0);
++    }
++    let expected = stored[1..].to_vec();
 +    let mut history = ContextManager::default();
 +    history.replace_annotated(stored.clone());
 +    let mut baseline = ContextManager::default();
@@ -842,10 +855,15 @@ index 334a764d00d3ff11861df258e68393910e72ae21..a867e766e0bc72e82a79750cce5734bf
 +        )]),
 +        ..Default::default()
 +    });
-+    let expected = vec![
++    let mut expected = vec![
 +        ResponseItemEnvelope::new(user_msg("Explain this quotation.")),
 +        quoted,
 +    ];
++    for (index, envelope) in expected.iter_mut().enumerate() {
++        let metadata = envelope.metadata.get_or_insert_default();
++        metadata.history_sequence = Some(index as u64 + 1);
++        metadata.sampled_through_sequence = Some(0);
++    }
 +    let mut history = ContextManager::default();
 +    history.replace_annotated(expected.clone());
 +    assert_eq!(
@@ -908,10 +926,10 @@ index 930d410a6e10336d541dfb05323b6f1ae9f15c03..cc296773047b9287466d8f2d1b9971da
                              Vec::new(),
                              &user_messages,
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index f4b312503a85fc4ff5fa01fe5b188ca9ce08ec3a..73955a980ed0f624d30f2694b2ad2954a40c858b 100644
+index f4b312503a85fc4ff5fa01fe5b188ca9ce08ec3a..4517a4bbe682bc4d16d746841da152dcb7cec8f2 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-@@ -1481,6 +1481,106 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
+@@ -1481,6 +1481,124 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
      assert_eq!(reconstructed.window_id, Some(initial_window_id));
  }
 
@@ -953,23 +971,41 @@ index f4b312503a85fc4ff5fa01fe5b188ca9ce08ec3a..73955a980ed0f624d30f2694b2ad2954
 +        ContextManager::default(),
 +        codex_utils_output_truncation::TruncationPolicy::Bytes(10_000),
 +    );
-+    assert_eq!(reconstructed.history.contains(&assignment), retained);
++    assert_eq!(
++        reconstructed
++            .history
++            .iter()
++            .any(|envelope| envelope.item == assignment.item),
++        retained
++    );
 +}
 +
 +/// Persisted replacement history keeps delivery bodies and identity on cold replay.
 +#[tokio::test]
 +async fn compaction_delivery_survives_rollout_replay_and_next_compaction() {
 +    let (session, turn_context) = make_session_and_context().await;
-+    let assignment = crate::saffron::compaction_requests::tests::admitted_delivery(
++    let mut assignment = crate::saffron::compaction_requests::tests::admitted_delivery(
 +        "Investigate the orchard export instead.",
 +        2,
 +    );
-+    let steer = crate::saffron::compaction_requests::tests::admitted_delivery(
++    let mut steer = crate::saffron::compaction_requests::tests::admitted_delivery(
 +        "Inspect its midnight batch first.",
 +        3,
 +    );
++    for (envelope, sequence) in [(&mut assignment, 2), (&mut steer, 3)] {
++        let metadata = envelope.metadata.get_or_insert_default();
++        metadata.history_sequence = Some(sequence);
++        metadata.sampled_through_sequence = Some(0);
++    }
 +    let history = vec![
-+        ResponseItemEnvelope::new(user_message("Catalogue garden fixtures.")),
++        ResponseItemEnvelope {
++            item: user_message("Catalogue garden fixtures."),
++            metadata: Some(codex_history::CodexHarnessMetadata {
++                history_sequence: Some(1),
++                sampled_through_sequence: Some(0),
++                ..Default::default()
++            }),
++        },
 +        assignment.clone(),
 +        steer.clone(),
 +    ];
