@@ -2,14 +2,14 @@
 
 use super::*;
 use crate::CodexAppsToolsCache;
-use crate::build_models_manager;
+use crate::ThreadStoreBuilder;
+use crate::build_startup_models;
 use crate::init_state_db;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
 use crate::session::tests::update_selected_settings_for_test;
 use crate::session::tests::update_turn_settings_for_test;
 use crate::thread_manager::NewThread;
-use crate::thread_manager::thread_store_from_config;
 use crate::tools::context::ToolCallSource;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_extension_api::TurnStartAdmission;
@@ -17,6 +17,7 @@ use codex_history::RolloutItem;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider::create_model_provider;
+use codex_models_manager::manager::ModelCatalogSettings;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ContentItem;
@@ -179,8 +180,12 @@ fn fork_runs_from_completed_history_without_a_goal(
         let auth = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
         let manager = Arc::new(ThreadManager::new(
             &config,
-            Arc::clone(&auth),
-            build_models_manager(&config, auth),
+            build_startup_models(
+                &config,
+                auth,
+                "fork-test".to_string(),
+                Arc::new(ModelCatalogSettings::disk(config.codex_home.to_path_buf())),
+            ),
             CodexAppsToolsCache::default(),
             SessionSource::Exec,
             Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -188,9 +193,8 @@ fn fork_runs_from_completed_history_without_a_goal(
             Arc::new(crate::test_support::EmptyUserInstructionsProvider),
             None,
             crate::passthrough_image_store(),
-            thread_store_from_config(&config, Some(Arc::clone(&state))),
+            ThreadStoreBuilder::from_config(&config, Some(Arc::clone(&state))).build(),
             None,
-            "fork-test".to_string(),
             None,
             None,
         ));
@@ -428,8 +432,12 @@ fn rejected_start_returns_the_created_thread() -> anyhow::Result<()> {
         let auth = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
         let manager = Arc::new(ThreadManager::new(
             &config,
-            Arc::clone(&auth),
-            build_models_manager(&config, auth),
+            build_startup_models(
+                &config,
+                auth,
+                "fork-rejected-test".to_string(),
+                Arc::new(ModelCatalogSettings::disk(config.codex_home.to_path_buf())),
+            ),
             CodexAppsToolsCache::default(),
             SessionSource::Exec,
             Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -437,9 +445,8 @@ fn rejected_start_returns_the_created_thread() -> anyhow::Result<()> {
             Arc::new(crate::test_support::EmptyUserInstructionsProvider),
             None,
             crate::passthrough_image_store(),
-            thread_store_from_config(&config, None),
+            ThreadStoreBuilder::from_config(&config, None).build(),
             None,
-            "fork-rejected-test".to_string(),
             None,
             None,
         ));

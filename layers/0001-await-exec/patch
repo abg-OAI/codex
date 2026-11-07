@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 51573406cbac98747a83e8b6fa7594b2b6c59063..d0d9e105d9ead7bc98e385279f0233b24b088ab0 100644
+index 985bc7c99ce88f42b7e6593df68be6ff573394f6..fdc21d3de2fd4da6df2406578d60f05378194480 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -143,6 +143,7 @@ mod skills;
+@@ -147,6 +147,7 @@ mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  #[cfg(test)]
  pub(crate) use skills::skills_load_input_from_config;
@@ -28,7 +28,7 @@ index ec7a7d24aa87a8b28d9380f2aa8338b541c18057..aadd9c59752cbec9014448ff255615f2
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 80ffe7b138915910d3953bf2ffdc9c3dd0db8826..b5d92509255d090e1ae519d4d683813349862e93 100644
+index 6274bc6fb737152977881f490823782f0666c566..fa3a9c2c13b3d4790090069662f60ade8124b823 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -39,7 +39,7 @@ index 80ffe7b138915910d3953bf2ffdc9c3dd0db8826..b5d92509255d090e1ae519d4d6838133
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -1266,6 +1267,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1297,6 +1298,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
      if features.enabled(Feature::UnifiedExec) {
          registry.add(ExecCommandHandler::new(options));
          registry.add(WriteStdinHandler);
@@ -48,11 +48,11 @@ index 80ffe7b138915910d3953bf2ffdc9c3dd0db8826..b5d92509255d090e1ae519d4d6838133
          // Managed requirements are the only configuration path that can keep
          // unified exec disabled. Preserve command execution without exposing a
 diff --git a/codex-rs/core/src/unified_exec/mod.rs b/codex-rs/core/src/unified_exec/mod.rs
-index 78ec3c5d90b4c9f8c2eb238834f777652d75172e..440aebc1ecdc205833ad2e035798b434cfa378e0 100644
+index 466af4bd86ab188cd0afa2d30a794257a2067f53..30260bf82ac23594a7277d54e7a0033bdf8ae835 100644
 --- a/codex-rs/core/src/unified_exec/mod.rs
 +++ b/codex-rs/core/src/unified_exec/mod.rs
-@@ -60,6 +60,8 @@ pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
-
+@@ -62,6 +62,8 @@ pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
+ pub(crate) use command_sessions::command_sessions_state;
  pub(crate) use errors::UnifiedExecError;
  pub(crate) use process::UnifiedExecProcess;
 +pub(crate) use process_manager::ProcessInteractionAcquisition;
@@ -91,7 +91,7 @@ index f9afaaa41d5349e519ca45585bcd05954655dd4d..75c70778c547fc08ee4318f31465b3fb
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 9715d1b1a8d0c3e2f0c02c7b27858fa77bb75bd6..59ec22a777f62a80f342e55d72022396789505bb 100644
+index caa45622a2c826ae7a7c14c1edd2c849e8f81799..d9551a22d0217cee3f9229a0e2af4713f7b942e1 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
 @@ -108,6 +108,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
@@ -107,11 +107,11 @@ index 9715d1b1a8d0c3e2f0c02c7b27858fa77bb75bd6..59ec22a777f62a80f342e55d72022396
  ///
  /// In production builds this value should remain at its default (`false`) and
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index d78151c35b91fb4dafdcb770500486cc01dfca09..f91823e2fcb12367457b9e94525ce3b892f5c81f 100644
+index 59eb54f175dea72a3a7bc3e5ec946ca9abad0547..e36914a7794d9f832df0360359da35ecaf9cf779 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -210,6 +210,7 @@ mod rollout_compression;
- mod rollout_list_find;
+@@ -216,6 +216,7 @@ mod rollout_list_find;
+ mod runtime_auth;
  mod safety_buffering;
  mod safety_check_downgrade;
 +mod saffrodex_await_exec;
