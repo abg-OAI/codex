@@ -1982,6 +1982,18 @@ index 5e32f8d984af4e5ab74af1f790aed7cbcada76e0..e3034fae0a2e06ba42f2af51158dbf17
      match kind {
          TurnStartKind::User => {
              session.clear_connector_selection().await;
+diff --git a/codex-rs/core/src/session/turn_input_agent.rs b/codex-rs/core/src/session/turn_input_agent.rs
+index 44c59cd0f1967fbac3326dcc64352a3e4c4a4bc1..58740fc301b3ae73493763677fd12ce35db64f60 100644
+--- a/codex-rs/core/src/session/turn_input_agent.rs
++++ b/codex-rs/core/src/session/turn_input_agent.rs
+@@ -55,6 +55,7 @@ pub(super) async fn submit(
+         submission_id,
+         pending,
+         start,
++        None,
+     ))
+     .await;
+     Ok(TurnInputSubmission::Accepted)
 diff --git a/codex-rs/core/src/state/turn.rs b/codex-rs/core/src/state/turn.rs
 index 6d34c18300be1a0156d241ff08c93a76ffd74f96..2a9c2b161ec33863f81f94722fc95837659b98af 100644
 --- a/codex-rs/core/src/state/turn.rs
