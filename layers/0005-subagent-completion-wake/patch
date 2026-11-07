@@ -588,24 +588,20 @@ index 452e6fa747b92238f62bf9110ac21bf44683db8a..68e9771a0dd90f9e63f06f2f9cf13aec
                      context,
                      start_options,
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index f286b37d4e71f99042a463cf55c8fe127d35ac08..099201b9e28b234c4fa0715f00e1935ea5e2d560 100644
+index f286b37d4e71f99042a463cf55c8fe127d35ac08..cb7f588cec6decdf307d71f716b26d89ad337885 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -31,7 +31,13 @@ use crate::context::world_state::IncrementalToolsHint;
+@@ -31,7 +31,9 @@ use crate::context::world_state::IncrementalToolsHint;
  use crate::init_state_db;
  use crate::responses_metadata::CodexResponsesRequestKind;
  use crate::session::SessionSettingsUpdate;
-+use crate::session::TurnInput;
 +use crate::session::session::Session;
  use crate::session::step_context::StepContext;
-+use crate::session::turn_context::TurnContext;
-+use crate::state::TaskKind;
-+use crate::tasks::SessionTask;
-+use crate::tasks::SessionTaskResult;
++use crate::tasks::completion_test_support::CompletingTask;
  use crate::thread_manager::ForkSnapshot;
  use crate::thread_manager::StartThreadOptions;
  use crate::tools::handlers::multi_agents_common::thread_spawn_source;
-@@ -119,6 +125,7 @@ use std::task::Context;
+@@ -119,6 +121,7 @@ use std::task::Context;
  use std::task::Poll;
  use std::task::Waker;
  use tempfile::TempDir;
@@ -613,14 +609,10 @@ index f286b37d4e71f99042a463cf55c8fe127d35ac08..099201b9e28b234c4fa0715f00e1935e
  use tokio::time::Duration;
  use tokio::time::sleep;
  use tokio::time::timeout;
-@@ -277,6 +284,38 @@ struct AgentControlHarness {
+@@ -277,6 +280,13 @@ struct AgentControlHarness {
      control: LocalAgentControl,
  }
 
-+struct CompletingTask {
-+    finish: Arc<Notify>,
-+}
-+
 +#[derive(Clone, Copy)]
 +enum ActiveRecipientEnd {
 +    Complete,
@@ -628,31 +620,10 @@ index f286b37d4e71f99042a463cf55c8fe127d35ac08..099201b9e28b234c4fa0715f00e1935e
 +    Shutdown,
 +}
 +
-+impl SessionTask for CompletingTask {
-+    fn kind(&self) -> TaskKind {
-+        TaskKind::Regular
-+    }
-+
-+    fn span_name(&self) -> &'static str {
-+        "session_task.completing"
-+    }
-+
-+    async fn run(
-+        self: Arc<Self>,
-+        _session: Arc<Session>,
-+        _turn_context: Arc<TurnContext>,
-+        _input: Vec<TurnInput>,
-+        _cancellation_token: CancellationToken,
-+    ) -> SessionTaskResult {
-+        self.finish.notified().await;
-+        Ok(Some("done".to_string()))
-+    }
-+}
-+
  impl AgentControlHarness {
      async fn new() -> Self {
          let (home, config) = test_config().await;
-@@ -1096,6 +1135,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
+@@ -1096,6 +1106,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
          Op::InterAgentCommunication {
              communication: communication.clone(),
              start_options: Default::default(),
@@ -660,7 +631,7 @@ index f286b37d4e71f99042a463cf55c8fe127d35ac08..099201b9e28b234c4fa0715f00e1935e
          },
      );
      let captured = harness
-@@ -1128,6 +1168,315 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
+@@ -1128,6 +1139,315 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
      ));
  }
 
@@ -976,7 +947,7 @@ index f286b37d4e71f99042a463cf55c8fe127d35ac08..099201b9e28b234c4fa0715f00e1935e
  #[tokio::test]
  async fn ensure_v2_agent_loaded_reloads_registered_unloaded_agent() {
      check_v2_agent_reload(V2ReloadRoute::Sender).await;
-@@ -1559,6 +1908,7 @@ async fn check_v2_agent_reload(route: V2ReloadRoute) {
+@@ -1559,6 +1879,7 @@ async fn check_v2_agent_reload(route: V2ReloadRoute) {
          Op::InterAgentCommunication {
              communication,
              start_options: Default::default(),
@@ -984,7 +955,7 @@ index f286b37d4e71f99042a463cf55c8fe127d35ac08..099201b9e28b234c4fa0715f00e1935e
          },
      );
      let captured = harness
-@@ -4641,6 +4991,448 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
+@@ -4641,6 +4962,448 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
      assert!(!has_subagent_notification(root_history.raw_items()));
  }
 
@@ -1433,7 +1404,7 @@ index f286b37d4e71f99042a463cf55c8fe127d35ac08..099201b9e28b234c4fa0715f00e1935e
  #[tokio::test]
  async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
      let harness = AgentControlHarness::new().await;
-@@ -4708,6 +5500,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
+@@ -4708,6 +5471,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -2068,10 +2039,18 @@ index 40baba5f700f513eeb5e3563183dca211a46b152..12b11047ebd30a33539eb452b7ae6371
          CodexErr::Fatal("initial input missing from the task awaiting host admission".into())
      })
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index ab0520c945e52fd313232994cb662b9958a5cd9d..bc92626fc93274a19dfcf12ee638b2cd77f22ba2 100644
+index ab0520c945e52fd313232994cb662b9958a5cd9d..660bf3a1c30442b57446db02139173a267d95ca1 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -85,6 +85,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
+@@ -1,5 +1,7 @@
+ mod admission;
+ mod compact;
++#[cfg(test)]
++pub(crate) mod completion_test_support;
+ mod lifecycle;
+ mod regular;
+ mod review;
+@@ -85,6 +87,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
      Developer,
  }
 
@@ -2084,7 +2063,7 @@ index ab0520c945e52fd313232994cb662b9958a5cd9d..bc92626fc93274a19dfcf12ee638b2cd
  impl InterruptedTurnHistoryMarker {
      pub(crate) fn from_config_and_version(
          config: &Config,
-@@ -338,7 +344,6 @@ impl Session {
+@@ -338,7 +346,6 @@ impl Session {
          let cancellation_token = CancellationToken::new();
          let done = Arc::new(Notify::new());
 
@@ -2092,7 +2071,7 @@ index ab0520c945e52fd313232994cb662b9958a5cd9d..bc92626fc93274a19dfcf12ee638b2cd
          let turn_state = {
              let mut active = self.active_turn.lock().await;
              if self.outcome_handoffs_closed() {
-@@ -349,6 +354,10 @@ impl Session {
+@@ -349,6 +356,10 @@ impl Session {
              turn.finishing = None;
              Arc::clone(&turn.turn_state)
          };
@@ -2103,7 +2082,7 @@ index ab0520c945e52fd313232994cb662b9958a5cd9d..bc92626fc93274a19dfcf12ee638b2cd
          turn_state.lock().await.token_usage_at_turn_start = token_usage_at_turn_start.clone();
          self.input_queue
              .extend_pending_input_for_turn_state(turn_state.as_ref(), pending_items)
-@@ -391,6 +400,12 @@ impl Session {
+@@ -391,6 +402,12 @@ impl Session {
                  None,
              ),
          };
@@ -2116,7 +2095,7 @@ index ab0520c945e52fd313232994cb662b9958a5cd9d..bc92626fc93274a19dfcf12ee638b2cd
          let done_clone = Arc::clone(&done);
          let session = Arc::clone(self);
          let ctx = Arc::clone(&turn_context);
-@@ -491,7 +506,8 @@ impl Session {
+@@ -491,7 +508,8 @@ impl Session {
              task,
              cancellation_token,
              turn_context: Arc::clone(&turn_context),
@@ -2126,7 +2105,7 @@ index ab0520c945e52fd313232994cb662b9958a5cd9d..bc92626fc93274a19dfcf12ee638b2cd
              outcome_handoff,
              pending_initial_input,
              _diagnostics_guard: ACTIVE_TURNS.track(),
-@@ -643,6 +659,24 @@ impl Session {
+@@ -643,6 +661,24 @@ impl Session {
      }
 
      pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
@@ -2151,7 +2130,7 @@ index ab0520c945e52fd313232994cb662b9958a5cd9d..bc92626fc93274a19dfcf12ee638b2cd
          let mut aborted_turn = false;
          let mut active_turn_to_clear = None;
          if let Some(mut active_turn) = self.take_active_turn(&reason).await {
-@@ -667,8 +701,16 @@ impl Session {
+@@ -667,8 +703,16 @@ impl Session {
              // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
              self.input_queue.clear_pending(&active_turn).await;
          }
@@ -2170,7 +2149,7 @@ index ab0520c945e52fd313232994cb662b9958a5cd9d..bc92626fc93274a19dfcf12ee638b2cd
          }
      }
 
-@@ -748,7 +790,14 @@ impl Session {
+@@ -748,7 +792,14 @@ impl Session {
              regular_output.is_some() && turn_context.terminal_error.lock().await.is_none();
          let finishing = CancellationToken::new();
          let finish_recording = finishing.clone().drop_guard();
@@ -2186,7 +2165,7 @@ index ab0520c945e52fd313232994cb662b9958a5cd9d..bc92626fc93274a19dfcf12ee638b2cd
              let mut active = self.active_turn.lock().await;
              let active_turn = active.as_mut()?;
              if !Arc::ptr_eq(&active_turn.task.as_ref()?.turn_context, &turn_context) {
-@@ -767,10 +816,12 @@ impl Session {
+@@ -767,10 +818,12 @@ impl Session {
              active_turn.finishing = Some(finishing);
              (
                  Arc::clone(&active_turn.turn_state),
@@ -2200,7 +2179,7 @@ index ab0520c945e52fd313232994cb662b9958a5cd9d..bc92626fc93274a19dfcf12ee638b2cd
              )
          };
          turn_context
-@@ -1009,6 +1060,8 @@ impl Session {
+@@ -1009,6 +1062,8 @@ impl Session {
              self.send_event(turn_context.as_ref(), event).await;
          }
          drop(outcome_handoff);
