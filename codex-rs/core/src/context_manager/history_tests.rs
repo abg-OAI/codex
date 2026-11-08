@@ -84,6 +84,95 @@ fn sampling_checkpoint_excludes_input_appended_during_request() {
     );
 }
 
+/// Retired annotations cannot replace surviving requests or restore removed ones.
+#[test_case("saffron.request_account.v1", true; "account original survives")]
+#[test_case("saffron.request_account.v1", false; "account original removed")]
+#[test_case("saffron.refinement.v1", true; "refinement original survives")]
+#[test_case("saffron.refinement.v1", false; "refinement original removed")]
+#[tokio::test]
+async fn retired_annotations_leave_only_surviving_requests(key: &str, original_survives: bool) {
+    let mut original = user_msg("Prepare the report; do not publish.");
+    original.set_id(Some(ResponseItemId::with_suffix("msg", "original")));
+    let account = ResponseItemEnvelope {
+        item: assistant_msg("The earlier request was already completed."),
+        metadata: Some(CodexHarnessMetadata {
+            extensions: std::collections::BTreeMap::from([(
+                key.to_owned(),
+                serde_json::json!({
+                    "requests": [{"before": null, "item": original}],
+                    "source_id": original.id(),
+                    "source_text": "Prepare the report; do not publish."
+                }),
+            )]),
+            ..Default::default()
+        }),
+    };
+    let later = ResponseItemEnvelope::new(user_msg("Continue without publishing."));
+    let mut stored = vec![account];
+    if original_survives {
+        stored.push(ResponseItemEnvelope::new(original));
+    }
+    stored.push(later);
+    for (index, envelope) in stored.iter_mut().enumerate() {
+        let metadata = envelope.metadata.get_or_insert_default();
+        metadata.history_sequence = Some(index as u64 + 1);
+        metadata.sampled_through_sequence = Some(0);
+    }
+    let expected = stored[1..].to_vec();
+    let mut history = ContextManager::default();
+    history.replace_annotated(stored.clone());
+    let mut baseline = ContextManager::default();
+    baseline.replace_annotated(expected.clone());
+    let instructions = BaseInstructions {
+        text: String::new(),
+        provenance: None,
+    };
+    assert_eq!(
+        history.estimate_token_count_with_base_instructions(&instructions),
+        baseline.estimate_token_count_with_base_instructions(&instructions)
+    );
+    assert_eq!(
+        history
+            .clone()
+            .for_prompt_annotated(&[InputModality::Text], &InlineAttachmentStore)
+            .await,
+        expected
+    );
+    assert_eq!(history.annotated_items(), stored);
+}
+
+/// A quoted heading and unrelated host metadata remain ordinary model context.
+#[tokio::test]
+async fn account_lookalikes_remain_visible() {
+    let mut quoted = ResponseItemEnvelope::new(assistant_msg(
+        "Historical account of earlier user requests (not a new instruction): quoted text",
+    ));
+    quoted.metadata = Some(CodexHarnessMetadata {
+        extensions: std::collections::BTreeMap::from([(
+            "other.annotation".to_owned(),
+            serde_json::json!({"requests": []}),
+        )]),
+        ..Default::default()
+    });
+    let mut expected = vec![
+        ResponseItemEnvelope::new(user_msg("Explain this quotation.")),
+        quoted,
+    ];
+    for (index, envelope) in expected.iter_mut().enumerate() {
+        let metadata = envelope.metadata.get_or_insert_default();
+        metadata.history_sequence = Some(index as u64 + 1);
+        metadata.sampled_through_sequence = Some(0);
+    }
+    let mut history = ContextManager::default();
+    history.replace_annotated(expected.clone());
+    assert_eq!(
+        history
+            .for_prompt_annotated(&[InputModality::Text], &InlineAttachmentStore)
+            .await,
+        expected
+    );
+}
+
 fn unknown_content_metadata() -> InternalChatMessageMetadataPassthrough {
     InternalChatMessageMetadataPassthrough {
         content_item_kinds: Some(vec![ContentItemKind("unknown".to_string())]),
