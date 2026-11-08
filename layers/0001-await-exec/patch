@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 985bc7c99ce88f42b7e6593df68be6ff573394f6..fdc21d3de2fd4da6df2406578d60f05378194480 100644
+index f95157512e14b17a098c2c2e2683391bab8ac444..05974e9b5ed24cf128e13bd9aaf3996f4fae3d63 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -147,6 +147,7 @@ mod skills;
+@@ -146,6 +146,7 @@ mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  #[cfg(test)]
  pub(crate) use skills::skills_load_input_from_config;
@@ -28,7 +28,7 @@ index ec7a7d24aa87a8b28d9380f2aa8338b541c18057..aadd9c59752cbec9014448ff255615f2
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 6274bc6fb737152977881f490823782f0666c566..fa3a9c2c13b3d4790090069662f60ade8124b823 100644
+index 8c736b191c7f45db5e5215b8331ae61db8299420..a7a7992fa1934b8bbecb9f246f3d7819cb1e17c7 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -39,7 +39,7 @@ index 6274bc6fb737152977881f490823782f0666c566..fa3a9c2c13b3d4790090069662f60ade
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -1297,6 +1298,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1298,6 +1299,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
      if features.enabled(Feature::UnifiedExec) {
          registry.add(ExecCommandHandler::new(options));
          registry.add(WriteStdinHandler);
@@ -107,11 +107,11 @@ index caa45622a2c826ae7a7c14c1edd2c849e8f81799..d9551a22d0217cee3f9229a0e2af4713
  ///
  /// In production builds this value should remain at its default (`false`) and
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index 59eb54f175dea72a3a7bc3e5ec946ca9abad0547..e36914a7794d9f832df0360359da35ecaf9cf779 100644
+index b1f7a42313f7ef49289038ee839cc986643afd7b..9ad011425cf01cae962ce17960eaf507e6525a35 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -216,6 +216,7 @@ mod rollout_list_find;
- mod runtime_auth;
+@@ -218,6 +218,7 @@ mod runtime_auth;
+ mod runtime_auth_denials;
  mod safety_buffering;
  mod safety_check_downgrade;
 +mod saffrodex_await_exec;

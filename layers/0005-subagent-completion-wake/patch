@@ -588,10 +588,10 @@ index 452e6fa747b92238f62bf9110ac21bf44683db8a..68e9771a0dd90f9e63f06f2f9cf13aec
                      context,
                      start_options,
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index f286b37d4e71f99042a463cf55c8fe127d35ac08..cb7f588cec6decdf307d71f716b26d89ad337885 100644
+index f71ea77a359ff6774335fbc1502fcb266278db6c..340804ba4e71e887955a8ada44be3eff7e5ad1f3 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -31,7 +31,9 @@ use crate::context::world_state::IncrementalToolsHint;
+@@ -31,7 +31,9 @@ use crate::context::world_state::IncrementalToolsUpdate;
  use crate::init_state_db;
  use crate::responses_metadata::CodexResponsesRequestKind;
  use crate::session::SessionSettingsUpdate;
@@ -1900,10 +1900,10 @@ index 955491e708aaaaf5d066a873b713a99fb69e6e9c..5c33715f12a9fe9d5f1339ff62f43131
      async fn input_queue_uses_unambiguous_trigger_parent_and_first_root() {
          let (parent, peer, root, root2) = (Some("a"), Some("b"), Some("r"), Some("s"));
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 753f2a0b6f94cdef155a7d2874ca03c2da3d958b..6b0a444bbf0e02b8ae64f2ee410d839b2911e4cd 100644
+index ac7eecc5b3e947173b63ab967651f86241cb024d..b7d49f1528e870408686b0b33fa291ec566c98c5 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2828,6 +2828,10 @@ impl Session {
+@@ -2844,6 +2844,10 @@ impl Session {
          if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
              return;
          }
@@ -1914,7 +1914,7 @@ index 753f2a0b6f94cdef155a7d2874ca03c2da3d958b..6b0a444bbf0e02b8ae64f2ee410d839b
 
          let outcome = AgentTurnOutcome {
              thread_id: self.thread_id,
-@@ -2840,6 +2844,7 @@ impl Session {
+@@ -2856,6 +2860,7 @@ impl Session {
                  .cloned(),
              status,
              error_info,
@@ -2189,10 +2189,10 @@ index ab0520c945e52fd313232994cb662b9958a5cd9d..660bf3a1c30442b57446db02139173a2
              self.emit_thread_idle_lifecycle_if_idle(idle_cause).await;
          }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index da5b5a265f5b4455e1213fb97fe80d404b49ae95..9e2d5f0d38cdd81c1fa1974fa05242712edcad55 100644
+index af6c2401126c503cd8e4f0f671d2ca1372d6ef72..da76b6324f094642cf58ef49795c7717a8f2cfd8 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -157,9 +157,11 @@ fn capture_test_op(op: &Op) -> Option<Op> {
+@@ -159,9 +159,11 @@ fn capture_test_op(op: &Op) -> Option<Op> {
          Op::InterAgentCommunication {
              communication,
              start_options,
@@ -2340,10 +2340,10 @@ index 30fdbc6e9061ce57db17881b1337c4f3fb963866..a8dd2f2affa224e8ac07b12b72c1084b
          .await?;
      let mut reviews = Vec::new();
 diff --git a/codex-rs/core/tests/suite/models_cache_auth.rs b/codex-rs/core/tests/suite/models_cache_auth.rs
-index 8dd6f14bee8cd972e9d85547f6d9a69df51fcc0c..d82d99bef37413e17f3fb93f3601cd0bcf42c161 100644
+index 96e0a83e22433bbf7864c0b695d522decf181914..2a952394d14095f9fe8d857b1d9ba8d6bb24ba9c 100644
 --- a/codex-rs/core/tests/suite/models_cache_auth.rs
 +++ b/codex-rs/core/tests/suite/models_cache_auth.rs
-@@ -201,6 +201,7 @@ async fn auth_rotation_refreshes_before_turn_with_best_effort(
+@@ -203,6 +203,7 @@ async fn auth_rotation_refreshes_before_turn_with_best_effort(
                          /*trigger_turn*/ true,
                      ),
                      start_options: Default::default(),
@@ -2789,10 +2789,10 @@ index 1c505abfd797c5983c1fa8e879b767d6a67cecca..8ee62595e192093f4ca018a9a105d4b5
          .await?;
      wait_for_event(&test.codex, |event| {
 diff --git a/codex-rs/core/tests/suite/wake_reservation.rs b/codex-rs/core/tests/suite/wake_reservation.rs
-index 9bfcbfa98a8756d9690b68df3595003e200efbb5..7aa59eaae649e60d726bec4edf599b93b01eeda1 100644
+index f24b30c550552216ac094c4fe45293361508f579..d4ba9ae2123d842f157e3e7d8606f1618b9cb259 100644
 --- a/codex-rs/core/tests/suite/wake_reservation.rs
 +++ b/codex-rs/core/tests/suite/wake_reservation.rs
-@@ -181,6 +181,7 @@ async fn interrupt_during_wake_context_construction_does_not_start_turn() -> any
+@@ -185,6 +185,7 @@ async fn interrupt_during_wake_context_construction_does_not_start_turn() -> any
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
