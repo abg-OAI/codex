@@ -42,7 +42,7 @@ index 4a6e7daae2c2e024d13efc19626ee8ca3c16313a..b27e522c722e9465c605c8aba4edbcff
                          auth_manager: auth_manager.clone(),
                          state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index f8ef613d3b596e32d35df586306af17ef034595e..cf094bc7a6d7bdb4824b89f2465d87bd12c88575 100644
+index ccda7a5cec25e3f4d8cf72b13a753278129b802a..87cb6da3a5c40a21833f5e9388c3cb597bb88b82 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -178,6 +178,7 @@ pub(crate) struct MessageProcessor {
@@ -78,7 +78,7 @@ index f8ef613d3b596e32d35df586306af17ef034595e..cf094bc7a6d7bdb4824b89f2465d87bd
          let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
              && config.features.enabled(codex_features::Feature::Goals)
          {
-@@ -693,6 +698,7 @@ impl MessageProcessor {
+@@ -692,6 +697,7 @@ impl MessageProcessor {
              remote_control_processor,
              search_processor,
              saffron_goal_scheduler,
@@ -86,7 +86,7 @@ index f8ef613d3b596e32d35df586306af17ef034595e..cf094bc7a6d7bdb4824b89f2465d87bd
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -703,6 +709,7 @@ impl MessageProcessor {
+@@ -702,6 +708,7 @@ impl MessageProcessor {
      }
 
      pub(crate) fn clear_runtime_references(&self) {
@@ -94,7 +94,7 @@ index f8ef613d3b596e32d35df586306af17ef034595e..cf094bc7a6d7bdb4824b89f2465d87bd
          self.account_processor.clear_external_auth();
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
-@@ -940,6 +947,7 @@ impl MessageProcessor {
+@@ -939,6 +946,7 @@ impl MessageProcessor {
      }
 
      pub(crate) async fn drain_background_tasks(&self) {
@@ -160,10 +160,10 @@ index a52859ef83860bb0762ff84d6badeba95c6d1d54..9ca343483298d92cb3f5dd890bacf9bb
              .await
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index e134a52003be348099dd355804c5cb4886f06fdb..fc248124132bfa121d5dc0323a01aa5c81699b31 100644
+index 3ab9e3a1724b8cc9c5bbebd3ea755397316aaed4..fadea728740e081588c33d5248e70b6908cd84c8 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -149,6 +149,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -148,6 +148,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
@@ -215,10 +215,10 @@ index c7b7a04aaa13fe5d7c82b5f864fc4e9aa8993cf0..f796f8dae9c8d62bd08d3c04e3ca009e
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index b269b22358d9b85e0654285ed136507313272b69..86478c01946338ffaa69391a59a68ff598d1cf01 100644
+index 71a3e9ea2149d17955cbf9e68186a18a64fd28dc..968ad7b21cf5da7599521c613d6f9a560c9ebbfd 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -251,6 +251,7 @@ pub(crate) mod file_audio;
+@@ -253,6 +253,7 @@ pub(crate) mod file_audio;
  pub(crate) use file_audio::FileAudioDurations;
 
  mod code_mode_warning;
@@ -317,10 +317,10 @@ index e3034fae0a2e06ba42f2af51158dbf17b52ea454..44aa016dfb1350f6b2b08761f832235f
              state.turn_attribution = Some(attribution);
          }
 diff --git a/codex-rs/core/src/state/session.rs b/codex-rs/core/src/state/session.rs
-index d702c09da3614ce139dc7f3b0765e6d05a40490f..e89991d72b2a7c74a8ae2c0a33d8f534c64351dd 100644
+index e90bd010c66d8b26f5dce54ac3b92a82690803df..721faa6cadb0c84f60fd89ca55f6d2341acd10a6 100644
 --- a/codex-rs/core/src/state/session.rs
 +++ b/codex-rs/core/src/state/session.rs
-@@ -96,6 +96,8 @@ pub(crate) struct SessionState {
+@@ -99,6 +99,8 @@ pub(crate) struct SessionState {
      /// Latest task admitted in this runtime, retained across completion and history edits.
      /// Cleared by standalone settings changes to invalidate pending continuation.
      pub(crate) last_started_turn_id: Option<String>,
@@ -329,7 +329,7 @@ index d702c09da3614ce139dc7f3b0765e6d05a40490f..e89991d72b2a7c74a8ae2c0a33d8f534
      /// Latest regular turn, retained across completion, settings changes, and compaction.
      pub(crate) turn_attribution: Option<TurnAttribution>,
      /// Explicit namespaces from the recovered turn's own rollout record.
-@@ -154,6 +156,7 @@ impl SessionState {
+@@ -158,6 +160,7 @@ impl SessionState {
              additional_context: AdditionalContextStore::default(),
              previous_turn_settings: None,
              last_started_turn_id: None,
@@ -338,10 +338,10 @@ index d702c09da3614ce139dc7f3b0765e6d05a40490f..e89991d72b2a7c74a8ae2c0a33d8f534
              restored_turn_routing: None,
              auto_compact_window: AutoCompactWindow::new_with_ids(auto_compact_window_ids),
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index bc92626fc93274a19dfcf12ee638b2cd77f22ba2..c746dc976509317903b583aa44270f930f694e87 100644
+index 660bf3a1c30442b57446db02139173a267d95ca1..1e0966e5892c5f83dda9806a3f39e33f887612c9 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -1062,15 +1062,24 @@ impl Session {
+@@ -1064,15 +1064,24 @@ impl Session {
          drop(outcome_handoff);
          drop(agent_execution_guard);
          drop(ancestor_turn_retention_guard);
