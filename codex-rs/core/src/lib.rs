@@ -148,6 +148,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
 pub(crate) use skills::skills_load_input_from_config;
 mod saffron;
 
+pub use saffron::archive_self::ArchiveRequest as SaffronArchiveRequest;
+pub use saffron::archive_self::install as install_saffron_archive_self;
 pub use saffron::fork_thread::install as install_saffron_fork_thread;
 
 /// Installs Saffrodex-owned model guidance that accompanies goal tools.
