@@ -1,3 +1,15 @@
+diff --git a/codex-rs/agent-message-board-host/src/lib.rs b/codex-rs/agent-message-board-host/src/lib.rs
+index fc60220721708251d2c2198df14a62700bff1326..591bfbfe64f8237ab1e910b2044d5cdd48d6b43d 100644
+--- a/codex-rs/agent-message-board-host/src/lib.rs
++++ b/codex-rs/agent-message-board-host/src/lib.rs
+@@ -253,6 +253,7 @@ impl MessageBoardHost for LocalBoardHost {
+                 .submit(Op::InterAgentCommunication {
+                     communication,
+                     start_options: Default::default(),
++                    accepted: None,
+                 })
+                 .await?;
+             Ok(NotificationDelivery::Accepted)
 diff --git a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs b/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
 index 2222902b4ab7bceff5a955a93f2fcd5555259862..e50bc700fed0d5aea97934a36ca9a6e95ceb5907 100644
 --- a/codex-rs/app-server/src/request_processors/thread_lifecycle.rs
@@ -503,6 +515,18 @@ index e16b1ccab468677ef3ee69d756c07afee8d09934..fdc122756b5baee2bf76574a59a702da
  }
 
  #[cfg(test)]
+diff --git a/codex-rs/core/src/agent/control/residency_tests.rs b/codex-rs/core/src/agent/control/residency_tests.rs
+index e098af644029594341ba168adc038fd2a357d9fa..a7f4883230ef600f1905fcefc32acd28df30abf4 100644
+--- a/codex-rs/core/src/agent/control/residency_tests.rs
++++ b/codex-rs/core/src/agent/control/residency_tests.rs
+@@ -74,6 +74,7 @@ async fn residency_slot_reservation_unloads_oldest_idle_v2_agent() {
+     let delivery = first.thread.submit(Op::InterAgentCommunication {
+         communication: communication.clone(),
+         start_options: Default::default(),
++        accepted: None,
+     });
+     tokio::pin!(delivery);
+     assert!(futures::poll!(delivery.as_mut()).is_pending());
 diff --git a/codex-rs/core/src/agent/control/runtime.rs b/codex-rs/core/src/agent/control/runtime.rs
 index b48740f4aa341be98bf39b356a73c17eb4bdf000..2c5aa193ee3f5338de0f4ecca5413475dd092b3a 100644
 --- a/codex-rs/core/src/agent/control/runtime.rs
@@ -2273,6 +2297,18 @@ index faa68b07f02e6fcf61048047d8f4663d88f183b6..9804146c734e6313b4e9ecabab2e62df
          })
          .await?;
      wait_for_turn_complete(&codex).await;
+diff --git a/codex-rs/core/tests/suite/critical_path_runtime.rs b/codex-rs/core/tests/suite/critical_path_runtime.rs
+index f286d292f3d1e1f5ad8edbadfa3c04befd68d5e0..b4b1a7dca9dca15163d1074a1b82d54b06ff50e4 100644
+--- a/codex-rs/core/tests/suite/critical_path_runtime.rs
++++ b/codex-rs/core/tests/suite/critical_path_runtime.rs
+@@ -505,6 +505,7 @@ async fn spawned_child_has_independent_timing_and_parent_wait_is_tools(
+                     /*trigger_turn*/ true,
+                 ),
+                 start_options: Default::default(),
++                accepted: None,
+             })
+             .await?;
+         // The response fences the submission queue before the tool can finish.
 diff --git a/codex-rs/core/tests/suite/guardian_history.rs b/codex-rs/core/tests/suite/guardian_history.rs
 index cf86b062cc4910b5ce6906c5fe8e77b5b9f632b0..6081ac782ba915f235e1b9660856fa1e21bac02a 100644
 --- a/codex-rs/core/tests/suite/guardian_history.rs
@@ -2318,7 +2354,7 @@ index 96e0a83e22433bbf7864c0b695d522decf181914..2a952394d14095f9fe8d857b1d9ba8d6
                  .await?;
          }
 diff --git a/codex-rs/core/tests/suite/pending_input.rs b/codex-rs/core/tests/suite/pending_input.rs
-index 3217c5bee38e28379924fdfd10e7f1504683bf0b..dd60b7a9c890c4aaba0b877e257b50c9cdc4115d 100644
+index 3217c5bee38e28379924fdfd10e7f1504683bf0b..d2f7bfc72c54cbe84c9b9f6fc9acb55f31bce1f9 100644
 --- a/codex-rs/core/tests/suite/pending_input.rs
 +++ b/codex-rs/core/tests/suite/pending_input.rs
 @@ -402,6 +402,7 @@ async fn enqueue_queue_only_agent_mail(codex: &CodexThread, text: &str) {
@@ -2329,7 +2365,15 @@ index 3217c5bee38e28379924fdfd10e7f1504683bf0b..dd60b7a9c890c4aaba0b877e257b50c9
          })
          .await
          .expect("submit queue-only agent mail");
-@@ -2739,6 +2740,7 @@ async fn terminal_compaction_error_does_not_retry_pending_input(
+@@ -673,6 +674,7 @@ async fn queue_only_agent_mail_wakes_sleeping_root_with_previous_turn_context(
+                 root_turn_id: Some("new-root".to_string()),
+                 ..Default::default()
+             },
++            accepted: None,
+         })
+         .await?;
+     wait_for_turn_complete(&test.codex).await;
+@@ -2739,6 +2741,7 @@ async fn terminal_compaction_error_does_not_retry_pending_input(
                          /*trigger_turn*/ true,
                      ),
                      start_options: Default::default(),
