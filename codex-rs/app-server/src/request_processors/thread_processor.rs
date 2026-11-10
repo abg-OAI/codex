@@ -1593,6 +1593,7 @@ impl ThreadRequestProcessor {
             }
         }
 
+        let implicit_executor_selection = environment_requests.is_none();
         let environment_requests = environment_requests.unwrap_or_else(|| {
             listener_task_context
                 .thread_manager
@@ -1615,6 +1616,10 @@ impl ThreadRequestProcessor {
                 .then_some(ThreadHistoryMode::Paginated)
         });
         let mut thread_extension_init = ExtensionDataInit::new();
+        codex_core::record_saffron_executor_selection_intent(
+            &mut thread_extension_init,
+            implicit_executor_selection,
+        );
         if !selected_capability_roots.is_empty() {
             thread_extension_init.insert(selected_capability_roots);
         }

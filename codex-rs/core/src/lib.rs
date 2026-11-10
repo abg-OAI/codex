@@ -150,6 +150,7 @@ mod saffron;
 
 pub use saffron::archive_self::ArchiveRequest as SaffronArchiveRequest;
 pub use saffron::archive_self::install as install_saffron_archive_self;
+pub use saffron::executor_startup::record_selection_intent as record_saffron_executor_selection_intent;
 pub use saffron::fork_thread::install as install_saffron_fork_thread;
 
 /// Installs Saffrodex-owned model guidance that accompanies goal tools.
