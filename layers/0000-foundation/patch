@@ -1,3 +1,15 @@
+diff --git a/codex-rs/core/src/client_runtime_auth_tests.rs b/codex-rs/core/src/client_runtime_auth_tests.rs
+index 35a41b68cd308976d051d74d56faf25614bdec02..432db1606badf29f8350f80a85aec397f6c0e3ee 100644
+--- a/codex-rs/core/src/client_runtime_auth_tests.rs
++++ b/codex-rs/core/src/client_runtime_auth_tests.rs
+@@ -118,6 +118,7 @@ async fn selected_runtime_transport_stays_revoked(mode: RuntimeAuthMode) {
+             RequestRouteTelemetry::for_endpoint("/responses"),
+             &http::HeaderMap::new(),
+             /*parent_routing_affinity*/ None,
++            /*reauth*/ false,
+         )
+         .await;
+     assert!(matches!(
 diff --git a/codex-rs/core/src/guardian/tests.rs b/codex-rs/core/src/guardian/tests.rs
 index 239a965fcbc3ea27aaf4454d660410307da67a3f..dc86064cfe1baf1f4c98606ce786a803846f4648 100644
 --- a/codex-rs/core/src/guardian/tests.rs
