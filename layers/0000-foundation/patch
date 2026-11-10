@@ -1,14 +1,72 @@
+diff --git a/codex-rs/core/src/client_runtime_auth_tests.rs b/codex-rs/core/src/client_runtime_auth_tests.rs
+index 35a41b68cd308976d051d74d56faf25614bdec02..432db1606badf29f8350f80a85aec397f6c0e3ee 100644
+--- a/codex-rs/core/src/client_runtime_auth_tests.rs
++++ b/codex-rs/core/src/client_runtime_auth_tests.rs
+@@ -118,6 +118,7 @@ async fn selected_runtime_transport_stays_revoked(mode: RuntimeAuthMode) {
+             RequestRouteTelemetry::for_endpoint("/responses"),
+             &http::HeaderMap::new(),
+             /*parent_routing_affinity*/ None,
++            /*reauth*/ false,
+         )
+         .await;
+     assert!(matches!(
+diff --git a/codex-rs/core/src/environment_connection_tests.rs b/codex-rs/core/src/environment_connection_tests.rs
+index a4094268fec031a9000882ffb4270d0b853fd53c..5230070c791ef45f4458f896a2ca0ccfd996bb9a 100644
+--- a/codex-rs/core/src/environment_connection_tests.rs
++++ b/codex-rs/core/src/environment_connection_tests.rs
+@@ -122,6 +122,15 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
+             Recovery::TimesOut => Err(-32010),
+         };
+         initialize(&mut socket, Some("session"), result).await;
++        if recovery == Recovery::TimesOut {
++            // Let the client process the rejection and enter backoff before the
++            // test advances time past the attach deadline.
++            while let Some(Ok(message)) = socket.next().await {
++                if matches!(message, Message::Close(_)) {
++                    break;
++                }
++            }
++        }
+         let _ = response_sent.send(());
+         finished.await.unwrap();
+     }));
+@@ -140,12 +149,12 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
+             EnvironmentConnectionState::Recovering
+         );
+         assert!(received.try_recv().is_err());
+-        tokio::time::advance(Duration::from_secs(8)).await;
++        tokio::time::advance(Duration::from_secs(14)).await;
+     }
+     ready_rx.await.unwrap();
+     assert_eq!(
+         disconnected_at.elapsed(),
+-        Duration::from_secs(8 * retries as u64)
++        Duration::from_secs(14 * retries as u64)
+     );
+     raw.wait_for(|state| *state == EnvironmentConnectionState::Recovering)
+         .await
+@@ -159,7 +168,7 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
+     if recovery == Recovery::TimesOut {
+         response_rx.await.unwrap();
+         assert!(received.try_recv().is_err());
+-        tokio::time::advance(Duration::from_secs(26)).await;
++        tokio::time::advance(Duration::from_secs(46)).await;
+     }
+     let event = received.recv().await.unwrap().msg;
+     match recovery {
 diff --git a/codex-rs/core/src/guardian/tests.rs b/codex-rs/core/src/guardian/tests.rs
-index e18a9acb101054f8b2d3244d705029ace08ed01b..28f077f9889a59b5973fe2b532e52a398d03dd84 100644
+index 239a965fcbc3ea27aaf4454d660410307da67a3f..dc86064cfe1baf1f4c98606ce786a803846f4648 100644
 --- a/codex-rs/core/src/guardian/tests.rs
 +++ b/codex-rs/core/src/guardian/tests.rs
-@@ -2997,9 +2997,9 @@ async fn guardian_review_routes_required_actions(
+@@ -3556,11 +3556,9 @@ async fn guardian_review_routes_required_actions(
  #[tokio::test]
  async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() -> anyhow::Result<()>
  {
--    // Inherit the test runner's stack budget, including the larger Windows CI setting.
+-    const TEST_STACK_SIZE_BYTES: usize = 4 * 1024 * 1024;
+-
      let handle = std::thread::Builder::new()
          .name("guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history".to_string())
+-        .stack_size(TEST_STACK_SIZE_BYTES)
 +        .stack_size(codex_async_utils::THREAD_STACK_SIZE_BYTES)
          .spawn(|| -> anyhow::Result<()> {
              let runtime = tokio::runtime::Builder::new_current_thread()

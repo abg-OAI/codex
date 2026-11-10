@@ -1,8 +1,8 @@
 diff --git a/codex-rs/model-provider-info/src/lib.rs b/codex-rs/model-provider-info/src/lib.rs
-index efd48f17a9ad1507240c0141b62148b4dd551f84..04f3af012faca4cb3bf67bc2d0ac28d9589a2b0a 100644
+index 7d0e1a8c81fbc936c0e644105ac7f2c5966d17e7..dba80d34174e46f040532a43f78bf6e0480f8507 100644
 --- a/codex-rs/model-provider-info/src/lib.rs
 +++ b/codex-rs/model-provider-info/src/lib.rs
-@@ -111,6 +111,18 @@ const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer su
+@@ -110,6 +110,18 @@ const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer su
  pub const LEGACY_OLLAMA_CHAT_PROVIDER_ID: &str = "ollama-chat";
  pub const OLLAMA_CHAT_PROVIDER_REMOVED_ERROR: &str = "`ollama-chat` is no longer supported.\nHow to fix: replace `ollama-chat` with `ollama` in `model_provider`, `oss_provider`, or `--local-provider`.\nMore info: https://github.com/openai/codex/discussions/7782";
 
@@ -21,7 +21,7 @@ index efd48f17a9ad1507240c0141b62148b4dd551f84..04f3af012faca4cb3bf67bc2d0ac28d9
  /// Wire protocol that the provider speaks.
  #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
  #[serde(rename_all = "lowercase")]
-@@ -582,9 +594,12 @@ other non-default provider fields are not supported"
+@@ -579,9 +591,12 @@ other non-default provider fields are not supported"
              wire_api: WireApi::Responses,
              query_params: None,
              http_headers: Some(
