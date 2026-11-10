@@ -53,6 +53,7 @@ struct RegisteredAgent {
     path: String,
     counted: bool,
     evicted_environments: Option<EvictedEnvironments>,
+    evicted_ephemeral: Option<bool>,
 }
 
 impl RegisteredAgent {
@@ -61,6 +62,7 @@ impl RegisteredAgent {
             path,
             counted,
             evicted_environments: None,
+            evicted_ephemeral: None,
         }
     }
 }
@@ -228,10 +230,11 @@ impl AgentRegistry {
             .is_some_and(|metadata| metadata.visibility == AgentListingVisibility::Hidden)
     }
 
-    pub(crate) fn save_evicted_environments(
+    pub(crate) fn save_evicted_runtime_settings(
         &self,
         thread_id: ThreadId,
         environments: EvictedEnvironments,
+        ephemeral: bool,
     ) {
         let mut active_agents = self
             .active_agents
@@ -239,7 +242,17 @@ impl AgentRegistry {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(agent) = active_agents.thread_paths.get_mut(&thread_id) {
             agent.evicted_environments = Some(environments);
+            agent.evicted_ephemeral = Some(ephemeral);
         }
+    }
+
+    pub(crate) fn evicted_ephemeral(&self, thread_id: ThreadId) -> Option<bool> {
+        self.active_agents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .thread_paths
+            .get(&thread_id)
+            .and_then(|agent| agent.evicted_ephemeral)
     }
 
     pub(crate) fn evicted_environments(&self, thread_id: ThreadId) -> Option<EvictedEnvironments> {
@@ -253,13 +266,14 @@ impl AgentRegistry {
             .and_then(|agent| agent.evicted_environments.clone())
     }
 
-    pub(crate) fn clear_evicted_environments(&self, thread_id: ThreadId) {
+    pub(crate) fn clear_evicted_runtime_settings(&self, thread_id: ThreadId) {
         let mut active_agents = self
             .active_agents
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(agent) = active_agents.thread_paths.get_mut(&thread_id) {
             agent.evicted_environments = None;
+            agent.evicted_ephemeral = None;
         }
     }
 
