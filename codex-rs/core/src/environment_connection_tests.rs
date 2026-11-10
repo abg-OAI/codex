@@ -122,6 +122,15 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
             Recovery::TimesOut => Err(-32010),
         };
         initialize(&mut socket, Some("session"), result).await;
+        if recovery == Recovery::TimesOut {
+            // Let the client process the rejection and enter backoff before the
+            // test advances time past the attach deadline.
+            while let Some(Ok(message)) = socket.next().await {
+                if matches!(message, Message::Close(_)) {
+                    break;
+                }
+            }
+        }
         let _ = response_sent.send(());
         finished.await.unwrap();
     }));
@@ -140,12 +149,12 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
             EnvironmentConnectionState::Recovering
         );
         assert!(received.try_recv().is_err());
-        tokio::time::advance(Duration::from_secs(8)).await;
+        tokio::time::advance(Duration::from_secs(14)).await;
     }
     ready_rx.await.unwrap();
     assert_eq!(
         disconnected_at.elapsed(),
-        Duration::from_secs(8 * retries as u64)
+        Duration::from_secs(14 * retries as u64)
     );
     raw.wait_for(|state| *state == EnvironmentConnectionState::Recovering)
         .await
@@ -159,7 +168,7 @@ async fn lifecycle_waits_for_recovery(retries: usize, recovery: Recovery) {
     if recovery == Recovery::TimesOut {
         response_rx.await.unwrap();
         assert!(received.try_recv().is_err());
-        tokio::time::advance(Duration::from_secs(26)).await;
+        tokio::time::advance(Duration::from_secs(46)).await;
     }
     let event = received.recv().await.unwrap().msg;
     match recovery {

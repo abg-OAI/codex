@@ -3556,11 +3556,9 @@ async fn guardian_review_routes_required_actions(
 #[tokio::test]
 async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() -> anyhow::Result<()>
 {
-    const TEST_STACK_SIZE_BYTES: usize = 4 * 1024 * 1024;
-
     let handle = std::thread::Builder::new()
         .name("guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history".to_string())
-        .stack_size(TEST_STACK_SIZE_BYTES)
+        .stack_size(codex_async_utils::THREAD_STACK_SIZE_BYTES)
         .spawn(|| -> anyhow::Result<()> {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
