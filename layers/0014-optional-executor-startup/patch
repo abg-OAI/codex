@@ -871,6 +871,19 @@ index 5b425692ec34070b4fe0dad9375783551b04aa4a..346dbd52314b34ffab67c257f9d6ebe7
  use std::sync::LazyLock;
 
  use codex_protocol::ThreadId;
+diff --git a/codex-rs/core/src/saffron/storage_tests.rs b/codex-rs/core/src/saffron/storage_tests.rs
+index 52a52eb7ea5468d7200c1bc06f95997ed6ed60c0..acdf265011530888ea129652cc46a860fcac5cd1 100644
+--- a/codex-rs/core/src/saffron/storage_tests.rs
++++ b/codex-rs/core/src/saffron/storage_tests.rs
+@@ -17,7 +17,7 @@ async fn saffron_migrations_have_an_independent_ledger() -> anyhow::Result<()> {
+
+     assert_eq!(
+         migration_versions(home.path().join(SAFFRON_DB_FILENAME), &sqlite).await?,
+-        vec![1, 2, 3]
++        vec![1, 2, 3, 4]
+     );
+     assert_eq!(
+         migration_versions(state.sqlite().state_db_path(), &sqlite).await?,
 diff --git a/codex-rs/core/src/session/environment.rs b/codex-rs/core/src/session/environment.rs
 index 3820b8b7d82b37d29cefd7b6d7b43ed3e6b4355e..120437eff14945c7a4beba2f43a8dbc2be18918b 100644
 --- a/codex-rs/core/src/session/environment.rs
