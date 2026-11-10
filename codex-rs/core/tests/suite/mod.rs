@@ -218,6 +218,7 @@ mod runtime_auth;
 mod runtime_auth_denials;
 mod safety_buffering;
 mod safety_check_downgrade;
+mod saffrodex_await_exec;
 mod scenarios;
 mod search_tool;
 mod settings_commits;
