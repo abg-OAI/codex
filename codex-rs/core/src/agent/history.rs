@@ -303,7 +303,9 @@ pub(super) async fn prepare_forked_history(
         if matches!(response_item, ResponseItem::AdditionalTools { .. }) {
             return preserve_context_baselines;
         }
-        if matches!(response_item, ResponseItem::AgentMessage { .. }) {
+        if matches!(response_item, ResponseItem::AgentMessage { .. })
+            && !crate::saffron::goal_supervisor::is_helper_source(session_source)
+        {
             return false;
         }
         if !retain_forked_developer_message(
@@ -363,7 +365,8 @@ pub(super) async fn prepare_forked_history(
     };
     forked_rollout_items.retain_mut(|item| {
         let keep = (preserve_fork_prefix && matches!(item, RolloutItem::ResponseItem(_)))
-            || keep_forked_rollout_item(item, preserve_context_baselines);
+            || keep_forked_rollout_item(item, preserve_context_baselines)
+            || crate::saffron::goal_supervisor::preserves_fork_item(session_source, item);
         if !keep
             || destination_history_mode == Some(ThreadHistoryMode::Paginated)
                 && matches!(

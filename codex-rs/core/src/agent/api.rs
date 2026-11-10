@@ -108,6 +108,7 @@ pub trait AgentControl: Send + Sync {
     /// Check capacity before accepting work. This advisory check does not reserve a slot.
     fn check_turn_admission(
         &self,
+        thread_id: ThreadId,
         version: MultiAgentVersion,
         source: &SessionSource,
     ) -> Result<()>;
@@ -117,6 +118,7 @@ pub trait AgentControl: Send + Sync {
     /// Root and non-V2 turns return no guard.
     fn admit_turn(
         &self,
+        thread_id: ThreadId,
         version: MultiAgentVersion,
         source: &SessionSource,
     ) -> Option<AgentExecutionGuard>;
