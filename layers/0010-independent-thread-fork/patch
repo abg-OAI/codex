@@ -1,20 +1,20 @@
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 6bf099d48a8ba44b1e3cc3d579547751bd824590..ecc2379d00ed98509071d7c9956cd064cc84bcfb 100644
+index 8a0a4f864043a011362044b830ab7bd4678f9b68..ea8a1d7bceb8e2c0f5a09cbb65b28e8feb252228 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -84,6 +84,7 @@ pub(crate) fn thread_extensions(
      }
      codex_history_notes_extension::install(&mut builder, auth_manager.clone());
-     codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
+     crate::install_agent_message_board(&mut builder, thread_manager.clone());
 +    codex_core::install_saffron_fork_thread(&mut builder, thread_manager.clone());
      if let Some(state_db) = state_db {
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 0dcf2dd676a65ffcf229a15a2308de9447bef651..71bb7543441a810ad12746d6df1e0ed0d1d716ef 100644
+index 04dacb78fb8a7f44a7ff0b2c7dfc5502012a0307..3ab9e3a1724b8cc9c5bbebd3ea755397316aaed4 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -145,6 +145,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -148,6 +148,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
@@ -55,10 +55,10 @@ index 0e5b94605cafe76a6c7fe66b8627aa905dd16dd4..e548b2f1503cf3cf31fa705c73e46c3b
 +    fork_thread::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 8f24d8b07dbd10017c63900cd99c39ae6cd32ad7..66ce4706b95d3a3e84ee57d8d42654fa3b9b2b01 100644
+index 8f3710ee2f793d522118e19cda7da4b4ea899b7f..6304ed882dd0ef8a291d27e022202750536c41d9 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -1015,6 +1015,11 @@ impl ThreadManager {
+@@ -1174,6 +1174,11 @@ impl ThreadManager {
          self.state.thread_created_tx.subscribe()
      }
 

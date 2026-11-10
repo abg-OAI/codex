@@ -7,7 +7,6 @@
 use std::future::Future;
 use std::sync::OnceLock;
 
-use codex_protocol::ResponseItemId;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::error::Result as CodexResult;
@@ -136,7 +135,7 @@ pub(crate) async fn complete(
                 ResponseItem::Message {
                     encrypted_content: None,
                     status: None,
-                    id: Some(ResponseItemId::new("msg")),
+                    id: Some((session.item_id_generator)("msg")),
                     role: "assistant".into(),
                     content: vec![ContentItem::OutputText {
                         text: text.clone(),
