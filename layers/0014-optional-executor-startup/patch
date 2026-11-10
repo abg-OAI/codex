@@ -1,0 +1,1154 @@
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index 0404b225036f0d697082e9079542f1768f6e33f1..a816420c6c587c6a9804a06964b729ed0347aa69 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -1593,6 +1593,7 @@ impl ThreadRequestProcessor {
+             }
+         }
+
++        let implicit_executor_selection = environment_requests.is_none();
+         let environment_requests = environment_requests.unwrap_or_else(|| {
+             listener_task_context
+                 .thread_manager
+@@ -1615,6 +1616,10 @@ impl ThreadRequestProcessor {
+                 .then_some(ThreadHistoryMode::Paginated)
+         });
+         let mut thread_extension_init = ExtensionDataInit::new();
++        codex_core::record_saffron_executor_selection_intent(
++            &mut thread_extension_init,
++            implicit_executor_selection,
++        );
+         if !selected_capability_roots.is_empty() {
+             thread_extension_init.insert(selected_capability_roots);
+         }
+diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
+index 11c302fcb944c1b384e7f96e503475c0bda4fc9d..3ababee765c84444d56b4b4d22e6c63762690b3f 100644
+--- a/codex-rs/core/src/agent/control/spawn.rs
++++ b/codex-rs/core/src/agent/control/spawn.rs
+@@ -456,6 +456,10 @@ impl LocalAgentControl {
+                     .as_ref()
+                     .map(TurnEnvironmentSnapshot::refresh_readiness);
+                 for selection in selections {
++                    // Exclusions carry no executor authority and remain unavailable after resume.
++                    if matches!(selection.config, EnvironmentConfigState::Unavailable) {
++                        continue;
++                    }
+                     let environment_id = &selection.environment_id;
+                     let invalid_environment = |reason: &str| {
+                         CodexErr::InvalidRequest(format!(
+@@ -487,7 +491,9 @@ impl LocalAgentControl {
+                             continue;
+                         }
+                         EnvironmentConfigState::Ready(config) => config,
+-                        EnvironmentConfigState::Pending | EnvironmentConfigState::Failed(_) => {
++                        EnvironmentConfigState::Pending
++                        | EnvironmentConfigState::Failed(_)
++                        | EnvironmentConfigState::Unavailable => {
+                             return Err(invalid_environment("configuration is not ready"));
+                         }
+                     };
+diff --git a/codex-rs/core/src/agents_md.rs b/codex-rs/core/src/agents_md.rs
+index 08983d72ffd1e2a17fefd2740c68164c73f79486..f1e756e88ae05075093310fcfab219365cc73be2 100644
+--- a/codex-rs/core/src/agents_md.rs
++++ b/codex-rs/core/src/agents_md.rs
+@@ -20,6 +20,7 @@
+ use crate::config::Config;
+ use crate::context::UserInstructions as ContextUserInstructions;
+ use crate::environment_selection::TurnEnvironmentSnapshot;
++use crate::session::turn_context::TurnEnvironment;
+ use codex_config::ConfigLayerSource;
+ use codex_config::default_project_root_markers;
+ use codex_config::merge_toml_values;
+@@ -31,10 +32,12 @@ use codex_extension_api::Instructions;
+ use codex_file_system::FileSystemSandboxContext;
+ use codex_file_system::FindUpErrorPolicy;
+ use codex_file_system::find_nearest_ancestor_with_markers;
++use codex_protocol::protocol::TurnEnvironmentSelection;
+ use codex_utils_absolute_path::AbsolutePathBuf;
+ use codex_utils_path_uri::PathConvention;
+ use codex_utils_path_uri::PathUri;
+ use futures::StreamExt;
++use std::collections::HashMap;
+ use std::io;
+ use toml::Value as TomlValue;
+ use tracing::error;
+@@ -60,6 +63,16 @@ pub(crate) async fn load_project_instructions(
+     config: &Config,
+     environments: &TurnEnvironmentSnapshot,
+     warnings: &mut Vec<String>,
++) -> io::Result<LoadedAgentsMd> {
++    load_project_instructions_with_discovery(config, environments, warnings, &[]).await
++}
++
++/// Reuses completed startup discovery while retaining the normal ordered instruction budget.
++pub(crate) async fn load_project_instructions_with_discovery(
++    config: &Config,
++    environments: &TurnEnvironmentSnapshot,
++    warnings: &mut Vec<String>,
++    discovered: &[DiscoveredProjectInstructions],
+ ) -> io::Result<LoadedAgentsMd> {
+     let mut loaded = LoadedAgentsMd::default();
+     if config.active_project.is_untrusted() || config.project_doc_max_bytes == 0 {
+@@ -85,7 +98,11 @@ pub(crate) async fn load_project_instructions(
+         .then(|| turn_environment.sandbox_context(/*additional_permissions*/ None));
+         match read_agents_md(
+             config,
+-            filesystem.as_ref(),
++            discovered
++                .iter()
++                .find(|discovered| discovered.selection == turn_environment.selection)
++                .map(InstructionFiles::Cached)
++                .unwrap_or(InstructionFiles::Live(filesystem.as_ref())),
+             &turn_environment.selection.environment_id,
+             turn_environment.cwd(),
+             remaining,
+@@ -122,6 +139,113 @@ pub(crate) async fn load_project_instructions(
+     Ok(loaded)
+ }
+
++/// Completed discovery for one environment, reusable only with the same selection.
++#[derive(Clone)]
++pub(crate) struct DiscoveredProjectInstructions {
++    selection: TurnEnvironmentSelection,
++    paths: Vec<PathUri>,
++    files: HashMap<PathUri, Option<(Vec<u8>, usize)>>,
++}
++
++/// Captures instructions reachable under any budget left by earlier environments.
++pub(crate) async fn discover_project_instructions(
++    config: &Config,
++    environment: &TurnEnvironment,
++) -> io::Result<DiscoveredProjectInstructions> {
++    let mut discovered = DiscoveredProjectInstructions {
++        selection: environment.selection.clone(),
++        paths: Vec::new(),
++        files: HashMap::new(),
++    };
++    if config.active_project.is_untrusted() || config.project_doc_max_bytes == 0 {
++        return Ok(discovered);
++    }
++    let filesystem = environment.environment().get_filesystem();
++    let sandbox = (!environment
++        .permission_profile()
++        .file_system_sandbox_policy()
++        .has_full_disk_read_access())
++    .then(|| environment.sandbox_context(/*additional_permissions*/ None));
++    discovered.paths = agents_md_paths(
++        config,
++        environment.cwd(),
++        filesystem.as_ref(),
++        sandbox.as_ref(),
++    )
++    .await?;
++    let mut remaining = config.project_doc_max_bytes;
++    for path in &discovered.paths {
++        if remaining == 0 {
++            break;
++        }
++        let mut data = match filesystem
++            .read_file(path, ReadFileOptions::default(), sandbox.as_ref())
++            .await
++        {
++            Ok(data) => data,
++            Err(error) if error.kind() == io::ErrorKind::NotFound => {
++                discovered.files.insert(path.clone(), None);
++                continue;
++            }
++            Err(error) => return Err(error),
++        };
++        let size = data.len();
++        data.truncate(remaining);
++        let text = String::from_utf8_lossy(&data);
++        let whitespace = text.len() - text.trim_start().len();
++        if whitespace < text.len() {
++            // A shorter whitespace-only prefix consumes no budget in the native reader.
++            // Other prefixes consume raw bytes, so this bounds every later remaining budget.
++            remaining = remaining.saturating_sub(size).max(whitespace);
++        }
++        discovered.files.insert(path.clone(), Some((data, size)));
++    }
++    Ok(discovered)
++}
++
++/// Filesystem results captured at admission are consumed by the ordinary instruction loader.
++enum InstructionFiles<'a> {
++    Live(&'a dyn ExecutorFileSystem),
++    Cached(&'a DiscoveredProjectInstructions),
++}
++
++impl InstructionFiles<'_> {
++    async fn paths(
++        &self,
++        config: &Config,
++        cwd: &PathUri,
++        sandbox: Option<&FileSystemSandboxContext>,
++    ) -> io::Result<Vec<PathUri>> {
++        match self {
++            Self::Live(fs) => agents_md_paths(config, cwd, *fs, sandbox).await,
++            Self::Cached(captured) => Ok(captured.paths.clone()),
++        }
++    }
++
++    async fn read(
++        &self,
++        path: &PathUri,
++        sandbox: Option<&FileSystemSandboxContext>,
++    ) -> io::Result<(Vec<u8>, usize)> {
++        match self {
++            Self::Live(fs) => fs
++                .read_file(path, ReadFileOptions::default(), sandbox)
++                .await
++                .map(|data| {
++                    let size = data.len();
++                    (data, size)
++                }),
++            Self::Cached(captured) => match captured.files.get(path) {
++                Some(Some((data, size))) => Ok((data.clone(), *size)),
++                Some(None) => Err(io::Error::from(io::ErrorKind::NotFound)),
++                None => Err(io::Error::other(
++                    "startup instruction discovery was incomplete",
++                )),
++            },
++        }
++    }
++}
++
+ /// Attempt to locate and load AGENTS.md documentation.
+ ///
+ /// On success returns `Ok(Some(loaded))` where `loaded` contains every
+@@ -131,14 +255,14 @@ pub(crate) async fn load_project_instructions(
+ #[tracing::instrument(name = "agents_md.load", skip_all, fields(max_total = max_total))]
+ async fn read_agents_md(
+     config: &Config,
+-    fs: &dyn ExecutorFileSystem,
++    files: InstructionFiles<'_>,
+     environment_id: &str,
+     cwd: &PathUri,
+     max_total: usize,
+     sandbox: Option<&FileSystemSandboxContext>,
+     warnings: &mut Vec<String>,
+ ) -> io::Result<Option<LoadedAgentsMd>> {
+-    let paths = agents_md_paths(config, cwd, fs, sandbox).await?;
++    let paths = files.paths(config, cwd, sandbox).await?;
+     let mut remaining = max_total;
+     let mut loaded = LoadedAgentsMd::default();
+
+@@ -152,12 +276,11 @@ async fn read_agents_md(
+             break;
+         }
+
+-        let mut data = match fs.read_file(&p, ReadFileOptions::default(), sandbox).await {
++        let (mut data, size) = match files.read(&p, sandbox).await {
+             Ok(data) => data,
+             Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+             Err(err) => return Err(err),
+         };
+-        let size = data.len();
+         if size > remaining {
+             data.truncate(remaining);
+             warnings.push(format!(
+diff --git a/codex-rs/core/src/agents_md_manager.rs b/codex-rs/core/src/agents_md_manager.rs
+index ff38ca573e3ae1f1c4a2289d1a5fc86f0866cd09..03f4bd2d04f131d58c29fdaa45f2a6e3e7de793c 100644
+--- a/codex-rs/core/src/agents_md_manager.rs
++++ b/codex-rs/core/src/agents_md_manager.rs
+@@ -2,8 +2,10 @@
+ //! Refreshes are serialized; the state lock is never held while calling providers.
+ //! Isolated reviewers can pin a captured repository snapshot without executor discovery.
+
++use crate::agents_md::DiscoveredProjectInstructions;
+ use crate::agents_md::LoadedAgentsMd;
+ use crate::agents_md::load_project_instructions;
++use crate::agents_md::load_project_instructions_with_discovery;
+ use crate::config::Config;
+ use crate::environment_selection::TurnEnvironmentSnapshot;
+ use codex_extension_api::Instructions;
+@@ -39,6 +41,7 @@ pub(crate) struct SessionInstructions {
+ struct AgentsMdState {
+     instructions: SessionInstructions,
+     cache: AgentsMdCache,
++    startup_discovery: Vec<DiscoveredProjectInstructions>,
+ }
+
+ #[derive(Default)]
+@@ -58,10 +61,20 @@ impl AgentsMdManager {
+             state: Mutex::new(AgentsMdState {
+                 instructions,
+                 cache: AgentsMdCache::default(),
++                startup_discovery: Vec::new(),
+             }),
+         }
+     }
+
++    /// Reuses admission reads once; later repository refreshes discover instructions normally.
++    pub(crate) fn with_startup_discovery(
++        mut self,
++        startup_discovery: Vec<DiscoveredProjectInstructions>,
++    ) -> Self {
++        self.state.get_mut().startup_discovery = startup_discovery;
++        self
++    }
++
+     /// Resolves and validates one coherent snapshot for startup or a request boundary.
+     /// Providers own fetching and caching. Warnings survive validation failures;
+     /// only validated snapshots replace the applied host instructions.
+@@ -85,7 +98,7 @@ impl AgentsMdManager {
+             .map(|environment| environment.selection.clone())
+             .collect::<Vec<_>>();
+         let active_project_trust_level = config.active_project.trust_level;
+-        let (mut instructions, cached, refresh_repository) = {
++        let (mut instructions, cached, refresh_repository, startup_discovery) = {
+             let mut state = self.state.lock().await;
+             let refresh_repository = state.cache.selections.as_ref() != Some(&selections)
+                 || state.cache.active_project_trust_level != active_project_trust_level
+@@ -99,6 +112,7 @@ impl AgentsMdManager {
+                 state.instructions.clone(),
+                 state.cache.loaded.clone(),
+                 refresh_repository,
++                std::mem::take(&mut state.startup_discovery),
+             )
+         };
+         let mut warnings = Vec::new();
+@@ -129,7 +143,17 @@ impl AgentsMdManager {
+             let loaded = if let Some(project) = &instructions.project_snapshot {
+                 project.as_ref().clone()
+             } else if refresh_repository {
+-                load_project_instructions(config, environments, &mut warnings).await?
++                if startup_discovery.is_empty() {
++                    load_project_instructions(config, environments, &mut warnings).await?
++                } else {
++                    load_project_instructions_with_discovery(
++                        config,
++                        environments,
++                        &mut warnings,
++                        &startup_discovery,
++                    )
++                    .await?
++                }
+             } else {
+                 cached.as_deref().cloned().unwrap_or_default()
+             }
+diff --git a/codex-rs/core/src/agents_md_tests.rs b/codex-rs/core/src/agents_md_tests.rs
+index 354c5d21a580421202d0c1299fd160c2f5a8c988..ba6b947a843530347a6caccf340a0f31bfc9ba66 100644
+--- a/codex-rs/core/src/agents_md_tests.rs
++++ b/codex-rs/core/src/agents_md_tests.rs
+@@ -740,7 +740,7 @@ async fn read_agents_md_loads_cwd_instructions_when_parent_markers_are_unreadabl
+     let cwd = config.cwd.clone();
+     let loaded = read_agents_md(
+         &config.config,
+-        &fs,
++        InstructionFiles::Live(&fs),
+         "local",
+         &PathUri::from_abs_path(&cwd),
+         config.project_doc_max_bytes,
+@@ -768,7 +768,7 @@ async fn read_agents_md_propagates_read_errors() {
+     let cwd = config.cwd.clone();
+     let err = read_agents_md(
+         &config.config,
+-        &fs,
++        InstructionFiles::Live(&fs),
+         "local",
+         &PathUri::from_abs_path(&cwd),
+         config.project_doc_max_bytes,
+@@ -795,7 +795,7 @@ async fn read_agents_md_ignores_files_removed_after_discovery() {
+     let cwd = config.cwd.clone();
+     let loaded = read_agents_md(
+         &config.config,
+-        &fs,
++        InstructionFiles::Live(&fs),
+         "local",
+         &PathUri::from_abs_path(&cwd),
+         config.project_doc_max_bytes,
+@@ -1798,3 +1798,138 @@ fn create_skill(codex_home: PathBuf, name: &str, description: &str) {
+     let content = format!("---\nname: {name}\ndescription: {description}\n---\n\n# Body\n");
+     fs::write(skill_dir.join("SKILL.md"), content).unwrap();
+ }
++
++/// Admission reads are reused under the same global budget, including invalid UTF-8.
++#[tokio::test]
++async fn startup_discovery_reuses_files_and_preserves_the_shared_budget() {
++    let first = TempDir::new().unwrap();
++    let second = TempDir::new().unwrap();
++    fs::write(first.path().join("AGENTS.md"), b"first").unwrap();
++    fs::write(second.path().join("AGENTS.md"), b"ab\xffcdefghijklmnop").unwrap();
++    let config = make_config(&first, 11, None).await;
++    let environments =
++        resolved_local_environments([("first", first.abs()), ("second", second.abs())]);
++    let mut ordinary_warnings = Vec::new();
++    let ordinary = load_project_instructions(&config, &environments, &mut ordinary_warnings)
++        .await
++        .unwrap();
++    let mut discovered = Vec::new();
++    for environment in environments.turn_environments() {
++        discovered.push(
++            discover_project_instructions(&config, environment)
++                .await
++                .unwrap(),
++        );
++    }
++    fs::remove_file(first.path().join("AGENTS.md")).unwrap();
++    fs::remove_file(second.path().join("AGENTS.md")).unwrap();
++    let mut cached_warnings = Vec::new();
++    let cached = load_project_instructions_with_discovery(
++        &config,
++        &environments,
++        &mut cached_warnings,
++        &discovered,
++    )
++    .await
++    .unwrap();
++    assert_eq!(cached, ordinary);
++    assert_eq!(cached_warnings, ordinary_warnings);
++}
++
++/// Every budget left by an earlier environment must preserve native contents and warnings.
++#[tokio::test]
++async fn startup_discovery_preserves_every_smaller_budget() {
++    let root = TempDir::new().unwrap();
++    let child = root.path().join("child");
++    let leaf = child.join("leaf");
++    fs::create_dir_all(&leaf).unwrap();
++    fs::create_dir(root.path().join(".git")).unwrap();
++    fs::write(leaf.join("AGENTS.md"), b"leaf instructions").unwrap();
++    let config = make_config(&root, 24, None).await;
++    let environments = resolved_local_environments([("remote", leaf.abs())]);
++    let environment = environments.turn_environments().next().unwrap();
++    let patterns: &[&[u8]] = &[
++        b"",
++        b"          abcdefghij",
++        "\u{2003}\u{2003}content".as_bytes(),
++        "\u{2003}\u{2003}\u{2003}".as_bytes(),
++        b" \xffcontent",
++        b"content without leading whitespace",
++    ];
++    for parent_contents in patterns {
++        for child_contents in patterns {
++            fs::write(root.path().join("AGENTS.md"), parent_contents).unwrap();
++            fs::write(child.join("AGENTS.md"), child_contents).unwrap();
++            let discovered = discover_project_instructions(&config, environment)
++                .await
++                .unwrap();
++            let filesystem = environment.environment().get_filesystem();
++            for remaining in 0..=config.project_doc_max_bytes {
++                let mut live_warnings = Vec::new();
++                let live = read_agents_md(
++                    &config,
++                    InstructionFiles::Live(filesystem.as_ref()),
++                    "remote",
++                    environment.cwd(),
++                    remaining,
++                    None,
++                    &mut live_warnings,
++                )
++                .await
++                .unwrap();
++                let mut cached_warnings = Vec::new();
++                let cached = read_agents_md(
++                    &config,
++                    InstructionFiles::Cached(&discovered),
++                    "remote",
++                    environment.cwd(),
++                    remaining,
++                    None,
++                    &mut cached_warnings,
++                )
++                .await
++                .unwrap();
++                assert_eq!(cached, live, "remaining budget {remaining}");
++                assert_eq!(
++                    cached_warnings, live_warnings,
++                    "remaining budget {remaining}"
++                );
++            }
++        }
++    }
++}
++
++/// The initial admission cache does not freeze instructions across workspace changes.
++#[tokio::test]
++async fn startup_discovery_is_consumed_once_and_later_workspace_changes_refresh() {
++    use crate::agents_md_manager::AgentsMdManager;
++    use crate::agents_md_manager::SessionInstructions;
++    let first = TempDir::new().unwrap();
++    let second = TempDir::new().unwrap();
++    fs::write(first.path().join("AGENTS.md"), "initial instructions").unwrap();
++    fs::write(
++        second.path().join("AGENTS.md"),
++        "new workspace instructions",
++    )
++    .unwrap();
++    let config = make_config(&first, 1024, None).await;
++    let environments = resolved_local_environments([("local", first.abs())]);
++    let discovered =
++        discover_project_instructions(&config, environments.turn_environments().next().unwrap())
++            .await
++            .unwrap();
++    fs::remove_file(first.path().join("AGENTS.md")).unwrap();
++    let manager = AgentsMdManager::new(SessionInstructions::default())
++        .with_startup_discovery(vec![discovered]);
++    let initial = manager
++        .refresh(&config, &environments)
++        .await
++        .0
++        .unwrap()
++        .unwrap();
++    assert!(initial.text().contains("initial instructions"));
++    let changed = resolved_local_environments([("local", second.abs())]);
++    let refreshed = manager.refresh(&config, &changed).await.0.unwrap().unwrap();
++    assert!(refreshed.text().contains("new workspace instructions"));
++    assert!(!refreshed.text().contains("initial instructions"));
++}
+diff --git a/codex-rs/core/src/environment_selection.rs b/codex-rs/core/src/environment_selection.rs
+index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70ef31aae6f 100644
+--- a/codex-rs/core/src/environment_selection.rs
++++ b/codex-rs/core/src/environment_selection.rs
+@@ -235,7 +235,8 @@ fn resolve_selection_config(
+         ),
+         config @ (EnvironmentConfigState::Ready(_)
+         | EnvironmentConfigState::Pending
+-        | EnvironmentConfigState::Failed(_)) => (config, EnvironmentConfigOrigin::Owner),
++        | EnvironmentConfigState::Failed(_)
++        | EnvironmentConfigState::Unavailable) => (config, EnvironmentConfigOrigin::Owner),
+     };
+     selection.config = config;
+     (selection, origin)
+@@ -314,6 +315,8 @@ pub(crate) struct ThreadEnvironments {
+     state: Mutex<ThreadEnvironmentsState>,
+     // Retain configured bindings independently of active-turn membership and cancellation.
+     configured: Mutex<ThreadEnvironmentsState>,
++    // Retained independently of bindings, including executors removed from the registry.
++    unavailable: Vec<(usize, TurnEnvironmentSelection)>,
+ }
+
+ struct ThreadEnvironmentsState {
+@@ -390,6 +393,26 @@ impl StartupRetry<'_> {
+     }
+ }
+
++/// Preserves thread-lifetime exclusions when callers regenerate an environment list.
++pub(crate) fn retain_unavailable_selections(
++    current: &[TurnEnvironmentSelection],
++    proposed: &mut Vec<TurnEnvironmentSelection>,
++) {
++    for (index, selection) in current.iter().enumerate() {
++        if !matches!(selection.config, EnvironmentConfigState::Unavailable) {
++            continue;
++        }
++        if let Some(proposed) = proposed
++            .iter_mut()
++            .find(|proposed| proposed.environment_id == selection.environment_id)
++        {
++            *proposed = selection.clone();
++        } else {
++            proposed.insert(index.min(proposed.len()), selection.clone());
++        }
++    }
++}
++
+ impl ThreadEnvironments {
+     pub(crate) fn new(
+         environment_manager: Arc<EnvironmentManager>,
+@@ -399,6 +422,14 @@ impl ThreadEnvironments {
+         current: TurnEnvironmentSnapshot,
+         non_blocking_snapshots: bool,
+     ) -> Self {
++        let unavailable = current
++            .all_selections()
++            .into_iter()
++            .enumerate()
++            .filter(|(_, selection)| {
++                matches!(selection.config, EnvironmentConfigState::Unavailable)
++            })
++            .collect();
+         let environments: Vec<_> = current
+             .environments
+             .into_iter()
+@@ -487,6 +518,7 @@ impl ThreadEnvironments {
+             local_shell,
+             shell_snapshot,
+             non_blocking_snapshots,
++            unavailable,
+             state: Mutex::new(ThreadEnvironmentsState {
+                 thread_defaults: thread_defaults.clone(),
+                 environments: Vec::new(),
+@@ -500,6 +532,22 @@ impl ThreadEnvironments {
+         }
+     }
+
++    /// Installs immutable exclusions using the complete initial selection's ordering.
++    pub(crate) fn with_unavailable_selections(
++        mut self,
++        selections: &[TurnEnvironmentSelection],
++    ) -> Self {
++        self.unavailable = selections
++            .iter()
++            .cloned()
++            .enumerate()
++            .filter(|(_, selection)| {
++                matches!(selection.config, EnvironmentConfigState::Unavailable)
++            })
++            .collect();
++        self
++    }
++
+     /// Attach the initial active selection after `SessionConfigured` so clients see only later
+     /// connection changes. Startup discovery uses the configured bindings until this point.
+     pub(crate) fn activate_configured(&self, tx_event: Sender<Event>) {
+@@ -663,6 +711,11 @@ impl ThreadEnvironments {
+                     })
+             };
+         for selected_environment in environments {
++            if self.unavailable.iter().any(|(_, unavailable)| {
++                unavailable.environment_id == selected_environment.environment_id
++            }) {
++                continue;
++            }
+             if !seen_environment_ids.insert(selected_environment.environment_id.as_str()) {
+                 continue;
+             }
+@@ -712,6 +765,12 @@ impl ThreadEnvironments {
+                         EnvironmentConfigState::Failed(error) => {
+                             pending_completions.push((completion, Err(error.clone())));
+                         }
++                        EnvironmentConfigState::Unavailable => {
++                            pending_completions.push((
++                                completion,
++                                Err("executor is unavailable for this thread".to_string()),
++                            ));
++                        }
+                         EnvironmentConfigState::FromThread | EnvironmentConfigState::Pending => {
+                             environment.pending_completion = Some(completion);
+                         }
+@@ -821,17 +880,7 @@ impl ThreadEnvironments {
+
+     /// Projects canonical selections back to caller input form without losing config ownership.
+     pub(crate) fn selections(&self) -> Vec<TurnEnvironmentSelection> {
+-        self.state
+-            .lock()
+-            .unwrap_or_else(PoisonError::into_inner)
+-            .environments
+-            .iter()
+-            .map(|environment| {
+-                environment
+-                    .config_origin
+-                    .into_input_selection(environment.selection.clone())
+-            })
+-            .collect()
++        self.snapshot_state(&self.state).all_selections()
+     }
+
+     /// Returns installed owner configuration without treating pending attachments as ready.
+@@ -842,7 +891,8 @@ impl ThreadEnvironments {
+             EnvironmentConfigState::Ready(config) => Some(config),
+             EnvironmentConfigState::FromThread
+             | EnvironmentConfigState::Pending
+-            | EnvironmentConfigState::Failed(_) => None,
++            | EnvironmentConfigState::Failed(_)
++            | EnvironmentConfigState::Unavailable => None,
+         }
+     }
+
+@@ -981,6 +1031,13 @@ impl ThreadEnvironments {
+             .inspect_selected_capability_roots(&selected_capability_roots);
+         status.ready_roots.retain(|root| {
+             let CapabilityRootLocation::Environment { environment_id, .. } = &root.location;
++            if self
++                .unavailable
++                .iter()
++                .any(|(_, selection)| &selection.environment_id == environment_id)
++            {
++                return false;
++            }
+             environments
+                 .iter()
+                 .find(|environment| &environment.selection.environment_id == environment_id)
+@@ -1008,8 +1065,8 @@ impl ThreadEnvironments {
+         configuration_ready: Option<PendingConfiguration>,
+     ) -> TurnEnvironmentResult {
+         let environment_id = &selection.environment_id;
+-        if let EnvironmentConfigState::Failed(error) = &selection.config {
+-            return Err(Arc::new(ExecServerError::Protocol(error.clone())));
++        if let Some(error) = selection.config.failure_reason() {
++            return Err(Arc::new(ExecServerError::Protocol(error.to_string())));
+         }
+
+         // Wait for the shared executor connection.
+@@ -1108,18 +1165,18 @@ impl ThreadEnvironments {
+
+     /// Copies the current selection without waiting for any executor to connect.
+     pub(crate) fn snapshot_now(&self) -> TurnEnvironmentSnapshot {
+-        Self::snapshot_state(&self.state).refresh_readiness()
++        self.snapshot_state(&self.state).refresh_readiness()
+     }
+
+     /// Captures configured bindings without resolving readiness or losing config ownership.
+     /// Inheritance and eviction retain these bindings; execution and validation resolve a view.
+     pub(crate) fn configured_snapshot_now(&self) -> TurnEnvironmentSnapshot {
+-        Self::snapshot_state(&self.configured)
++        self.snapshot_state(&self.configured)
+     }
+
+-    fn snapshot_state(state: &Mutex<ThreadEnvironmentsState>) -> TurnEnvironmentSnapshot {
++    fn snapshot_state(&self, state: &Mutex<ThreadEnvironmentsState>) -> TurnEnvironmentSnapshot {
+         // Keep the startup results, but not the senders that would keep removed Pending work alive.
+-        let environments = state
++        let mut environments: Vec<_> = state
+             .lock()
+             .unwrap_or_else(PoisonError::into_inner)
+             .environments
+@@ -1139,6 +1196,16 @@ impl ThreadEnvironments {
+                 })
+             })
+             .collect();
++        for (index, selection) in &self.unavailable {
++            environments.insert(
++                (*index).min(environments.len()),
++                TurnEnvironmentState::Failed {
++                    selection: selection.clone(),
++                    required_skills: Vec::new(),
++                    error: "executor is unavailable for this thread".to_string(),
++                },
++            );
++        }
+         TurnEnvironmentSnapshot { environments }
+     }
+
+@@ -1193,8 +1260,8 @@ impl TurnEnvironmentState {
+         resolved: Option<TurnEnvironmentResult>,
+     ) -> Self {
+         let required_skills = starting.attachment.environment.required_skills().to_vec();
+-        if let EnvironmentConfigState::Failed(error) = &starting.selection.config {
+-            let error = error.clone();
++        if let Some(error) = starting.selection.config.failure_reason() {
++            let error = error.to_string();
+             return Self::Failed {
+                 required_skills,
+                 selection: starting
+@@ -1466,6 +1533,11 @@ impl TurnEnvironmentSnapshot {
+                         .config_origin
+                         .into_input_selection(environment.selection.clone()),
+                 ),
++                TurnEnvironmentState::Failed { selection, .. }
++                    if matches!(selection.config, EnvironmentConfigState::Unavailable) =>
++                {
++                    Some(selection.clone())
++                }
+                 TurnEnvironmentState::Failed { .. } => None,
+             })
+             .map(TurnEnvironmentSelection::into_request)
+diff --git a/codex-rs/core/src/environment_selection_snapshot_tests.rs b/codex-rs/core/src/environment_selection_snapshot_tests.rs
+index 848e8579863044aad8a6607d6c03618c5abf7fa3..e70813f506568dfc71e7f9ba16d24d72019c513a 100644
+--- a/codex-rs/core/src/environment_selection_snapshot_tests.rs
++++ b/codex-rs/core/src/environment_selection_snapshot_tests.rs
+@@ -354,3 +354,76 @@ async fn credential_refresh_does_not_restore_a_removed_environment() {
+         "removal should wait until the credential refresh finishes"
+     );
+ }
++
++/// Excluded executors retain their position and cannot regain capabilities through new requests.
++#[tokio::test]
++async fn unavailable_executor_survives_registry_removal_updates_and_child_inheritance() {
++    let manager = Arc::new(EnvironmentManager::default_for_tests());
++    let cwd = PathUri::from_abs_path(&AbsolutePathBuf::current_dir().unwrap());
++    let local = TurnEnvironmentSelection {
++        environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
++        cwd: cwd.clone(),
++        workspace_roots: Vec::new(),
++        config: EnvironmentConfigState::FromThread,
++        selected_capability_roots: Default::default(),
++    };
++    let excluded = TurnEnvironmentSelection {
++        environment_id: "removed-box".to_string(),
++        config: EnvironmentConfigState::Unavailable,
++        ..local.clone()
++    };
++    let roots = vec![SelectedCapabilityRoot {
++        id: "excluded-skill".to_string(),
++        location: CapabilityRootLocation::Environment {
++            environment_id: excluded.environment_id.clone(),
++            path: cwd,
++        },
++    }];
++    let owner = ThreadEnvironments::new(
++        Arc::clone(&manager),
++        crate::shell::default_user_shell(),
++        ThreadEnvironmentDefaults::new(tests::test_environment_config(), SandboxType::None),
++        ShellSnapshot::disabled(),
++        TurnEnvironmentSnapshot::default(),
++        false,
++    )
++    .with_unavailable_selections(&[local.clone(), excluded.clone()]);
++    owner.update_selections(&[local.clone()]);
++    let before = owner.snapshot().await;
++    assert_eq!(
++        before.all_selections()[0].environment_id,
++        LOCAL_ENVIRONMENT_ID
++    );
++    assert_eq!(
++        before.inheritable_requests()[1].config,
++        EnvironmentConfigState::Unavailable
++    );
++    assert!(
++        owner
++            .inspect_selected_capability_roots(&roots)
++            .ready_roots
++            .is_empty()
++    );
++    let mut retry = excluded.clone();
++    retry.config = EnvironmentConfigState::Ready(tests::test_environment_config());
++    retry.cwd = PathUri::parse("file:///changed").unwrap();
++    owner.update_selections(&[local.clone(), retry]);
++    assert_eq!(owner.selections()[1], excluded);
++    let snapshot = owner.snapshot().await;
++    let child = ThreadEnvironments::new(
++        manager,
++        crate::shell::default_user_shell(),
++        ThreadEnvironmentDefaults::new(tests::test_environment_config(), SandboxType::None),
++        ShellSnapshot::disabled(),
++        snapshot,
++        false,
++    );
++    child.update_selections(&[local]);
++    assert_eq!(child.snapshot().await.all_selections()[1], excluded);
++    assert!(
++        child
++            .inspect_selected_capability_roots(&roots)
++            .ready_roots
++            .is_empty()
++    );
++}
+diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
+index fadea728740e081588c33d5248e70b6908cd84c8..9acd7b9c846698c81837cdf07db1821594218712 100644
+--- a/codex-rs/core/src/lib.rs
++++ b/codex-rs/core/src/lib.rs
+@@ -150,6 +150,7 @@ mod saffron;
+
+ pub use saffron::archive_self::ArchiveRequest as SaffronArchiveRequest;
+ pub use saffron::archive_self::install as install_saffron_archive_self;
++pub use saffron::executor_startup::record_selection_intent as record_saffron_executor_selection_intent;
+ pub use saffron::fork_thread::install as install_saffron_fork_thread;
+
+ /// Installs Saffrodex-owned model guidance that accompanies goal tools.
+diff --git a/codex-rs/core/src/mcp.rs b/codex-rs/core/src/mcp.rs
+index ce3f0b26adcbf6525b0a4c18f2a493848ac6016d..b7388db03568ee581c7c3080dd4ce573707ab120 100644
+--- a/codex-rs/core/src/mcp.rs
++++ b/codex-rs/core/src/mcp.rs
+@@ -79,9 +79,9 @@ impl<'a> McpEnvironmentScope<'a> {
+         };
+         match &selection.config {
+             EnvironmentConfigState::FromThread => McpEnvironmentAuthority::Unrestricted,
+-            EnvironmentConfigState::Pending | EnvironmentConfigState::Failed(_) => {
+-                McpEnvironmentAuthority::Unavailable
+-            }
++            EnvironmentConfigState::Pending
++            | EnvironmentConfigState::Failed(_)
++            | EnvironmentConfigState::Unavailable => McpEnvironmentAuthority::Unavailable,
+             EnvironmentConfigState::Ready(config) => config
+                 .mcp_policy
+                 .as_ref()
+diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
+index cc05582f7d44a99b371269332c42086e388258a9..ce8e8400ad356646d5e366dbc955e27bf81d8132 100644
+--- a/codex-rs/core/src/saffron/mod.rs
++++ b/codex-rs/core/src/saffron/mod.rs
+@@ -9,6 +9,7 @@ pub(crate) mod archive_self;
+ pub(crate) mod await_exec;
+ pub(crate) mod child_delegation;
+ pub(crate) mod compaction_requests;
++pub(crate) mod executor_startup;
+ pub(crate) mod fork_thread;
+ mod goal_edit;
+ pub(crate) mod goal_resume;
+diff --git a/codex-rs/core/src/saffron/storage.rs b/codex-rs/core/src/saffron/storage.rs
+index 5b425692ec34070b4fe0dad9375783551b04aa4a..346dbd52314b34ffab67c257f9d6ebe743616dc3 100644
+--- a/codex-rs/core/src/saffron/storage.rs
++++ b/codex-rs/core/src/saffron/storage.rs
+@@ -5,6 +5,9 @@
+ //! module owns the complete storage contract so upstream integration points
+ //! need only provide the configured SQLite home.
+
++mod executor_exclusions;
++pub(super) use executor_exclusions::ExecutorExclusion;
++
+ use std::sync::LazyLock;
+
+ use codex_protocol::ThreadId;
+diff --git a/codex-rs/core/src/saffron/storage_tests.rs b/codex-rs/core/src/saffron/storage_tests.rs
+index 52a52eb7ea5468d7200c1bc06f95997ed6ed60c0..acdf265011530888ea129652cc46a860fcac5cd1 100644
+--- a/codex-rs/core/src/saffron/storage_tests.rs
++++ b/codex-rs/core/src/saffron/storage_tests.rs
+@@ -17,7 +17,7 @@ async fn saffron_migrations_have_an_independent_ledger() -> anyhow::Result<()> {
+
+     assert_eq!(
+         migration_versions(home.path().join(SAFFRON_DB_FILENAME), &sqlite).await?,
+-        vec![1, 2, 3]
++        vec![1, 2, 3, 4]
+     );
+     assert_eq!(
+         migration_versions(state.sqlite().state_db_path(), &sqlite).await?,
+diff --git a/codex-rs/core/src/session/environment.rs b/codex-rs/core/src/session/environment.rs
+index 3820b8b7d82b37d29cefd7b6d7b43ed3e6b4355e..120437eff14945c7a4beba2f43a8dbc2be18918b 100644
+--- a/codex-rs/core/src/session/environment.rs
++++ b/codex-rs/core/src/session/environment.rs
+@@ -58,7 +58,8 @@ pub(super) fn validate_environment_configs(
+         match &selection.config {
+             EnvironmentConfigState::FromThread
+             | EnvironmentConfigState::Pending
+-            | EnvironmentConfigState::Failed(_) => {}
++            | EnvironmentConfigState::Failed(_)
++            | EnvironmentConfigState::Unavailable => {}
+             EnvironmentConfigState::Ready(config) => {
+                 validate_environment_config(selection, config, features).map_err(|error| {
+                     ConstraintError::InvalidValue {
+@@ -82,7 +83,10 @@ pub(super) fn ensure_configs_stay_owner_provided(
+         environment.config == EnvironmentConfigState::FromThread
+             && current.iter().any(|current| {
+                 current.environment_id == environment.environment_id
+-                    && current.config != EnvironmentConfigState::FromThread
++                    && !matches!(
++                        current.config,
++                        EnvironmentConfigState::FromThread | EnvironmentConfigState::Unavailable
++                    )
+             })
+     }) {
+         return Err(ConstraintError::InvalidValue {
+@@ -296,6 +300,19 @@ impl Session {
+         let mut current = self.services.turn_environments.selections();
+         let mut future = state.session_configuration.environments.clone();
+         let inherited = matches!(source, ConfigUpdateSource::Inherited);
++        if current.iter().chain(&future).any(|environment| {
++            environment.environment_id == selection.environment_id
++                && matches!(environment.config, EnvironmentConfigState::Unavailable)
++        }) {
++            return if inherited {
++                Ok(())
++            } else {
++                Err(CodexErr::InvalidRequest(format!(
++                    "executor `{}` is unavailable for this thread",
++                    selection.environment_id
++                )))
++            };
++        }
+         let matches = |environment: &TurnEnvironmentSelection| {
+             environment.has_same_workspace(selection)
+                 && (!inherited || matches!(environment.config, EnvironmentConfigState::Pending))
+diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
+index 4effc0e0de55991682745e54957f4bdc30a79afe..37cc43a3c67c8323485cb33f36d7fdcb78257e34 100644
+--- a/codex-rs/core/src/session/session.rs
++++ b/codex-rs/core/src/session/session.rs
+@@ -471,6 +471,10 @@ impl SessionConfiguration {
+         if let Some(environments) = &updates.environments {
+             next_configuration.legacy_fallback_cwd = environments.legacy_fallback_cwd.clone();
+             next_configuration.environments = environments.environments.clone();
++            crate::environment_selection::retain_unavailable_selections(
++                current_environments,
++                &mut next_configuration.environments,
++            );
+         }
+         let cwd_changed = next_configuration.legacy_fallback_cwd != current_cwd;
+         if let Some(runtime_workspace_roots) = &updates.runtime_workspace_roots {
+@@ -1185,6 +1189,30 @@ impl Session {
+                     Arc::default()
+                 }
+             });
++        // Keep executor discovery out of the embedded startup/resume future.
++        let admitted = Box::pin(crate::saffron::executor_startup::prepare(
++            &config,
++            thread_id,
++            matches!(&initial_history, InitialHistory::Resumed(_)),
++            &thread_extension_init,
++            crate::saffron::executor_startup::StartupEnvironments {
++                manager: Arc::clone(&environment_manager),
++                shell: session_configuration
++                    .user_shell_override
++                    .clone()
++                    .unwrap_or_else(shell::default_user_shell),
++                defaults: ThreadEnvironmentDefaults::new(
++                    session_configuration.inferred_environment_config(),
++                    session_configuration.windows_sandbox_type,
++                ),
++                selections: environment_selections.to_vec(),
++                inherited: inherited_environments.unwrap_or_default(),
++                project_instructions_pinned: instructions.project_snapshot.is_some(),
++            },
++        ))
++        .await?;
++        let environment_selections = admitted.selections.as_slice();
++        let inherited_environments = Some(admitted.inherited);
+         let mcp_thread_init = thread_extension_init.clone();
+         let thread_extension_data = codex_extension_api::ExtensionData::new_with_init(
+             thread_id.to_string(),
+@@ -1631,24 +1659,29 @@ impl Session {
+                 ShellSnapshot::disabled()
+             };
+             let inherited_environments = inherited_environments.unwrap_or_default();
+-            let turn_environments = Arc::new(ThreadEnvironments::new(
+-                environment_manager,
+-                default_shell.clone(),
+-                ThreadEnvironmentDefaults::new(
+-                    session_configuration.inferred_environment_config(),
+-                    session_configuration.windows_sandbox_type,
+-                ),
+-                shell_snapshot,
+-                inherited_environments.clone(),
+-                config.features.enabled(Feature::DeferredExecutor),
+-            ));
++            let turn_environments = Arc::new(
++                ThreadEnvironments::new(
++                    environment_manager,
++                    default_shell.clone(),
++                    ThreadEnvironmentDefaults::new(
++                        session_configuration.inferred_environment_config(),
++                        session_configuration.windows_sandbox_type,
++                    ),
++                    shell_snapshot,
++                    inherited_environments.clone(),
++                    config.features.enabled(Feature::DeferredExecutor),
++                )
++                .with_unavailable_selections(environment_selections),
++            );
+             turn_environments.update_configured_selections(environment_selections);
+             let configured_environments = turn_environments.configured_snapshot_now();
+             session_configuration.environments = configured_environments.all_selections();
+             let resolved_environments = turn_environments
+                 .resolve_snapshot(configured_environments)
+                 .await;
+-            let agents_md_manager = Arc::new(AgentsMdManager::new(instructions));
++            let agents_md_manager = Arc::new(
++                AgentsMdManager::new(instructions).with_startup_discovery(admitted.instructions),
++            );
+             // Keep discovery's future out of the large embedded startup/resume frame.
+             let plugin_skill_warmup = Box::pin(warm_plugins_and_skills_for_session_init(
+                 Arc::clone(&config),
+@@ -1679,7 +1712,8 @@ impl Session {
+                 plugin_skill_warmup,
+                 thread_name_lookup,
+             );
+-            let (agents_md_result, instruction_warnings) = instruction_refresh;
++            let (agents_md_result, mut instruction_warnings) = instruction_refresh;
++            instruction_warnings.extend(admitted.warnings);
+             // TODO(anp): Present AGENTS.md discovery errors more clearly to the user.
+             agents_md_result?;
+             post_session_configured_events.extend(instruction_warnings.into_iter().map(
+diff --git a/codex-rs/core/src/session/step_activation.rs b/codex-rs/core/src/session/step_activation.rs
+index d89a1f83625771a9ace06ca2eff6bcef5f242e04..add3654e0aaf643d9707732f8d01f22ca9a51e61 100644
+--- a/codex-rs/core/src/session/step_activation.rs
++++ b/codex-rs/core/src/session/step_activation.rs
+@@ -278,12 +278,17 @@ impl Session {
+             service_tier,
+         } = update;
+         let environments = environment_requests.map(|requests| {
+-            requests
++            let mut selections = requests
+                 .into_iter()
+                 .map(|request| {
+                     TurnEnvironmentSelection::new(request, &self.services.selected_capability_roots)
+                 })
+-                .collect::<Vec<_>>()
++                .collect::<Vec<_>>();
++            crate::environment_selection::retain_unavailable_selections(
++                &self.services.turn_environments.selections(),
++                &mut selections,
++            );
++            selections
+         });
+         let updates_step_settings = updates_model_settings || approvals_reviewer.is_some();
+         let update = StepSettingsUpdate {
+@@ -347,6 +352,9 @@ impl Session {
+                     &self.services.turn_environments.environment_manager(),
+                     proposed
+                         .iter()
++                        .filter(|selection| {
++                            !matches!(selection.config, EnvironmentConfigState::Unavailable)
++                        })
+                         .map(|selection| (selection.environment_id.as_str(), &selection.cwd)),
+                 )
+                 .map_err(|error| error.to_string())?;
+@@ -465,7 +473,9 @@ fn any_environment_has_full_disk_write(
+                 config.permission_profile.permission_profile(),
+                 &config.workspace_roots,
+             ),
+-            EnvironmentConfigState::Pending | EnvironmentConfigState::Failed(_) => return None,
++            EnvironmentConfigState::Pending
++            | EnvironmentConfigState::Failed(_)
++            | EnvironmentConfigState::Unavailable => return None,
+         };
+         Some(
+             profile
+diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
+index a7430cb775be4681971ea981bacd1511dc56c881..63c2435a7e48cc43d9d1d300fd5aa3a976a9f3a9 100644
+--- a/codex-rs/core/src/session/tests.rs
++++ b/codex-rs/core/src/session/tests.rs
+@@ -23,6 +23,8 @@ use super::turn_context::TurnEnvironment;
+ use super::*;
+ #[path = "config_refresh_tests.rs"]
+ mod config_refresh_tests;
++#[path = "environment_exclusion_tests.rs"]
++mod environment_exclusion_tests;
+ use crate::agents_md_manager::AgentsMdManager;
+ use crate::agents_md_manager::SessionInstructions;
+ use crate::config::ConfigBuilder;
+diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
+index ae63a88a6b66a36efe5e583a6b48bfd9fe5c2957..7e1dafed526a4a12bed9f234871efff45c0b4735 100644
+--- a/codex-rs/core/src/session/turn_context.rs
++++ b/codex-rs/core/src/session/turn_context.rs
+@@ -1063,7 +1063,10 @@ impl Session {
+                 .iter()
+                 .find(|environment| {
+                     environment.environment_id == codex_exec_server::LOCAL_ENVIRONMENT_ID
+-                        && !matches!(environment.config, EnvironmentConfigState::Failed(_))
++                        && !matches!(
++                            environment.config,
++                            EnvironmentConfigState::Failed(_) | EnvironmentConfigState::Unavailable
++                        )
+                 }),
+         );
+         config.model = Some(
+diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
+index 6304ed882dd0ef8a291d27e022202750536c41d9..e22232930396e8f8cfb9a2fd21d2dbb86eaa7fee 100644
+--- a/codex-rs/core/src/thread_manager.rs
++++ b/codex-rs/core/src/thread_manager.rs
+@@ -2532,6 +2532,10 @@ impl ThreadManagerState {
+                 }
+             });
+         thread_extension_init.insert(isolation);
++        crate::saffron::executor_startup::record_selection_intent(
++            &mut thread_extension_init,
++            environment_requests.is_none() && inherited_environments.is_none(),
++        );
+         let environment_requests = environment_requests
+             .or_else(|| {
+                 let SessionSource::SubAgent(SubAgentSource::ThreadSpawn { .. }) = &session_source
+diff --git a/codex-rs/protocol/src/environment.rs b/codex-rs/protocol/src/environment.rs
+index c9f1a960a1bd5f00f18e72db80f7a964ac75b08f..c2d920fd4bd288fbb6764f8ce225e78619bbd033 100644
+--- a/codex-rs/protocol/src/environment.rs
++++ b/codex-rs/protocol/src/environment.rs
+@@ -157,6 +157,19 @@ pub enum EnvironmentConfigState {
+     Ready(EnvironmentConfig),
+     /// The owner could not supply configuration for this environment attachment.
+     Failed(String),
++    /// This executor is excluded for the lifetime of the thread and its children.
++    Unavailable,
++}
++
++impl EnvironmentConfigState {
++    /// Explains why this selection cannot grant executor access.
++    pub fn failure_reason(&self) -> Option<&str> {
++        match self {
++            Self::Failed(error) => Some(error),
++            Self::Unavailable => Some("executor is unavailable for this thread"),
++            Self::FromThread | Self::Pending | Self::Ready(_) => None,
++        }
++    }
+ }
+
+ /// Full Access requires no approvals and unrestricted permissions everywhere selected.
+@@ -182,7 +195,9 @@ pub fn has_full_access<'a>(
+                         PermissionProfile::Disabled
+                     )
+                 }
+-                EnvironmentConfigState::Pending | EnvironmentConfigState::Failed(_) => false,
++                EnvironmentConfigState::Pending
++                | EnvironmentConfigState::Failed(_)
++                | EnvironmentConfigState::Unavailable => false,
+             })
+         }
+ }

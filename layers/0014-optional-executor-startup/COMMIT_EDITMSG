@@ -1,0 +1,16 @@
+Bound optional executor startup and retain thread exclusions
+
+A remote executor that connects but stalls during instruction discovery
+can hold up a local thread. Give readiness and AGENTS.md discovery one
+shared ten-second deadline. With an implicitly selected local primary,
+exclude secondaries that cannot finish.
+Explicitly selected executors must complete within the same deadline.
+Native Pending-owner deferred startup is preserved.
+
+Keep excluded executors unavailable across configuration updates, resume,
+and child inheritance, including capability roots and MCP authority.
+Persist them in Saffron's auxiliary database; ephemeral threads retain
+only in-memory state. Copying history without that database does not
+transfer exclusions. Complete admission reads feed the ordinary first
+instruction load, preserving its ordering, trust and byte budget; later
+refreshes remain live. Pinned reviewer snapshots avoid new discovery.
