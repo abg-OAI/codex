@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/agent/control/sender_context.rs b/codex-rs/core/src/agent/control/sender_context.rs
-index b3ab74db8f90314352466d830f264c0abdd77f73..0d74bf2f48a3fb6de5d2a6b8b7113ec6e5b93fe1 100644
+index 39afaca3d6955932a25603e800db0147ce88b816..91bd178eab55acb95bee289c7299bc4e4178b68e 100644
 --- a/codex-rs/core/src/agent/control/sender_context.rs
 +++ b/codex-rs/core/src/agent/control/sender_context.rs
 @@ -103,6 +103,10 @@ impl LocalAgentRuntime {
@@ -10,14 +10,14 @@ index b3ab74db8f90314352466d830f264c0abdd77f73..0d74bf2f48a3fb6de5d2a6b8b7113ec6
 +                                        .source
 +                                        .get_agent_path()
 +                                        .unwrap_or_else(codex_protocol::AgentPath::root),
-                                     ContextManager::new(),
-                                     // Tool bodies are not sender authorization evidence.
-                                     TruncationPolicy::Bytes(0),
+                                     ContextManager::new(std::sync::Arc::clone(
+                                         &self.item_id_generator,
+                                     )),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index bb563abf0b040f034e138b89d51c229097c877df..13835b45b1c1fafabce84bfe8725515cf6c147f5 100644
+index c75de9167c1b0226d303d5db69eb0046b94d94e9..9656f06caafc15d4d78d30992e1fc8552b730a04 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
-@@ -19,6 +19,7 @@ use crate::hook_runtime::run_post_compact_hooks;
+@@ -20,6 +20,7 @@ use crate::hook_runtime::run_post_compact_hooks;
  use crate::hook_runtime::run_pre_compact_hooks;
  use crate::responses_metadata::CodexResponsesMetadata;
  use crate::responses_metadata::CompactionTurnMetadata;
@@ -25,7 +25,7 @@ index bb563abf0b040f034e138b89d51c229097c877df..13835b45b1c1fafabce84bfe8725515c
  use crate::session::RequestEffortUsage;
  use crate::session::session::Session;
  use crate::session::step_context::StepContext;
-@@ -406,7 +407,11 @@ async fn run_compact_task_inner_impl(
+@@ -408,7 +409,11 @@ async fn run_compact_task_inner_impl(
          get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default()
      };
      let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
@@ -38,7 +38,7 @@ index bb563abf0b040f034e138b89d51c229097c877df..13835b45b1c1fafabce84bfe8725515c
 
      let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
      if let Some(summary_item) = new_history.last_mut() {
-@@ -585,19 +590,39 @@ pub(crate) struct CompactedUserMessage<'a> {
+@@ -615,19 +620,39 @@ pub(crate) struct CompactedUserMessage<'a> {
  }
 
  #[cfg(test)]
@@ -84,7 +84,7 @@ index bb563abf0b040f034e138b89d51c229097c877df..13835b45b1c1fafabce84bfe8725515c
          .collect()
  }
 
-@@ -699,9 +724,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
+@@ -729,9 +754,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
      compacted_history
  }
 
@@ -96,7 +96,7 @@ index bb563abf0b040f034e138b89d51c229097c877df..13835b45b1c1fafabce84bfe8725515c
      summary_text: &str,
  ) -> Vec<ResponseItemEnvelope> {
      build_compacted_history_with_limit(
-@@ -712,9 +738,10 @@ pub(crate) fn build_compacted_history(
+@@ -742,9 +768,10 @@ pub(crate) fn build_compacted_history(
      )
  }
 
@@ -108,7 +108,7 @@ index bb563abf0b040f034e138b89d51c229097c877df..13835b45b1c1fafabce84bfe8725515c
      summary_text: &str,
      max_tokens: usize,
  ) -> Vec<ResponseItemEnvelope> {
-@@ -725,6 +752,26 @@ fn build_compacted_history_with_limit(
+@@ -755,6 +782,26 @@ fn build_compacted_history_with_limit(
              if remaining == 0 {
                  break;
              }
@@ -136,10 +136,10 @@ index bb563abf0b040f034e138b89d51c229097c877df..13835b45b1c1fafabce84bfe8725515c
              let ResponseItem::Message {
                  id,
 diff --git a/codex-rs/core/src/compact_remote_history.rs b/codex-rs/core/src/compact_remote_history.rs
-index 82fc5e3f0e2dabf03b30d56a0453702e4257402a..bdc775339943a02c9743e1130d1cc21727348a39 100644
+index 3a6f1500f3933ac893a46c0be2cf37bbbc1e07e5..87c7ecb231049931d2bec16cecf317151c4fcbbc 100644
 --- a/codex-rs/core/src/compact_remote_history.rs
 +++ b/codex-rs/core/src/compact_remote_history.rs
-@@ -138,6 +138,10 @@ pub(crate) fn trim_function_call_history_to_fit_context_window(
+@@ -149,6 +149,10 @@ pub(crate) fn trim_function_call_history_to_fit_context_window(
  fn rewritten_output_for_context_window(
      envelope: &ResponseItemEnvelope,
  ) -> Option<ResponseItemEnvelope> {
@@ -176,10 +176,10 @@ index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62
  fn rewritten_output_preserves_harness_metadata() {
      let envelope = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfbfbe70c23 100644
+index 5656fb486b47a64ed75096d604078eba88212d82..99bf324d6c130adba46131524cff916d3ddf4b00 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
-@@ -480,12 +480,14 @@ async fn collect_compaction_output(
+@@ -491,6 +491,7 @@ async fn collect_compaction_output(
      })
  }
 
@@ -187,44 +187,41 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
  fn build_v2_compacted_history(
      prompt_input: Vec<ResponseItem>,
      prompt_input_metadata: Vec<Option<CodexHarnessMetadata>>,
-     compaction_output: ResponseItem,
+@@ -498,6 +499,7 @@ fn build_v2_compacted_history(
      features: &Features,
      image_budget: RetainedImageBudget,
+     audio_durations: &FileAudioDurations,
 +    agent_path: &codex_protocol::AgentPath,
  ) -> (Vec<ResponseItemEnvelope>, usize) {
      debug_assert_eq!(prompt_input.len(), prompt_input_metadata.len());
      let prompt_input = prompt_input
-@@ -494,11 +496,21 @@ fn build_v2_compacted_history(
-         .map(|(item, metadata)| ResponseItemEnvelope { item, metadata })
-         .collect::<Vec<_>>();
+@@ -512,7 +514,11 @@ fn build_v2_compacted_history(
+     let pending_sequence = crate::compact_pending_input::pending_mail_sequence(&prompt_input);
      let retained = v2_history_item_groups(prompt_input)
--        .filter(|group| is_retained_for_remote_compaction_v2(&group.source, features))
-+        .filter(|group| {
+         .filter(|group| {
+-            is_retained_for_remote_compaction_v2(&group.source, features)
 +            crate::saffron::compaction_requests::is_request(
 +                &group.source.item,
 +                group.source.metadata.as_ref(),
 +                agent_path,
 +            ) || is_retained_for_remote_compaction_v2(&group.source, features)
-+        })
-         .flat_map(HistoryItemGroup::into_items)
-         .collect::<Vec<_>>();
--    let mut retained =
--        truncate_retained_messages(retained, RETAINED_MESSAGE_TOKEN_BUDGET, image_budget);
-+    let mut retained = truncate_retained_messages(
-+        retained,
-+        RETAINED_MESSAGE_TOKEN_BUDGET,
-+        image_budget,
+                 || pending_sequence
+                     .is_some_and(|first| is_retained_pending_mail(&group.source, first))
+         })
+@@ -523,6 +529,7 @@ fn build_v2_compacted_history(
+         RETAINED_MESSAGE_TOKEN_BUDGET,
+         image_budget,
+         audio_durations,
 +        Some(agent_path),
-+    );
+     );
      let retained_image_count = retained
          .iter()
-         .map(|envelope| retained_input_image_count(&envelope.item))
-@@ -603,13 +615,16 @@ pub(crate) fn truncate_retained_messages_for_remote_compaction(
-     items: Vec<ResponseItemEnvelope>,
-     max_tokens: usize,
- ) -> Vec<ResponseItemEnvelope> {
--    truncate_retained_messages(items, max_tokens, RetainedImageBudget::Disabled)
-+    truncate_retained_messages(items, max_tokens, RetainedImageBudget::Disabled, None)
+@@ -642,14 +649,18 @@ pub(crate) fn truncate_retained_messages_for_remote_compaction(
+         max_tokens,
+         RetainedImageBudget::Disabled,
+         audio_durations,
++        None,
+     )
  }
 
 +/// Applies the remote window budget, optionally including this agent's requests.
@@ -233,11 +230,12 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
      items: Vec<ResponseItemEnvelope>,
      max_tokens: usize,
      image_budget: RetainedImageBudget,
+     audio_durations: &FileAudioDurations,
 +    agent_path: Option<&codex_protocol::AgentPath>,
  ) -> Vec<ResponseItemEnvelope> {
      let mut remaining = max_tokens;
      let mut truncated_reversed = Vec::with_capacity(items.len());
-@@ -622,6 +637,13 @@ fn truncate_retained_messages(
+@@ -662,6 +673,13 @@ fn truncate_retained_messages(
              continue;
          }
 
@@ -249,18 +247,20 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
 +            )
 +        });
          let client_developer = is_client_authored_developer_message(&group.source);
-         let charge_images = image_budget == RetainedImageBudget::Enabled && !client_developer;
-         let notice_tokens = group
-@@ -663,12 +685,19 @@ fn truncate_retained_messages(
+         let image_budget = if client_developer {
+             RetainedImageBudget::Disabled
+@@ -720,7 +738,9 @@ fn truncate_retained_messages(
                  // the remaining budget with older messages in that case.
                  remaining = 0;
              }
--            let truncated_item = if charge_images && image_count > 0 {
+-            let truncated_item = if requires_media_boundary_truncation {
 +            let truncated_item = if request {
 +                crate::saffron::compaction_requests::retain(group.source, content_budget)
-+            } else if charge_images && image_count > 0 {
-                 images::truncate_message_to_token_budget(group.source, content_budget)
-             } else {
++            } else if requires_media_boundary_truncation {
+                 media::truncate_message_to_token_budget(
+                     group.source,
+                     content_budget,
+@@ -731,6 +751,11 @@ fn truncate_retained_messages(
                  truncate_message_text_to_token_budget(group.source, content_budget)
              };
              let Some(mut truncated_item) = truncated_item else {
@@ -272,24 +272,24 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
                  continue;
              };
              if client_developer {
-@@ -697,7 +726,7 @@ fn truncate_retained_messages(
+@@ -773,7 +798,7 @@ fn truncate_retained_messages(
              }
              truncated_reversed.push(truncated_item);
              remaining = 0;
--        } else if charge_images && retained_input_image_count(&group.source.item) > 0 {
-+        } else if request || (charge_images && retained_input_image_count(&group.source.item) > 0) {
+-        } else if requires_media_boundary_truncation {
++        } else if request || requires_media_boundary_truncation {
              remaining = 0;
          }
      }
-@@ -848,6 +877,7 @@ mod tests {
-             output,
+@@ -917,6 +942,7 @@ mod tests {
              &Features::with_defaults(),
              RetainedImageBudget::Disabled,
+             &FileAudioDurations::default(),
 +            &codex_protocol::AgentPath::root(),
          )
      }
 
-@@ -929,6 +959,61 @@ mod tests {
+@@ -1002,6 +1028,68 @@ mod tests {
          );
      }
 
@@ -336,6 +336,7 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
 +            checkpoint.clone(),
 +            &Features::default(),
 +            RetainedImageBudget::Disabled,
++            &FileAudioDurations::default(),
 +            &codex_protocol::AgentPath::root(),
 +        );
 +        assert_eq!(
@@ -343,7 +344,13 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
 +            vec![
 +                older_request.into(),
 +                assignment,
-+                checkpoint.into(),
++                ResponseItemEnvelope {
++                    item: checkpoint,
++                    metadata: Some(CodexHarnessMetadata {
++                        compaction_without_file_error_sources: true,
++                        ..Default::default()
++                    }),
++                },
 +            ]
 +        );
 +    }
@@ -351,15 +358,15 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
      #[test]
      fn build_v2_compacted_history_preserves_retained_metadata_sidecar() {
          let retained = message("user", "keep", /*phase*/ None);
-@@ -973,6 +1058,7 @@ mod tests {
-                 output.clone(),
+@@ -1047,6 +1135,7 @@ mod tests {
                  &features,
                  RetainedImageBudget::Disabled,
+                 &FileAudioDurations::default(),
 +                &codex_protocol::AgentPath::root(),
              );
              let mut expected = vec![
                  ResponseItemEnvelope {
-@@ -998,6 +1084,131 @@ mod tests {
+@@ -1078,6 +1167,135 @@ mod tests {
          }
      }
 
@@ -396,6 +403,7 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
 +                checkpoint.clone(),
 +                &Features::default(),
 +                RetainedImageBudget::Disabled,
++                &FileAudioDurations::default(),
 +                &codex_protocol::AgentPath::root(),
 +            );
 +            assert_eq!(&history[..history.len() - 1], &expected);
@@ -429,6 +437,7 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
 +            vec![delivery, user.clone()],
 +            approx_token_count("New task."),
 +            RetainedImageBudget::Disabled,
++            &FileAudioDurations::default(),
 +            Some(&codex_protocol::AgentPath::root()),
 +        );
 +        assert_eq!(retained, vec![user]);
@@ -451,6 +460,7 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
 +            vec![user.clone(), peer],
 +            20,
 +            RetainedImageBudget::Disabled,
++            &FileAudioDurations::default(),
 +            Some(&codex_protocol::AgentPath::try_from("/root/fruit").unwrap()),
 +        );
 +        assert_eq!(retained, vec![user]);
@@ -483,6 +493,7 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
 +            checkpoint.clone(),
 +            &Features::default(),
 +            RetainedImageBudget::Disabled,
++            &FileAudioDurations::default(),
 +            &codex_protocol::AgentPath::try_from("/root/fruit").unwrap(),
 +        );
 +        assert_eq!(raw(history), vec![assignment, checkpoint]);
@@ -491,44 +502,14 @@ index 0b47a5790e8eb44f7c0aefc5bc384ac425a80228..75534f723540ebfcd8f5f6108a843bfb
      #[test]
      fn retained_history_truncation_preserves_metadata() {
          let item = ResponseItemEnvelope {
-diff --git a/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs b/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs
-index cec85187adc06404093fd9802566f3a848981088..9758a63fd4650d9339bc26439a66cbcee0c4c9fb 100644
---- a/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs
-+++ b/codex-rs/core/src/compact_remote_v2_image_budget_tests.rs
-@@ -48,6 +48,7 @@ fn trim(items: Vec<ResponseItem>, max_tokens: usize) -> Vec<ResponseItem> {
-         items.into_iter().map(ResponseItemEnvelope::new).collect(),
-         max_tokens,
-         RetainedImageBudget::Enabled,
-+        None,
-     )
-     .into_iter()
-     .map(ResponseItemEnvelope::into_item)
-@@ -151,6 +152,7 @@ fn image_treatment_preserves_text_only_boundary_behavior() {
-                 vec![source.clone()],
-                 max_tokens,
-                 RetainedImageBudget::Enabled,
-+                None,
-             ),
-             truncate_retained_messages_for_remote_compaction(vec![source.clone()], max_tokens),
-         );
-@@ -176,7 +178,8 @@ fn image_treatment_preserves_client_developer_boundary_behavior() {
-             truncate_retained_messages(
-                 vec![source.clone()],
-                 max_tokens,
--                RetainedImageBudget::Enabled
-+                RetainedImageBudget::Enabled,
-+                None,
-             ),
-             truncate_retained_messages_for_remote_compaction(vec![source.clone()], max_tokens),
-         );
 diff --git a/codex-rs/core/src/compact_remote_v2_installation.rs b/codex-rs/core/src/compact_remote_v2_installation.rs
-index aa3726491f18c50173bc695c55260b1c8924e6f7..8f5d549fc3fc40ef027008d729468745ed0e7cd2 100644
+index f14c10a0895729c614e0c84615768f4566cb6bcb..c3a666f2ba358690ab166586c8cd3ebe075c8486 100644
 --- a/codex-rs/core/src/compact_remote_v2_installation.rs
 +++ b/codex-rs/core/src/compact_remote_v2_installation.rs
-@@ -200,6 +200,10 @@ async fn build_and_install_compaction(
-         } else {
+@@ -202,6 +202,10 @@ async fn build_and_install_compaction(
              RetainedImageBudget::Disabled
          },
+         crate::session::file_audio::snapshot(sess).await.as_ref(),
 +        &turn_context
 +            .session_source
 +            .get_agent_path()
@@ -536,6 +517,62 @@ index aa3726491f18c50173bc695c55260b1c8924e6f7..8f5d549fc3fc40ef027008d729468745
      );
      let reviewer_compaction_hash = reviewer_compaction_hash(sess, turn_context).await;
      let installed = if let Some((prefix, model_info, cutoff_world_state)) = prefix {
+diff --git a/codex-rs/core/src/compact_remote_v2_media_budget_tests.rs b/codex-rs/core/src/compact_remote_v2_media_budget_tests.rs
+index ef92fb2ddcd62e450a86e3f897173766756bca95..60582b60616bd14a7bf8e9482f45d956366f3d17 100644
+--- a/codex-rs/core/src/compact_remote_v2_media_budget_tests.rs
++++ b/codex-rs/core/src/compact_remote_v2_media_budget_tests.rs
+@@ -61,6 +61,7 @@ fn trim(items: Vec<ResponseItem>, max_tokens: usize) -> Vec<ResponseItem> {
+         max_tokens,
+         RetainedImageBudget::Enabled,
+         &FileAudioDurations::default(),
++        None,
+     )
+     .into_iter()
+     .map(ResponseItemEnvelope::into_item)
+@@ -169,6 +170,7 @@ fn file_audio_is_charged_and_atomic_in_both_image_budget_modes() {
+                 budget,
+                 image_budget,
+                 &FileAudioDurations::default(),
++                None,
+             )
+             .into_iter()
+             .map(ResponseItemEnvelope::into_item)
+@@ -215,6 +217,7 @@ fn file_audio_cutoff_does_not_backfill_older_uncharged_media() {
+             max_tokens,
+             image_budget,
+             &FileAudioDurations::default(),
++            None,
+         )
+         .into_iter()
+         .map(ResponseItemEnvelope::into_item)
+@@ -269,6 +272,7 @@ fn older_media_keeps_both_labels_or_is_dropped_after_file_audio_fits() {
+                     budget,
+                     image_budget,
+                     &FileAudioDurations::default(),
++                    None,
+                 );
+                 let [
+                     ResponseItemEnvelope {
+@@ -365,7 +369,8 @@ fn image_treatment_preserves_text_only_boundary_behavior() {
+                 vec![source.clone()],
+                 max_tokens,
+                 RetainedImageBudget::Enabled,
+-                &FileAudioDurations::default()
++                &FileAudioDurations::default(),
++                None,
+             ),
+             truncate_retained_messages_for_remote_compaction(
+                 vec![source.clone()],
+@@ -396,7 +401,8 @@ fn image_treatment_preserves_client_developer_boundary_behavior() {
+                 vec![source.clone()],
+                 max_tokens,
+                 RetainedImageBudget::Enabled,
+-                &FileAudioDurations::default()
++                &FileAudioDurations::default(),
++                None,
+             ),
+             truncate_retained_messages_for_remote_compaction(
+                 vec![source.clone()],
 diff --git a/codex-rs/core/src/compact_tests.rs b/codex-rs/core/src/compact_tests.rs
 index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f403277cb2cba 100644
 --- a/codex-rs/core/src/compact_tests.rs
@@ -719,34 +756,34 @@ index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f4032
      );
 
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
-index 523730fd86cb8573f24e46ed4efa457180584a04..6b15769810901d275c1f7282161650c90eb7d7b9 100644
+index 3e8221ba33b70690fb1641fdae6d7a7dbcbf35c0..8c40e60529f750bbe877b3c9b9284cd8153093c6 100644
 --- a/codex-rs/core/src/context_manager/history.rs
 +++ b/codex-rs/core/src/context_manager/history.rs
-@@ -657,6 +657,9 @@ impl ContextManager {
-         )
+@@ -733,6 +733,9 @@ impl ContextManager {
          .await;
+         self.project_file_audio_for_prompt();
          Arc::unwrap_or_clone(self.items)
 +            .into_iter()
 +            .filter(|item| !crate::saffron::compaction_requests::is_retired_annotation(item))
 +            .collect()
      }
 
-     /// Iterates over raw response items without exposing their history envelopes.
-@@ -719,6 +722,7 @@ impl ContextManager {
+     /// Applies the file-audio request projection to a normalized snapshot whose
+@@ -846,6 +849,7 @@ impl ContextManager {
          let items_tokens = self
              .items
              .iter()
 +            .filter(|item| !crate::saffron::compaction_requests::is_retired_annotation(item))
-             .map(|envelope| estimate_item_token_count(&envelope.item))
-             .fold(0i64, i64::saturating_add);
-
+             .map(|envelope| {
+                 estimate_item_token_count_with_audio(&envelope.item, &self.file_audio_durations)
+             })
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index 5c3f1330adde663509235f0fe0ecb6e8faa44935..3efd2a7e3e1f6d6431ac5c43174e8462da963518 100644
+index 334a764d00d3ff11861df258e68393910e72ae21..f0298b885161aac79ea8617686f567fc58664f48 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
-@@ -61,6 +61,85 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
- const EXEC_FORMAT_MAX_TOKENS: usize = 2_500;
- const TEST_WAV_SAMPLE_RATE: u32 = 8_000;
+@@ -84,6 +84,95 @@ fn sampling_checkpoint_excludes_input_appended_during_request() {
+     );
+ }
 
 +/// Retired annotations cannot replace surviving requests or restore removed ones.
 +#[test_case("saffron.request_account.v1", true; "account original survives")]
@@ -777,6 +814,11 @@ index 5c3f1330adde663509235f0fe0ecb6e8faa44935..3efd2a7e3e1f6d6431ac5c43174e8462
 +        stored.push(ResponseItemEnvelope::new(original));
 +    }
 +    stored.push(later);
++    for (index, envelope) in stored.iter_mut().enumerate() {
++        let metadata = envelope.metadata.get_or_insert_default();
++        metadata.history_sequence = Some(index as u64 + 1);
++        metadata.sampled_through_sequence = Some(0);
++    }
 +    let expected = stored[1..].to_vec();
 +    let mut history = ContextManager::default();
 +    history.replace_annotated(stored.clone());
@@ -813,10 +855,15 @@ index 5c3f1330adde663509235f0fe0ecb6e8faa44935..3efd2a7e3e1f6d6431ac5c43174e8462
 +        )]),
 +        ..Default::default()
 +    });
-+    let expected = vec![
++    let mut expected = vec![
 +        ResponseItemEnvelope::new(user_msg("Explain this quotation.")),
 +        quoted,
 +    ];
++    for (index, envelope) in expected.iter_mut().enumerate() {
++        let metadata = envelope.metadata.get_or_insert_default();
++        metadata.history_sequence = Some(index as u64 + 1);
++        metadata.sampled_through_sequence = Some(0);
++    }
 +    let mut history = ContextManager::default();
 +    history.replace_annotated(expected.clone());
 +    assert_eq!(
@@ -843,10 +890,10 @@ index ce13be03f1986a62708aa751fef7e5d35d633a67..0e5b94605cafe76a6c7fe66b8627aa90
  pub(crate) mod goal_resume;
  pub(crate) mod goal_scheduler;
 diff --git a/codex-rs/core/src/session/rollout_reconstruction.rs b/codex-rs/core/src/session/rollout_reconstruction.rs
-index 130d5e9ddc9a34f5f6cf0e2724f636cafa3b34b7..512a974fa9c3a3961ab7cef0dc94d58736c94691 100644
+index 930d410a6e10336d541dfb05323b6f1ae9f15c03..cc296773047b9287466d8f2d1b9971da4fd96a58 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction.rs
-@@ -194,6 +194,10 @@ impl Session {
+@@ -196,6 +196,10 @@ impl Session {
          ContextManager::reconstruct_rollout(
              rollout_items,
              turn_context.history_mode,
@@ -857,7 +904,7 @@ index 130d5e9ddc9a34f5f6cf0e2724f636cafa3b34b7..512a974fa9c3a3961ab7cef0dc94d587
              ContextManager::for_session(
                  turn_context.root_capabilities_restricted,
                  &turn_context.config.features,
-@@ -208,6 +212,7 @@ impl ContextManager {
+@@ -212,6 +216,7 @@ impl ContextManager {
      pub(crate) fn reconstruct_rollout(
          rollout_items: &[RolloutItem],
          history_mode: ThreadHistoryMode,
@@ -865,7 +912,7 @@ index 130d5e9ddc9a34f5f6cf0e2724f636cafa3b34b7..512a974fa9c3a3961ab7cef0dc94d587
          mut history: Self,
          truncation_policy: TruncationPolicy,
      ) -> RolloutReconstruction {
-@@ -534,8 +539,10 @@ impl ContextManager {
+@@ -559,8 +564,10 @@ impl ContextManager {
                          // prompt shape.
                          // TODO(ccunningham): if we drop support for None replacement_history compaction items,
                          // we can get rid of this second loop entirely and just build `history` directly in the first loop.
@@ -879,10 +926,10 @@ index 130d5e9ddc9a34f5f6cf0e2724f636cafa3b34b7..512a974fa9c3a3961ab7cef0dc94d587
                              Vec::new(),
                              &user_messages,
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index ebc312eafab67640ce5dc4d7d318d315b5e73db9..74613cb7466afc199f60e91eb7494daca9c77d36 100644
+index f4b312503a85fc4ff5fa01fe5b188ca9ce08ec3a..4517a4bbe682bc4d16d746841da152dcb7cec8f2 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-@@ -1465,6 +1465,112 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
+@@ -1481,6 +1481,124 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
      assert_eq!(reconstructed.window_id, Some(initial_window_id));
  }
 
@@ -937,16 +984,28 @@ index ebc312eafab67640ce5dc4d7d318d315b5e73db9..74613cb7466afc199f60e91eb7494dac
 +#[tokio::test]
 +async fn compaction_delivery_survives_rollout_replay_and_next_compaction() {
 +    let (session, turn_context) = make_session_and_context().await;
-+    let assignment = crate::saffron::compaction_requests::tests::admitted_delivery(
++    let mut assignment = crate::saffron::compaction_requests::tests::admitted_delivery(
 +        "Investigate the orchard export instead.",
 +        2,
 +    );
-+    let steer = crate::saffron::compaction_requests::tests::admitted_delivery(
++    let mut steer = crate::saffron::compaction_requests::tests::admitted_delivery(
 +        "Inspect its midnight batch first.",
 +        3,
 +    );
++    for (envelope, sequence) in [(&mut assignment, 2), (&mut steer, 3)] {
++        let metadata = envelope.metadata.get_or_insert_default();
++        metadata.history_sequence = Some(sequence);
++        metadata.sampled_through_sequence = Some(0);
++    }
 +    let history = vec![
-+        ResponseItemEnvelope::new(user_message("Catalogue garden fixtures.")),
++        ResponseItemEnvelope {
++            item: user_message("Catalogue garden fixtures."),
++            metadata: Some(codex_history::CodexHarnessMetadata {
++                history_sequence: Some(1),
++                sampled_through_sequence: Some(0),
++                ..Default::default()
++            }),
++        },
 +        assignment.clone(),
 +        steer.clone(),
 +    ];
@@ -996,13 +1055,13 @@ index ebc312eafab67640ce5dc4d7d318d315b5e73db9..74613cb7466afc199f60e91eb7494dac
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index a716384f226025306d2e18cd06d222cb07730c20..890e2702eb021a62e06ca8ebfcb954ecd2965ff5 100644
+index 27c81a3cec8a300b6e8cf3471463f368f947f8b9..92e8b345c5704557b5f778e4e627e53cd83ffad7 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
-@@ -66,6 +66,11 @@ pub struct ResponseItemEnvelope {
- ///
- #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
- pub struct CodexHarnessMetadata {
+@@ -75,6 +75,11 @@ pub struct CodexHarnessMetadata {
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub sampled_through_sequence: Option<u64>,
+
 +    /// Namespaced host extension checkpoints, never sent as model input.
 +    /// Unknown namespaces survive persistence without acquiring harness meaning.
 +    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]

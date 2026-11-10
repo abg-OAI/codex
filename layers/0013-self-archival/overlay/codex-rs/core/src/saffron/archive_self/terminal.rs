@@ -7,7 +7,6 @@
 use std::future::Future;
 use std::sync::OnceLock;
 
-use codex_protocol::ResponseItemId;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::error::Result as CodexResult;
@@ -36,6 +35,16 @@ pub(super) fn requested(turn: &TurnContext) -> bool {
     turn.extension_data
         .get::<TerminalArchive>()
         .is_some_and(|terminal| terminal.requested.is_cancelled())
+}
+
+/// Terminal completion must reach the host handoff unless accepted input revokes it.
+pub(crate) fn pending(session: &Session, turn: &TurnContext) -> bool {
+    requested(turn)
+        && session
+            .services
+            .thread_extension_data
+            .get::<super::PendingArchive>()
+            .is_some_and(|state| state.matches(&turn.sub_id))
 }
 
 /// Refuses dispatch after terminal acceptance, including calls from Code Mode.
@@ -136,7 +145,7 @@ pub(crate) async fn complete(
                 ResponseItem::Message {
                     encrypted_content: None,
                     status: None,
-                    id: Some(ResponseItemId::new("msg")),
+                    id: Some((session.item_id_generator)("msg")),
                     role: "assistant".into(),
                     content: vec![ContentItem::OutputText {
                         text: text.clone(),

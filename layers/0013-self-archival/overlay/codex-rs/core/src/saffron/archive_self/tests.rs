@@ -189,6 +189,72 @@ async fn revoked_archival_can_resume_after_sampling_drains() {
 }
 
 #[tokio::test]
+async fn accepted_steer_while_completion_waits_reopens_sampling() {
+    use crate::session::TurnInput;
+    use crate::tasks::SessionTask;
+    use crate::tasks::completion_test_support::CompletingTask;
+    use codex_protocol::user_input::UserInput;
+    use tokio::sync::Notify;
+
+    let (session, turn, _receiver) = fixture().await;
+    session
+        .spawn_task(
+            turn.clone(),
+            Vec::new(),
+            CompletingTask {
+                finish: Arc::new(Notify::new()),
+            },
+        )
+        .await;
+    invoke(session.clone(), turn.clone(), "{}").await.unwrap();
+    let ready = Arc::new(Notify::new());
+    ready.notify_one();
+    let result = Arc::new(CompletingTask { finish: ready })
+        .run(
+            session.clone(),
+            turn.clone(),
+            Vec::new(),
+            CancellationToken::new(),
+        )
+        .await;
+    let active = session.active_turn.lock().await;
+    let completion = session.on_task_finished(turn.clone(), result);
+    tokio::pin!(completion);
+    assert!(futures::poll!(completion.as_mut()).is_pending());
+
+    // A successful steer commits its input and revokes archival under this lock.
+    let turn_state = &active.as_ref().unwrap().turn_state;
+    session
+        .input_queue
+        .extend_pending_input_for_turn_state(
+            turn_state.as_ref(),
+            vec![TurnInput::UserInput {
+                content: vec![UserInput::Text {
+                    text: "Keep working instead.".into(),
+                    text_elements: Vec::new(),
+                }],
+                client_id: None,
+                metadata: Default::default(),
+            }],
+        )
+        .await;
+    cancel(&session);
+    drop(active);
+
+    assert!(
+        completion.await.is_some(),
+        "accepted input must return to sampling"
+    );
+    assert!(!pending(&session));
+    assert!(
+        session
+            .input_queue
+            .has_pending_input(&session.active_turn)
+            .await
+    );
+}
+
+#[tokio::test]
 async fn terminal_request_does_not_hide_sampling_failure_or_user_interruption() {
     let (session, turn, _receiver) = fixture().await;
     invoke(session.clone(), turn.clone(), "{}").await.unwrap();

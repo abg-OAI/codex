@@ -11,10 +11,10 @@ index e548b2f1503cf3cf31fa705c73e46c3b20a91435..4ad09f9286b6230e5bd1d9401b205184
  pub(crate) mod fork_thread;
  mod goal_edit;
 diff --git a/codex-rs/core/src/session/multi_agents.rs b/codex-rs/core/src/session/multi_agents.rs
-index 9cec8ae35abbbd78222703d6d8840f9d4f693066..2d4b6339a043af843418bc8d8edc9e622da79a11 100644
+index 3b24a9c34f76effa0f0726395fc16f4d4560c697..a3e66cec67a806170a960baf8867dfa5b92fbbfa 100644
 --- a/codex-rs/core/src/session/multi_agents.rs
 +++ b/codex-rs/core/src/session/multi_agents.rs
-@@ -80,6 +80,9 @@ pub(crate) fn effective_multi_agent_mode(step_context: &StepContext) -> Option<M
+@@ -85,6 +85,9 @@ pub(crate) fn effective_multi_agent_mode(step_context: &StepContext) -> Option<M
      if turn_context.multi_agent_version != MultiAgentVersion::V2 {
          return None;
      }
@@ -22,9 +22,9 @@ index 9cec8ae35abbbd78222703d6d8840f9d4f693066..2d4b6339a043af843418bc8d8edc9e62
 +        return Some(mode);
 +    }
 
-     let multi_agent_messages =
-         ResolvedModelMessages::from_model(&settings.model_info).multi_agent();
-@@ -119,3 +122,45 @@ pub(crate) fn effective_multi_agent_mode(step_context: &StepContext) -> Option<M
+     let config = &turn_context.config.multi_agent_v2;
+     let model_messages = if config.disable_native_tools {
+@@ -136,3 +139,45 @@ pub(crate) fn effective_multi_agent_mode(step_context: &StepContext) -> Option<M
          SessionSource::Internal(_) | SessionSource::SubAgent(_) => None,
      }
  }
