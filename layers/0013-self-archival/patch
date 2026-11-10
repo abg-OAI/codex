@@ -296,18 +296,10 @@ index 1fdf62faca3d396b4f1b6b7c64d879f99be7b2e9..eb85f13aeb86ebbf5914edc85a2f95a5
                  let SamplingRequestResult {
                      needs_follow_up: model_needs_follow_up,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index df53e0f4905c8a246b1fd7e1c8b8b5dbd5645d32..cd3b9dd1c7b556d564f704c573a83f8a954f9097 100644
+index df53e0f4905c8a246b1fd7e1c8b8b5dbd5645d32..b0dcf9af94a0403bd46221011e762be9d26ee194 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
-@@ -224,6 +224,7 @@ impl PreparedTurnInputSettings {
-     /// Applies only persistent settings after steering succeeds. The active
-     /// turn keeps its existing context; subsequent turns see the update.
-     async fn apply_steered(self, session: &Session, submission_id: String) -> CodexResult<()> {
-+        crate::saffron::archive_self::cancel(session);
-         let Some(thread_settings_update) = self.thread_settings_update else {
-             return Ok(());
-         };
-@@ -805,6 +806,8 @@ impl Session {
+@@ -805,6 +805,8 @@ impl Session {
      ) {
          let mut state = self.state.lock().await;
          state.last_started_turn_id = Some(turn_id.to_owned());
@@ -316,6 +308,14 @@ index df53e0f4905c8a246b1fd7e1c8b8b5dbd5645d32..cd3b9dd1c7b556d564f704c573a83f8a
          if let Some(attribution) = attribution {
              state.turn_attribution = Some(attribution);
          }
+@@ -1052,6 +1054,7 @@ impl Session {
+                 pending_input,
+             )
+             .await;
++        crate::saffron::archive_self::cancel(self);
+         Ok((
+             active_turn_id.clone(),
+             active_task.turn_context.root_turn_id(),
 diff --git a/codex-rs/core/src/state/session.rs b/codex-rs/core/src/state/session.rs
 index e90bd010c66d8b26f5dce54ac3b92a82690803df..721faa6cadb0c84f60fd89ca55f6d2341acd10a6 100644
 --- a/codex-rs/core/src/state/session.rs
@@ -338,10 +338,20 @@ index e90bd010c66d8b26f5dce54ac3b92a82690803df..721faa6cadb0c84f60fd89ca55f6d234
              restored_turn_routing: None,
              auto_compact_window: AutoCompactWindow::new_with_ids(auto_compact_window_ids),
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 50ccbcb643e17f72deb6e5a83c2c6229b9c54bc4..5003946db25bce70a294cbb18ce01d3cbfbcded7 100644
+index 50ccbcb643e17f72deb6e5a83c2c6229b9c54bc4..8fd586aa3a49c64f80d646b6dbf500496014d276 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -1064,15 +1064,24 @@ impl Session {
+@@ -805,7 +805,8 @@ impl Session {
+             if !Arc::ptr_eq(&active_turn.task.as_ref()?.turn_context, &turn_context) {
+                 return None;
+             }
+-            if can_continue {
++            if can_continue && !crate::saffron::archive_self::terminal::pending(self, &turn_context)
++            {
+                 let state = active_turn.turn_state.lock().await;
+                 if state.accepts_mailbox_delivery_for_current_turn()
+                     && !state.pending_input.is_empty()
+@@ -1064,15 +1065,24 @@ impl Session {
          drop(outcome_handoff);
          drop(agent_execution_guard);
          drop(ancestor_turn_retention_guard);
@@ -369,6 +379,18 @@ index 50ccbcb643e17f72deb6e5a83c2c6229b9c54bc4..5003946db25bce70a294cbb18ce01d3c
              self.maybe_start_turn_for_pending_work().await;
          }
          None
+diff --git a/codex-rs/core/src/tasks/regular.rs b/codex-rs/core/src/tasks/regular.rs
+index fd91a1d5576076e91bf4f073e9edc250125453fd..1d272235887a5b4362b78c1e151fbf53dd219639 100644
+--- a/codex-rs/core/src/tasks/regular.rs
++++ b/codex-rs/core/src/tasks/regular.rs
+@@ -161,6 +161,7 @@ impl RegularTask {
+                 // Terminal errors are already reported. Let task completion preserve pending
+                 // input instead of restarting the failed turn for that same input.
+                 if ctx.terminal_error.lock().await.is_some()
++                    || crate::saffron::archive_self::terminal::pending(&sess, &ctx)
+                     || !sess.input_queue.has_pending_input(&sess.active_turn).await
+                 {
+                     return Ok(Some(RegularTaskOutput {
 diff --git a/codex-rs/core/src/tools/parallel.rs b/codex-rs/core/src/tools/parallel.rs
 index 0af29fc33353955e4e48c2c322e2fdec8da305c3..0fc834ffe0b6fe3173eddda877433a54605b2e82 100644
 --- a/codex-rs/core/src/tools/parallel.rs

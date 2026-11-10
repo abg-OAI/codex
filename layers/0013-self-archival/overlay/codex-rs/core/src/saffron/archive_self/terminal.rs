@@ -37,6 +37,16 @@ pub(super) fn requested(turn: &TurnContext) -> bool {
         .is_some_and(|terminal| terminal.requested.is_cancelled())
 }
 
+/// Terminal completion must reach the host handoff unless accepted input revokes it.
+pub(crate) fn pending(session: &Session, turn: &TurnContext) -> bool {
+    requested(turn)
+        && session
+            .services
+            .thread_extension_data
+            .get::<super::PendingArchive>()
+            .is_some_and(|state| state.matches(&turn.sub_id))
+}
+
 /// Refuses dispatch after terminal acceptance, including calls from Code Mode.
 pub(crate) fn admit_tool(
     turn: &TurnContext,
