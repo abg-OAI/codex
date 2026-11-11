@@ -469,21 +469,32 @@ impl GoalRuntimeHandle {
             .map_err(|err| err.to_string())?
         else {
             self.inner.accounting_state.clear_active_goal();
+            thread.stop_saffron_goal_supervisor().await;
             return Ok(());
         };
         if goal.status != codex_state::ThreadGoalStatus::Active {
             self.inner.accounting_state.clear_active_goal();
+            thread.stop_saffron_goal_supervisor().await;
             return Ok(());
         }
+        match thread.start_saffron_goal_supervisor_checkin(&goal).await {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(
+                    thread_id = %self.thread_id(),
+                    %error,
+                    "Saffron supervision could not claim the idle goal; using ordinary continuation"
+                );
+            }
+        }
+        let goal = protocol_goal_from_state(goal);
         let start_options = thread
             .thread_extension_data()
             .get::<TurnStartOptions>()
             .map(|options| options.as_ref().clone())
             .unwrap_or_default();
-        let request = continuation_request(
-            &protocol_goal_from_state(goal),
-            thread.config().await.update_plan_enabled,
-        );
+        let request = continuation_request(&goal, thread.config().await.update_plan_enabled);
 
         match thread
             .start_turn_if_idle(request.on_start(TurnStartOptions {
