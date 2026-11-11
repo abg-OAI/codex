@@ -16,10 +16,12 @@ use serde_json::json;
 use wiremock::MockServer;
 
 /// Admitted agent messages retain attribution through compaction and cold resume.
-#[test_case::test_case(false; "local")]
-#[test_case::test_case(true; "remote")]
+#[test_case::test_case(false, "send_message_to_thread"; "local_message")]
+#[test_case::test_case(true, "send_message_to_thread"; "remote_message")]
+#[test_case::test_case(false, "fork_thread"; "local_assignment")]
+#[test_case::test_case(true, "fork_thread"; "remote_assignment")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn saffron_delivery_survives_compaction_and_resume(remote: bool) -> Result<()> {
+async fn saffron_delivery_survives_compaction_and_resume(remote: bool, tool: &str) -> Result<()> {
     use codex_core::TurnInput;
     use codex_core::TurnInputRequest;
     use codex_protocol::models::FunctionCallOutputPayload;
@@ -71,7 +73,7 @@ async fn saffron_delivery_survives_compaction_and_resume(remote: bool) -> Result
             ResponseItem::FunctionCallOutput {
                 id: None,
                 call_id: None,
-                name: Some("send_message_to_thread".to_owned()),
+                name: Some(tool.to_owned()),
                 namespace: Some("saffron".to_owned()),
                 output: FunctionCallOutputPayload::from_text(body.clone()),
                 internal_chat_message_metadata_passthrough: None,
@@ -105,7 +107,7 @@ async fn saffron_delivery_survives_compaction_and_resume(remote: bool) -> Result
             .filter(|item| {
                 item["type"] == "function_call_output"
                     && item["namespace"] == "saffron"
-                    && item["name"] == "send_message_to_thread"
+                    && item["name"] == tool
             })
             .collect();
         assert_eq!(deliveries.len(), 1, "delivery in request {index}");
