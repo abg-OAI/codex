@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 0404b225036f0d697082e9079542f1768f6e33f1..a816420c6c587c6a9804a06964b729ed0347aa69 100644
+index 7854f9e2c04c5c4649d17be7a324348bd062c913..d04639fe79fe7ecfee96a79bea70748bcf1c62ef 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -1593,6 +1593,7 @@ impl ThreadRequestProcessor {
+@@ -1585,6 +1585,7 @@ impl ThreadRequestProcessor {
              }
          }
 
@@ -10,7 +10,7 @@ index 0404b225036f0d697082e9079542f1768f6e33f1..a816420c6c587c6a9804a06964b729ed
          let environment_requests = environment_requests.unwrap_or_else(|| {
              listener_task_context
                  .thread_manager
-@@ -1615,6 +1616,10 @@ impl ThreadRequestProcessor {
+@@ -1607,6 +1608,10 @@ impl ThreadRequestProcessor {
                  .then_some(ThreadHistoryMode::Paginated)
          });
          let mut thread_extension_init = ExtensionDataInit::new();
@@ -817,7 +817,7 @@ index 848e8579863044aad8a6607d6c03618c5abf7fa3..e70813f506568dfc71e7f9ba16d24d72
 +    );
 +}
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index fadea728740e081588c33d5248e70b6908cd84c8..9acd7b9c846698c81837cdf07db1821594218712 100644
+index c4e34b9235da8be52e7dfa6ded75c91856af885f..e29ed38df0c97c2abb5222f9ea358f40a7f9de18 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -150,6 +150,7 @@ mod saffron;
@@ -829,7 +829,7 @@ index fadea728740e081588c33d5248e70b6908cd84c8..9acd7b9c846698c81837cdf07db18215
 
  /// Installs Saffrodex-owned model guidance that accompanies goal tools.
 diff --git a/codex-rs/core/src/mcp.rs b/codex-rs/core/src/mcp.rs
-index ce3f0b26adcbf6525b0a4c18f2a493848ac6016d..b7388db03568ee581c7c3080dd4ce573707ab120 100644
+index a6270a6ccf0f19071494a0581eeb2e35c965522a..e75812b2904830e4ad7ba9df287ce91f437a7376 100644
 --- a/codex-rs/core/src/mcp.rs
 +++ b/codex-rs/core/src/mcp.rs
 @@ -79,9 +79,9 @@ impl<'a> McpEnvironmentScope<'a> {
@@ -885,10 +885,10 @@ index 52a52eb7ea5468d7200c1bc06f95997ed6ed60c0..acdf265011530888ea129652cc46a860
      assert_eq!(
          migration_versions(state.sqlite().state_db_path(), &sqlite).await?,
 diff --git a/codex-rs/core/src/session/environment.rs b/codex-rs/core/src/session/environment.rs
-index 3820b8b7d82b37d29cefd7b6d7b43ed3e6b4355e..120437eff14945c7a4beba2f43a8dbc2be18918b 100644
+index e4469afbc9b61d66cddacbffcc91703b7d0e1c71..965d8ba0bfb3ba6988f5c0869dabdf03e52fffff 100644
 --- a/codex-rs/core/src/session/environment.rs
 +++ b/codex-rs/core/src/session/environment.rs
-@@ -58,7 +58,8 @@ pub(super) fn validate_environment_configs(
+@@ -59,7 +59,8 @@ pub(super) fn validate_environment_configs(
          match &selection.config {
              EnvironmentConfigState::FromThread
              | EnvironmentConfigState::Pending
@@ -898,7 +898,7 @@ index 3820b8b7d82b37d29cefd7b6d7b43ed3e6b4355e..120437eff14945c7a4beba2f43a8dbc2
              EnvironmentConfigState::Ready(config) => {
                  validate_environment_config(selection, config, features).map_err(|error| {
                      ConstraintError::InvalidValue {
-@@ -82,7 +83,10 @@ pub(super) fn ensure_configs_stay_owner_provided(
+@@ -83,7 +84,10 @@ pub(super) fn ensure_configs_stay_owner_provided(
          environment.config == EnvironmentConfigState::FromThread
              && current.iter().any(|current| {
                  current.environment_id == environment.environment_id
@@ -910,7 +910,7 @@ index 3820b8b7d82b37d29cefd7b6d7b43ed3e6b4355e..120437eff14945c7a4beba2f43a8dbc2
              })
      }) {
          return Err(ConstraintError::InvalidValue {
-@@ -296,6 +300,19 @@ impl Session {
+@@ -297,6 +301,19 @@ impl Session {
          let mut current = self.services.turn_environments.selections();
          let mut future = state.session_configuration.environments.clone();
          let inherited = matches!(source, ConfigUpdateSource::Inherited);
@@ -931,7 +931,7 @@ index 3820b8b7d82b37d29cefd7b6d7b43ed3e6b4355e..120437eff14945c7a4beba2f43a8dbc2
              environment.has_same_workspace(selection)
                  && (!inherited || matches!(environment.config, EnvironmentConfigState::Pending))
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 4effc0e0de55991682745e54957f4bdc30a79afe..37cc43a3c67c8323485cb33f36d7fdcb78257e34 100644
+index a4a0b73dab8d8659a3eb78ec67d615d499647562..6208c4b3dbae353e7da3eef68ca90cbf3dba260a 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -471,6 +471,10 @@ impl SessionConfiguration {
@@ -945,7 +945,7 @@ index 4effc0e0de55991682745e54957f4bdc30a79afe..37cc43a3c67c8323485cb33f36d7fdcb
          }
          let cwd_changed = next_configuration.legacy_fallback_cwd != current_cwd;
          if let Some(runtime_workspace_roots) = &updates.runtime_workspace_roots {
-@@ -1185,6 +1189,30 @@ impl Session {
+@@ -1189,6 +1193,30 @@ impl Session {
                      Arc::default()
                  }
              });
@@ -976,7 +976,7 @@ index 4effc0e0de55991682745e54957f4bdc30a79afe..37cc43a3c67c8323485cb33f36d7fdcb
          let mcp_thread_init = thread_extension_init.clone();
          let thread_extension_data = codex_extension_api::ExtensionData::new_with_init(
              thread_id.to_string(),
-@@ -1631,24 +1659,29 @@ impl Session {
+@@ -1634,24 +1662,29 @@ impl Session {
                  ShellSnapshot::disabled()
              };
              let inherited_environments = inherited_environments.unwrap_or_default();
@@ -1018,7 +1018,7 @@ index 4effc0e0de55991682745e54957f4bdc30a79afe..37cc43a3c67c8323485cb33f36d7fdcb
              // Keep discovery's future out of the large embedded startup/resume frame.
              let plugin_skill_warmup = Box::pin(warm_plugins_and_skills_for_session_init(
                  Arc::clone(&config),
-@@ -1679,7 +1712,8 @@ impl Session {
+@@ -1682,7 +1715,8 @@ impl Session {
                  plugin_skill_warmup,
                  thread_name_lookup,
              );
@@ -1074,10 +1074,10 @@ index d89a1f83625771a9ace06ca2eff6bcef5f242e04..add3654e0aaf643d9707732f8d01f22c
          Some(
              profile
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index a7430cb775be4681971ea981bacd1511dc56c881..63c2435a7e48cc43d9d1d300fd5aa3a976a9f3a9 100644
+index e7e21b2976547e9414afefde4dc4b6fe472ea57d..ada66a6b6223921911c083ac6dc7a3d88e9e155f 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -23,6 +23,8 @@ use super::turn_context::TurnEnvironment;
+@@ -24,6 +24,8 @@ use super::turn_context::TurnEnvironment;
  use super::*;
  #[path = "config_refresh_tests.rs"]
  mod config_refresh_tests;
@@ -1103,10 +1103,10 @@ index ae63a88a6b66a36efe5e583a6b48bfd9fe5c2957..7e1dafed526a4a12bed9f234871efff4
          );
          config.model = Some(
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 6304ed882dd0ef8a291d27e022202750536c41d9..e22232930396e8f8cfb9a2fd21d2dbb86eaa7fee 100644
+index 3dccff5bd24558e27b34de90bab25836f4ff43d3..6e62686134d02ae21b26e8fbc6e6490903f6e571 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -2532,6 +2532,10 @@ impl ThreadManagerState {
+@@ -2586,6 +2586,10 @@ impl ThreadManagerState {
                  }
              });
          thread_extension_init.insert(isolation);

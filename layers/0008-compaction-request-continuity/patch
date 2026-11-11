@@ -14,7 +14,7 @@ index 39afaca3d6955932a25603e800db0147ce88b816..91bd178eab55acb95bee289c7299bc4e
                                          &self.item_id_generator,
                                      )),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index c75de9167c1b0226d303d5db69eb0046b94d94e9..9656f06caafc15d4d78d30992e1fc8552b730a04 100644
+index 4aa7e07adf69cb47a47340f6a506a41e363634bb..f77f9f046d59c2716dbc76e9c865a57776b93dd5 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
 @@ -20,6 +20,7 @@ use crate::hook_runtime::run_post_compact_hooks;
@@ -25,7 +25,7 @@ index c75de9167c1b0226d303d5db69eb0046b94d94e9..9656f06caafc15d4d78d30992e1fc855
  use crate::session::RequestEffortUsage;
  use crate::session::session::Session;
  use crate::session::step_context::StepContext;
-@@ -408,7 +409,11 @@ async fn run_compact_task_inner_impl(
+@@ -392,7 +393,11 @@ async fn run_compact_task_inner_impl(
          get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default()
      };
      let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
@@ -38,7 +38,7 @@ index c75de9167c1b0226d303d5db69eb0046b94d94e9..9656f06caafc15d4d78d30992e1fc855
 
      let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
      if let Some(summary_item) = new_history.last_mut() {
-@@ -615,19 +620,39 @@ pub(crate) struct CompactedUserMessage<'a> {
+@@ -599,19 +604,39 @@ pub(crate) struct CompactedUserMessage<'a> {
  }
 
  #[cfg(test)]
@@ -84,7 +84,7 @@ index c75de9167c1b0226d303d5db69eb0046b94d94e9..9656f06caafc15d4d78d30992e1fc855
          .collect()
  }
 
-@@ -729,9 +754,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
+@@ -713,9 +738,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
      compacted_history
  }
 
@@ -96,7 +96,7 @@ index c75de9167c1b0226d303d5db69eb0046b94d94e9..9656f06caafc15d4d78d30992e1fc855
      summary_text: &str,
  ) -> Vec<ResponseItemEnvelope> {
      build_compacted_history_with_limit(
-@@ -742,9 +768,10 @@ pub(crate) fn build_compacted_history(
+@@ -726,9 +752,10 @@ pub(crate) fn build_compacted_history(
      )
  }
 
@@ -108,7 +108,7 @@ index c75de9167c1b0226d303d5db69eb0046b94d94e9..9656f06caafc15d4d78d30992e1fc855
      summary_text: &str,
      max_tokens: usize,
  ) -> Vec<ResponseItemEnvelope> {
-@@ -755,6 +782,26 @@ fn build_compacted_history_with_limit(
+@@ -739,6 +766,26 @@ fn build_compacted_history_with_limit(
              if remaining == 0 {
                  break;
              }
@@ -756,10 +756,10 @@ index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f4032
      );
 
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
-index 3e8221ba33b70690fb1641fdae6d7a7dbcbf35c0..8c40e60529f750bbe877b3c9b9284cd8153093c6 100644
+index 2ec53d71e938b9e812c00fee2fc07b214241df96..698135482395f9734e2d482947c727522fc57df7 100644
 --- a/codex-rs/core/src/context_manager/history.rs
 +++ b/codex-rs/core/src/context_manager/history.rs
-@@ -733,6 +733,9 @@ impl ContextManager {
+@@ -736,6 +736,9 @@ impl ContextManager {
          .await;
          self.project_file_audio_for_prompt();
          Arc::unwrap_or_clone(self.items)
@@ -769,7 +769,7 @@ index 3e8221ba33b70690fb1641fdae6d7a7dbcbf35c0..8c40e60529f750bbe877b3c9b9284cd8
      }
 
      /// Applies the file-audio request projection to a normalized snapshot whose
-@@ -846,6 +849,7 @@ impl ContextManager {
+@@ -849,6 +852,7 @@ impl ContextManager {
          let items_tokens = self
              .items
              .iter()

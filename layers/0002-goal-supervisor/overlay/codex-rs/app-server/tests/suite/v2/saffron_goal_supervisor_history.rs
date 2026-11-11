@@ -99,7 +99,11 @@ async fn silent_root_preserves_tool_evidence_for_hidden_saffron_supervisor() -> 
 
     let requests = model_responses.requests();
     assert_eq!(requests.len(), 5);
-    let parent_evidence = requests[2].function_call_output("scan-result-call");
+    let parent_evidence = requests[2]
+        .inputs_of_type("function_call_output")
+        .into_iter()
+        .find(|item| item.get("call_id").and_then(serde_json::Value::as_str) == Some("scan-result-call"))
+        .context("the parent request must contain the external check result")?;
     assert!(
         parent_evidence
             .to_string()
