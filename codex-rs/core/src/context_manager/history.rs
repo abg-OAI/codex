@@ -736,6 +736,9 @@ impl ContextManager {
         .await;
         self.project_file_audio_for_prompt();
         Arc::unwrap_or_clone(self.items)
+            .into_iter()
+            .filter(|item| !crate::saffron::compaction_requests::is_retired_annotation(item))
+            .collect()
     }
 
     /// Applies the file-audio request projection to a normalized snapshot whose
@@ -849,6 +852,7 @@ impl ContextManager {
         let items_tokens = self
             .items
             .iter()
+            .filter(|item| !crate::saffron::compaction_requests::is_retired_annotation(item))
             .map(|envelope| {
                 estimate_item_token_count_with_audio(&envelope.item, &self.file_audio_durations)
             })
