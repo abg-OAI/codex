@@ -2862,6 +2862,10 @@ impl Session {
         if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
             return;
         }
+        let completion_delivery_mode = crate::saffron::subagent_completion::terminal_delivery_mode(
+            &turn_context.extension_data,
+            &status,
+        );
 
         let outcome = AgentTurnOutcome {
             thread_id: self.thread_id,
@@ -2874,6 +2878,7 @@ impl Session {
                 .cloned(),
             status,
             error_info,
+            completion_delivery_mode,
         };
         let host_outcome = if notify_native_parent {
             let host_outcome = reporter.is_some().then(|| outcome.clone());

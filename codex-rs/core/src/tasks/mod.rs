@@ -1,5 +1,7 @@
 mod admission;
 mod compact;
+#[cfg(test)]
+pub(crate) mod completion_test_support;
 mod lifecycle;
 mod regular;
 mod review;
@@ -84,6 +86,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
     Disabled,
     ContextualUser,
     Developer,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingWorkAfterAbort {
+    Restart,
+    Discard,
 }
 
 impl InterruptedTurnHistoryMarker {
@@ -339,7 +347,6 @@ impl Session {
         let cancellation_token = CancellationToken::new();
         let done = Arc::new(Notify::new());
 
-        let (pending_items, _) = self.input_queue.drain_mailbox_input_items().await;
         let turn_state = {
             let mut active = self.active_turn.lock().await;
             if self.outcome_handoffs_closed() {
@@ -350,6 +357,10 @@ impl Session {
             turn.finishing = None;
             Arc::clone(&turn.turn_state)
         };
+        let (pending_items, _) = self
+            .input_queue
+            .drain_mailbox_input_items_for_turn_state(turn_state.as_ref())
+            .await;
         turn_state.lock().await.token_usage_at_turn_start = token_usage_at_turn_start.clone();
         self.input_queue
             .extend_pending_input_for_turn_state(turn_state.as_ref(), pending_items)
@@ -392,6 +403,12 @@ impl Session {
                 None,
             ),
         };
+        let ancestor_turn_retention_guard = crate::saffron::subagent_completion::retain_ancestors(
+            self,
+            turn_context.multi_agent_version,
+            &turn_context.session_source,
+            self.thread_id,
+        );
         let done_clone = Arc::clone(&done);
         let session = Arc::clone(self);
         let ctx = Arc::clone(&turn_context);
@@ -492,9 +509,10 @@ impl Session {
             task,
             cancellation_token,
             turn_context: Arc::clone(&turn_context),
-            _agent_execution_guard: agent_execution_guard,
+            agent_execution_guard,
             outcome_handoff,
             pending_initial_input,
+            ancestor_turn_retention_guard,
             _diagnostics_guard: ACTIVE_TURNS.track(),
             _timer: timer,
         };
@@ -644,6 +662,24 @@ impl Session {
     }
 
     pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
+        self.abort_all_tasks_with_pending_work(reason, PendingWorkAfterAbort::Restart)
+            .await;
+    }
+
+    /// Aborts the active turn and discards queued work before terminal teardown.
+    pub(crate) async fn abort_all_tasks_for_shutdown(self: &Arc<Self>) {
+        self.abort_all_tasks_with_pending_work(
+            TurnAbortReason::Interrupted,
+            PendingWorkAfterAbort::Discard,
+        )
+        .await;
+    }
+
+    async fn abort_all_tasks_with_pending_work(
+        self: &Arc<Self>,
+        reason: TurnAbortReason,
+        pending_work: PendingWorkAfterAbort,
+    ) {
         let mut aborted_turn = false;
         let mut active_turn_to_clear = None;
         if let Some(mut active_turn) = self.take_active_turn(&reason).await {
@@ -668,8 +704,16 @@ impl Session {
             // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
             self.input_queue.clear_pending(&active_turn).await;
         }
-        if reason == TurnAbortReason::Interrupted && aborted_turn {
-            self.maybe_start_turn_for_pending_work().await;
+        match pending_work {
+            PendingWorkAfterAbort::Restart
+                if reason == TurnAbortReason::Interrupted && aborted_turn =>
+            {
+                self.maybe_start_turn_for_pending_work().await;
+            }
+            PendingWorkAfterAbort::Discard => {
+                self.input_queue.discard_triggering_mailbox_input().await;
+            }
+            PendingWorkAfterAbort::Restart => {}
         }
     }
 
@@ -749,7 +793,14 @@ impl Session {
             regular_output.is_some() && turn_context.terminal_error.lock().await.is_none();
         let finishing = CancellationToken::new();
         let finish_recording = finishing.clone().drop_guard();
-        let (turn_state, unadmitted_task, mut pending_input, outcome_handoff) = {
+        let (
+            turn_state,
+            unadmitted_task,
+            mut pending_input,
+            outcome_handoff,
+            agent_execution_guard,
+            ancestor_turn_retention_guard,
+        ) = {
             let mut active = self.active_turn.lock().await;
             let active_turn = active.as_mut()?;
             if !Arc::ptr_eq(&active_turn.task.as_ref()?.turn_context, &turn_context) {
@@ -768,10 +819,12 @@ impl Session {
             active_turn.finishing = Some(finishing);
             (
                 Arc::clone(&active_turn.turn_state),
-                (task._agent_execution_guard.is_none() && task.pending_initial_input.is_some())
+                (task.agent_execution_guard.is_none() && task.pending_initial_input.is_some())
                     .then_some(task.task),
                 task.pending_initial_input.unwrap_or_default(),
                 task.outcome_handoff,
+                task.agent_execution_guard,
+                task.ancestor_turn_retention_guard,
             )
         };
         turn_context
@@ -1010,6 +1063,8 @@ impl Session {
             self.send_event(turn_context.as_ref(), event).await;
         }
         drop(outcome_handoff);
+        drop(agent_execution_guard);
+        drop(ancestor_turn_retention_guard);
         if cleared_active_turn {
             self.emit_thread_idle_lifecycle_if_idle(idle_cause).await;
         }
