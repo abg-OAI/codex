@@ -7058,6 +7058,7 @@ fn build_thread_from_loaded_snapshot(
     )
 }
 
+mod saffron_archive_self;
 mod saffron_goal_scheduler;
 
 #[cfg(test)]
