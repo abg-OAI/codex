@@ -24,6 +24,8 @@ use super::turn_context::TurnEnvironment;
 use super::*;
 #[path = "config_refresh_tests.rs"]
 mod config_refresh_tests;
+#[path = "environment_exclusion_tests.rs"]
+mod environment_exclusion_tests;
 use crate::agents_md_manager::AgentsMdManager;
 use crate::agents_md_manager::SessionInstructions;
 use crate::config::ConfigBuilder;

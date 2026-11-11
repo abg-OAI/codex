@@ -2586,6 +2586,10 @@ impl ThreadManagerState {
                 }
             });
         thread_extension_init.insert(isolation);
+        crate::saffron::executor_startup::record_selection_intent(
+            &mut thread_extension_init,
+            environment_requests.is_none() && inherited_environments.is_none(),
+        );
         let environment_requests = environment_requests
             .or_else(|| {
                 let SessionSource::SubAgent(SubAgentSource::ThreadSpawn { .. }) = &session_source
