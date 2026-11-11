@@ -1,8 +1,8 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 0cdfa65c5f1ccb4b74e36a99406d9bfbc96c3801..4b0bee92668585f074fc52cc957216d8395e8b91 100644
+index 8062d60f4b4ce54987ff2975189d8700eb30143f..e60d04a8171d51f4dae60896f880687139f0e5e6 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -3125,6 +3125,7 @@ dependencies = [
+@@ -3127,6 +3127,7 @@ dependencies = [
   "sha1 0.10.6",
   "shlex",
   "similar",
@@ -113,7 +113,7 @@ index b9062d6e7a9d15ec5f79a7858993051bb7509e7a..2222902b4ab7bceff5a955a93f2fcd55
      match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_and_wait()).await {
          Ok(Ok(())) => ThreadShutdownResult::Complete,
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index b515ad6d160deb8afe95618e9846ba63ed27e2be..be2700cee4e418005ce89ea2b2e6d94afe1e1e06 100644
+index b21b92ca2ff1237d42cd28512319a4c72e6ba1ac..b2f29ae2913b0bb2d2cfb2abfe88b7a9ed2e3bc4 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
 @@ -319,6 +319,15 @@ fn has_model_resume_override(
@@ -132,7 +132,7 @@ index b515ad6d160deb8afe95618e9846ba63ed27e2be..be2700cee4e418005ce89ea2b2e6d94a
  fn has_permission_override(
      request_overrides: Option<&HashMap<String, serde_json::Value>>,
      typesafe_overrides: &ConfigOverrides,
-@@ -7036,6 +7045,8 @@ fn build_thread_from_loaded_snapshot(
+@@ -7046,6 +7055,8 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -978,10 +978,10 @@ index 2b3626fd51528b1eaeb29b32114cc3e52aa91c8d..583ddd0b7cb4b82f318ae365a2081637
 
  #[derive(Clone, Debug, PartialEq, Eq)]
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 18719552e232d76ebb7783198986f5719ecf9874..56642662cd921c02212736e862b107f1e8eb9153 100644
+index c639095147d13b0a8737d6791bceb1b8535809c6..6559980d912e05740028f7e65b202467daa5cb16 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -473,6 +473,38 @@ impl CodexThread {
+@@ -476,6 +476,38 @@ impl CodexThread {
              .await
      }
 
@@ -1020,7 +1020,7 @@ index 18719552e232d76ebb7783198986f5719ecf9874..56642662cd921c02212736e862b107f1
      #[doc(hidden)]
      pub async fn ensure_rollout_materialized(&self) {
          self.session
-@@ -1499,6 +1531,10 @@ impl CodexThread {
+@@ -1503,6 +1535,10 @@ impl CodexThread {
          let multi_agent_version = self
              .multi_agent_version()
              .unwrap_or_else(|| config.multi_agent_version_from_features());
@@ -1033,7 +1033,7 @@ index 18719552e232d76ebb7783198986f5719ecf9874..56642662cd921c02212736e862b107f1
      }
  }
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 05974e9b5ed24cf128e13bd9aaf3996f4fae3d63..beac3c1efae90ee2f229285ea099c19621519e25 100644
+index 9a45cd20aace879c11aa7f08439a37bd221e4133..51546bbcc9e77026fbcc597363c25019844b09a8 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -147,6 +147,14 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
@@ -1092,10 +1092,10 @@ index 893a01ce5ad0bb1789d7b27ce5baad5f8a7a01e8..d3dfa5a32bb3fc33c5eba5c846a996a8
 +    }
 +}
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index d230fc4caf1010a7406aa6c44e08ab6d04dc405a..85a42b75ebd0436b9930587f884741c9faf79a5a 100644
+index 746ff4f22047b6c9ab132487526f3c95ce0bdbcb..2d89a8d9b865dd589de557598a16410503473359 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
-@@ -91,6 +91,13 @@ pub async fn inter_agent_communication(
+@@ -92,6 +92,13 @@ pub async fn inter_agent_communication(
          .enqueue_mailbox_communication(communication, start_options)
          .await;
      crate::agent_communication::emit_agent_communication_receive(&sub_id);
@@ -1110,10 +1110,10 @@ index d230fc4caf1010a7406aa6c44e08ab6d04dc405a..85a42b75ebd0436b9930587f884741c9
          || sess.features.enabled(Feature::WakeOnAgentMessages)
          || sess.has_outstanding_durable_sleep()
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 814799a59f004eb3134a01a680f17dcbcdd91291..ac7eecc5b3e947173b63ab967651f86241cb024d 100644
+index b477663de79071245f7404753cb64ac651eb85fa..c507fa8c7e8a4a1192dbb227139dfe945cd4b40c 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2646,6 +2646,7 @@ impl Session {
+@@ -2664,6 +2664,7 @@ impl Session {
 
      /// Record a terminal CodexErr before the app-server completion notification is reduced.
      pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {
@@ -1121,7 +1121,7 @@ index 814799a59f004eb3134a01a680f17dcbcdd91291..ac7eecc5b3e947173b63ab967651f862
          self.services
              .analytics_events_client
              .track_turn_codex_error(TurnCodexErrorFact::from_codex_err(
-@@ -2840,6 +2841,9 @@ impl Session {
+@@ -2858,6 +2859,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }
@@ -1159,10 +1159,10 @@ index 63c2ac38aade63854af5f4f1fbfe07820fd95fe1..ae63a88a6b66a36efe5e583a6b48bfd9
      #[instrument(name = "turn_context.make", level = "trace", skip_all)]
      pub(crate) fn make_turn_context(
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index af0f10df1d7f444ccff7b5a97589ac98ef5d10d5..ab0520c945e52fd313232994cb662b9958a5cd9d 100644
+index 5d15403492148fb175d06ebdc341bd5bec63c614..03fd5292b9cf844bdc67a8716e8aa5a6f7dc0087 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -279,6 +279,11 @@ impl Session {
+@@ -280,6 +280,11 @@ impl Session {
          input: Vec<TurnInput>,
          task: T,
      ) {
@@ -1174,7 +1174,7 @@ index af0f10df1d7f444ccff7b5a97589ac98ef5d10d5..ab0520c945e52fd313232994cb662b99
          self.abort_all_tasks(TurnAbortReason::Replaced).await;
          self.clear_connector_selection().await;
          self.start_task(turn_context, input, task).await;
-@@ -378,6 +383,7 @@ impl Session {
+@@ -379,6 +384,7 @@ impl Session {
              Some(_) => (None, Vec::new(), Some(input)),
              None => (
                  self.services.agent_control.admit_turn(
@@ -1182,7 +1182,7 @@ index af0f10df1d7f444ccff7b5a97589ac98ef5d10d5..ab0520c945e52fd313232994cb662b99
                      turn_context.multi_agent_version,
                      &turn_context.session_source,
                  ),
-@@ -533,6 +539,11 @@ impl Session {
+@@ -534,6 +540,11 @@ impl Session {
          let Some((turn_state, previous_options)) = self.reserve_pending_work_turn().await else {
              return;
          };
@@ -1194,7 +1194,7 @@ index af0f10df1d7f444ccff7b5a97589ac98ef5d10d5..ab0520c945e52fd313232994cb662b99
 
          self.services
              .models_manager
-@@ -558,6 +569,10 @@ impl Session {
+@@ -559,6 +570,10 @@ impl Session {
          };
          let (input, mut start_options) =
              self.input_queue.get_pending_input(&self.active_turn).await;

@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index f95157512e14b17a098c2c2e2683391bab8ac444..05974e9b5ed24cf128e13bd9aaf3996f4fae3d63 100644
+index d684b394260d8ed7a6df59f665b3be98be9bd0b9..9a45cd20aace879c11aa7f08439a37bd221e4133 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -146,6 +146,7 @@ mod skills;
@@ -91,10 +91,10 @@ index f9afaaa41d5349e519ca45585bcd05954655dd4d..75c70778c547fc08ee4318f31465b3fb
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index caa45622a2c826ae7a7c14c1edd2c849e8f81799..d9551a22d0217cee3f9229a0e2af4713f7b942e1 100644
+index 315dbee40276aa415982ec7ec00689526eceba43..343d94e16133e616a9393fc363387b922a4858e7 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
-@@ -108,6 +108,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
+@@ -105,6 +105,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
  const MAX_STDIN_APPROVAL_BYTES: usize = 8_000;
  const INTERRUPT: &str = "\u{3}";
 

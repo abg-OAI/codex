@@ -516,7 +516,7 @@ index dfb2834af58acbe8a5081648a6222995a351843f..a913a7804008a8d925ac743d27a668d8
  pub use runtime::backup_runtime_db_for_fresh_start;
  pub use runtime::collect_runtime_db_backups;
 diff --git a/codex-rs/state/src/runtime.rs b/codex-rs/state/src/runtime.rs
-index 2ecd9592c69aa2c7aade3f083a5bb95b5dfd8233..b5f9c35d700fe78afce89b67a1e3e25b989b7703 100644
+index 0cfa0866b89c7ed4bcf2aa50b6578f2e9b6b107a..41f8ca26afad33da8de2dcccb1460639b0047d89 100644
 --- a/codex-rs/state/src/runtime.rs
 +++ b/codex-rs/state/src/runtime.rs
 @@ -71,6 +71,7 @@ pub use goals::GoalAccountingMode;
