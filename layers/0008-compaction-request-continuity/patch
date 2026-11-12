@@ -756,10 +756,10 @@ index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f4032
      );
 
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
-index 2ec53d71e938b9e812c00fee2fc07b214241df96..698135482395f9734e2d482947c727522fc57df7 100644
+index 4c07b7fb3fa63829b359472d3c7d1a0254614193..7d0e070005e0ea8f91e3ce70d0dacf3aec729f76 100644
 --- a/codex-rs/core/src/context_manager/history.rs
 +++ b/codex-rs/core/src/context_manager/history.rs
-@@ -736,6 +736,9 @@ impl ContextManager {
+@@ -745,6 +745,9 @@ impl ContextManager {
          .await;
          self.project_file_audio_for_prompt();
          Arc::unwrap_or_clone(self.items)
@@ -769,7 +769,7 @@ index 2ec53d71e938b9e812c00fee2fc07b214241df96..698135482395f9734e2d482947c72752
      }
 
      /// Applies the file-audio request projection to a normalized snapshot whose
-@@ -849,6 +852,7 @@ impl ContextManager {
+@@ -858,6 +861,7 @@ impl ContextManager {
          let items_tokens = self
              .items
              .iter()
@@ -778,7 +778,7 @@ index 2ec53d71e938b9e812c00fee2fc07b214241df96..698135482395f9734e2d482947c72752
                  estimate_item_token_count_with_audio(&envelope.item, &self.file_audio_durations)
              })
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index 334a764d00d3ff11861df258e68393910e72ae21..f0298b885161aac79ea8617686f567fc58664f48 100644
+index 62bd597a8e191d2d1c6b5e4c86a460558d1c5b53..d8b0880a4f80098a70c53260340e888cc7089410 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
 @@ -84,6 +84,95 @@ fn sampling_checkpoint_excludes_input_appended_during_request() {
@@ -890,7 +890,7 @@ index ce13be03f1986a62708aa751fef7e5d35d633a67..0e5b94605cafe76a6c7fe66b8627aa90
  pub(crate) mod goal_resume;
  pub(crate) mod goal_scheduler;
 diff --git a/codex-rs/core/src/session/rollout_reconstruction.rs b/codex-rs/core/src/session/rollout_reconstruction.rs
-index 930d410a6e10336d541dfb05323b6f1ae9f15c03..cc296773047b9287466d8f2d1b9971da4fd96a58 100644
+index 1df79fc656035331a93169ed707107c01711e492..30bec829d07da7bfe806edc95d911e41ddb134b4 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction.rs
 @@ -196,6 +196,10 @@ impl Session {
@@ -926,7 +926,7 @@ index 930d410a6e10336d541dfb05323b6f1ae9f15c03..cc296773047b9287466d8f2d1b9971da
                              Vec::new(),
                              &user_messages,
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index f4b312503a85fc4ff5fa01fe5b188ca9ce08ec3a..4517a4bbe682bc4d16d746841da152dcb7cec8f2 100644
+index 96181f9f9ae9567cb35bb894667d1098e79623f2..113fcf70c8f2f7e3cb5f69f2ee8c24bf9efbcf21 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 @@ -1481,6 +1481,124 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
@@ -1055,7 +1055,7 @@ index f4b312503a85fc4ff5fa01fe5b188ca9ce08ec3a..4517a4bbe682bc4d16d746841da152dc
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index 27c81a3cec8a300b6e8cf3471463f368f947f8b9..92e8b345c5704557b5f778e4e627e53cd83ffad7 100644
+index 54792bf89b2e7f8d80ee28040935d650ce1c295d..11492ef6ff2980f97769cc8bc84220a38f67a882 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
 @@ -75,6 +75,11 @@ pub struct CodexHarnessMetadata {
