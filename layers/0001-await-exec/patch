@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index d684b394260d8ed7a6df59f665b3be98be9bd0b9..9a45cd20aace879c11aa7f08439a37bd221e4133 100644
+index 90d089405b3df06bb015cb159ac2a57c4798be10..143e251f345d322a5c1e5d450b25a6f71301c963 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -146,6 +146,7 @@ mod skills;
+@@ -147,6 +147,7 @@ mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  #[cfg(test)]
  pub(crate) use skills::skills_load_input_from_config;
@@ -28,7 +28,7 @@ index ec7a7d24aa87a8b28d9380f2aa8338b541c18057..aadd9c59752cbec9014448ff255615f2
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index 68ddcca8f728e76d31b057503d516242274e34c6..52725058c858c98c5f07a578008b3d9cfeabd5ee 100644
+index a5851263d2efc1e58a5b0422485dc59d04b999db..35b84cdbbfce9e9e3ddb2a1d1fd7d23f13fbd892 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
