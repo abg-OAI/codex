@@ -20,6 +20,7 @@
 use crate::config::Config;
 use crate::context::UserInstructions as ContextUserInstructions;
 use crate::environment_selection::TurnEnvironmentSnapshot;
+use crate::session::turn_context::TurnEnvironment;
 use codex_config::ConfigLayerSource;
 use codex_config::default_project_root_markers;
 use codex_config::merge_toml_values;
@@ -31,10 +32,12 @@ use codex_extension_api::Instructions;
 use codex_file_system::FileSystemSandboxContext;
 use codex_file_system::FindUpErrorPolicy;
 use codex_file_system::find_nearest_ancestor_with_markers;
+use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathConvention;
 use codex_utils_path_uri::PathUri;
 use futures::StreamExt;
+use std::collections::HashMap;
 use std::io;
 use toml::Value as TomlValue;
 use tracing::error;
@@ -61,6 +64,16 @@ pub(crate) async fn load_project_instructions(
     environments: &TurnEnvironmentSnapshot,
     warnings: &mut Vec<String>,
 ) -> io::Result<LoadedAgentsMd> {
+    load_project_instructions_with_discovery(config, environments, warnings, &[]).await
+}
+
+/// Reuses completed startup discovery while retaining the normal ordered instruction budget.
+pub(crate) async fn load_project_instructions_with_discovery(
+    config: &Config,
+    environments: &TurnEnvironmentSnapshot,
+    warnings: &mut Vec<String>,
+    discovered: &[DiscoveredProjectInstructions],
+) -> io::Result<LoadedAgentsMd> {
     let mut loaded = LoadedAgentsMd::default();
     if config.active_project.is_untrusted() || config.project_doc_max_bytes == 0 {
         return Ok(loaded);
@@ -85,7 +98,11 @@ pub(crate) async fn load_project_instructions(
         .then(|| turn_environment.sandbox_context(/*additional_permissions*/ None));
         match read_agents_md(
             config,
-            filesystem.as_ref(),
+            discovered
+                .iter()
+                .find(|discovered| discovered.selection == turn_environment.selection)
+                .map(InstructionFiles::Cached)
+                .unwrap_or(InstructionFiles::Live(filesystem.as_ref())),
             &turn_environment.selection.environment_id,
             turn_environment.cwd(),
             remaining,
@@ -122,6 +139,113 @@ pub(crate) async fn load_project_instructions(
     Ok(loaded)
 }
 
+/// Completed discovery for one environment, reusable only with the same selection.
+#[derive(Clone)]
+pub(crate) struct DiscoveredProjectInstructions {
+    selection: TurnEnvironmentSelection,
+    paths: Vec<PathUri>,
+    files: HashMap<PathUri, Option<(Vec<u8>, usize)>>,
+}
+
+/// Captures instructions reachable under any budget left by earlier environments.
+pub(crate) async fn discover_project_instructions(
+    config: &Config,
+    environment: &TurnEnvironment,
+) -> io::Result<DiscoveredProjectInstructions> {
+    let mut discovered = DiscoveredProjectInstructions {
+        selection: environment.selection.clone(),
+        paths: Vec::new(),
+        files: HashMap::new(),
+    };
+    if config.active_project.is_untrusted() || config.project_doc_max_bytes == 0 {
+        return Ok(discovered);
+    }
+    let filesystem = environment.environment().get_filesystem();
+    let sandbox = (!environment
+        .permission_profile()
+        .file_system_sandbox_policy()
+        .has_full_disk_read_access())
+    .then(|| environment.sandbox_context(/*additional_permissions*/ None));
+    discovered.paths = agents_md_paths(
+        config,
+        environment.cwd(),
+        filesystem.as_ref(),
+        sandbox.as_ref(),
+    )
+    .await?;
+    let mut remaining = config.project_doc_max_bytes;
+    for path in &discovered.paths {
+        if remaining == 0 {
+            break;
+        }
+        let mut data = match filesystem
+            .read_file(path, ReadFileOptions::default(), sandbox.as_ref())
+            .await
+        {
+            Ok(data) => data,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                discovered.files.insert(path.clone(), None);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let size = data.len();
+        data.truncate(remaining);
+        let text = String::from_utf8_lossy(&data);
+        let whitespace = text.len() - text.trim_start().len();
+        if whitespace < text.len() {
+            // A shorter whitespace-only prefix consumes no budget in the native reader.
+            // Other prefixes consume raw bytes, so this bounds every later remaining budget.
+            remaining = remaining.saturating_sub(size).max(whitespace);
+        }
+        discovered.files.insert(path.clone(), Some((data, size)));
+    }
+    Ok(discovered)
+}
+
+/// Filesystem results captured at admission are consumed by the ordinary instruction loader.
+enum InstructionFiles<'a> {
+    Live(&'a dyn ExecutorFileSystem),
+    Cached(&'a DiscoveredProjectInstructions),
+}
+
+impl InstructionFiles<'_> {
+    async fn paths(
+        &self,
+        config: &Config,
+        cwd: &PathUri,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> io::Result<Vec<PathUri>> {
+        match self {
+            Self::Live(fs) => agents_md_paths(config, cwd, *fs, sandbox).await,
+            Self::Cached(captured) => Ok(captured.paths.clone()),
+        }
+    }
+
+    async fn read(
+        &self,
+        path: &PathUri,
+        sandbox: Option<&FileSystemSandboxContext>,
+    ) -> io::Result<(Vec<u8>, usize)> {
+        match self {
+            Self::Live(fs) => fs
+                .read_file(path, ReadFileOptions::default(), sandbox)
+                .await
+                .map(|data| {
+                    let size = data.len();
+                    (data, size)
+                }),
+            Self::Cached(captured) => match captured.files.get(path) {
+                Some(Some((data, size))) => Ok((data.clone(), *size)),
+                Some(None) => Err(io::Error::from(io::ErrorKind::NotFound)),
+                None => Err(io::Error::other(
+                    "startup instruction discovery was incomplete",
+                )),
+            },
+        }
+    }
+}
+
 /// Attempt to locate and load AGENTS.md documentation.
 ///
 /// On success returns `Ok(Some(loaded))` where `loaded` contains every
@@ -131,14 +255,14 @@ pub(crate) async fn load_project_instructions(
 #[tracing::instrument(name = "agents_md.load", skip_all, fields(max_total = max_total))]
 async fn read_agents_md(
     config: &Config,
-    fs: &dyn ExecutorFileSystem,
+    files: InstructionFiles<'_>,
     environment_id: &str,
     cwd: &PathUri,
     max_total: usize,
     sandbox: Option<&FileSystemSandboxContext>,
     warnings: &mut Vec<String>,
 ) -> io::Result<Option<LoadedAgentsMd>> {
-    let paths = agents_md_paths(config, cwd, fs, sandbox).await?;
+    let paths = files.paths(config, cwd, sandbox).await?;
     let mut remaining = max_total;
     let mut loaded = LoadedAgentsMd::default();
 
@@ -152,12 +276,11 @@ async fn read_agents_md(
             break;
         }
 
-        let mut data = match fs.read_file(&p, ReadFileOptions::default(), sandbox).await {
+        let (mut data, size) = match files.read(&p, sandbox).await {
             Ok(data) => data,
             Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
             Err(err) => return Err(err),
         };
-        let size = data.len();
         if size > remaining {
             data.truncate(remaining);
             warnings.push(format!(

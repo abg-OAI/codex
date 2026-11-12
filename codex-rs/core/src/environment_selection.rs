@@ -235,7 +235,8 @@ fn resolve_selection_config(
         ),
         config @ (EnvironmentConfigState::Ready(_)
         | EnvironmentConfigState::Pending
-        | EnvironmentConfigState::Failed(_)) => (config, EnvironmentConfigOrigin::Owner),
+        | EnvironmentConfigState::Failed(_)
+        | EnvironmentConfigState::Unavailable) => (config, EnvironmentConfigOrigin::Owner),
     };
     selection.config = config;
     (selection, origin)
@@ -314,6 +315,8 @@ pub(crate) struct ThreadEnvironments {
     state: Mutex<ThreadEnvironmentsState>,
     // Retain configured bindings independently of active-turn membership and cancellation.
     configured: Mutex<ThreadEnvironmentsState>,
+    // Retained independently of bindings, including executors removed from the registry.
+    unavailable: Vec<(usize, TurnEnvironmentSelection)>,
 }
 
 struct ThreadEnvironmentsState {
@@ -390,6 +393,26 @@ impl StartupRetry<'_> {
     }
 }
 
+/// Preserves thread-lifetime exclusions when callers regenerate an environment list.
+pub(crate) fn retain_unavailable_selections(
+    current: &[TurnEnvironmentSelection],
+    proposed: &mut Vec<TurnEnvironmentSelection>,
+) {
+    for (index, selection) in current.iter().enumerate() {
+        if !matches!(selection.config, EnvironmentConfigState::Unavailable) {
+            continue;
+        }
+        if let Some(proposed) = proposed
+            .iter_mut()
+            .find(|proposed| proposed.environment_id == selection.environment_id)
+        {
+            *proposed = selection.clone();
+        } else {
+            proposed.insert(index.min(proposed.len()), selection.clone());
+        }
+    }
+}
+
 impl ThreadEnvironments {
     pub(crate) fn new(
         environment_manager: Arc<EnvironmentManager>,
@@ -399,6 +422,14 @@ impl ThreadEnvironments {
         current: TurnEnvironmentSnapshot,
         non_blocking_snapshots: bool,
     ) -> Self {
+        let unavailable = current
+            .all_selections()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, selection)| {
+                matches!(selection.config, EnvironmentConfigState::Unavailable)
+            })
+            .collect();
         let environments: Vec<_> = current
             .environments
             .into_iter()
@@ -487,6 +518,7 @@ impl ThreadEnvironments {
             local_shell,
             shell_snapshot,
             non_blocking_snapshots,
+            unavailable,
             state: Mutex::new(ThreadEnvironmentsState {
                 thread_defaults: thread_defaults.clone(),
                 environments: Vec::new(),
@@ -498,6 +530,22 @@ impl ThreadEnvironments {
                 connection_events: None,
             }),
         }
+    }
+
+    /// Installs immutable exclusions using the complete initial selection's ordering.
+    pub(crate) fn with_unavailable_selections(
+        mut self,
+        selections: &[TurnEnvironmentSelection],
+    ) -> Self {
+        self.unavailable = selections
+            .iter()
+            .cloned()
+            .enumerate()
+            .filter(|(_, selection)| {
+                matches!(selection.config, EnvironmentConfigState::Unavailable)
+            })
+            .collect();
+        self
     }
 
     /// Attach the initial active selection after `SessionConfigured` so clients see only later
@@ -663,6 +711,11 @@ impl ThreadEnvironments {
                     })
             };
         for selected_environment in environments {
+            if self.unavailable.iter().any(|(_, unavailable)| {
+                unavailable.environment_id == selected_environment.environment_id
+            }) {
+                continue;
+            }
             if !seen_environment_ids.insert(selected_environment.environment_id.as_str()) {
                 continue;
             }
@@ -711,6 +764,12 @@ impl ThreadEnvironments {
                         }
                         EnvironmentConfigState::Failed(error) => {
                             pending_completions.push((completion, Err(error.clone())));
+                        }
+                        EnvironmentConfigState::Unavailable => {
+                            pending_completions.push((
+                                completion,
+                                Err("executor is unavailable for this thread".to_string()),
+                            ));
                         }
                         EnvironmentConfigState::FromThread | EnvironmentConfigState::Pending => {
                             environment.pending_completion = Some(completion);
@@ -821,17 +880,7 @@ impl ThreadEnvironments {
 
     /// Projects canonical selections back to caller input form without losing config ownership.
     pub(crate) fn selections(&self) -> Vec<TurnEnvironmentSelection> {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .environments
-            .iter()
-            .map(|environment| {
-                environment
-                    .config_origin
-                    .into_input_selection(environment.selection.clone())
-            })
-            .collect()
+        self.snapshot_state(&self.state).all_selections()
     }
 
     /// Returns installed owner configuration without treating pending attachments as ready.
@@ -842,7 +891,8 @@ impl ThreadEnvironments {
             EnvironmentConfigState::Ready(config) => Some(config),
             EnvironmentConfigState::FromThread
             | EnvironmentConfigState::Pending
-            | EnvironmentConfigState::Failed(_) => None,
+            | EnvironmentConfigState::Failed(_)
+            | EnvironmentConfigState::Unavailable => None,
         }
     }
 
@@ -981,6 +1031,13 @@ impl ThreadEnvironments {
             .inspect_selected_capability_roots(&selected_capability_roots);
         status.ready_roots.retain(|root| {
             let CapabilityRootLocation::Environment { environment_id, .. } = &root.location;
+            if self
+                .unavailable
+                .iter()
+                .any(|(_, selection)| &selection.environment_id == environment_id)
+            {
+                return false;
+            }
             environments
                 .iter()
                 .find(|environment| &environment.selection.environment_id == environment_id)
@@ -1008,8 +1065,8 @@ impl ThreadEnvironments {
         configuration_ready: Option<PendingConfiguration>,
     ) -> TurnEnvironmentResult {
         let environment_id = &selection.environment_id;
-        if let EnvironmentConfigState::Failed(error) = &selection.config {
-            return Err(Arc::new(ExecServerError::Protocol(error.clone())));
+        if let Some(error) = selection.config.failure_reason() {
+            return Err(Arc::new(ExecServerError::Protocol(error.to_string())));
         }
 
         // Wait for the shared executor connection.
@@ -1108,18 +1165,18 @@ impl ThreadEnvironments {
 
     /// Copies the current selection without waiting for any executor to connect.
     pub(crate) fn snapshot_now(&self) -> TurnEnvironmentSnapshot {
-        Self::snapshot_state(&self.state).refresh_readiness()
+        self.snapshot_state(&self.state).refresh_readiness()
     }
 
     /// Captures configured bindings without resolving readiness or losing config ownership.
     /// Inheritance and eviction retain these bindings; execution and validation resolve a view.
     pub(crate) fn configured_snapshot_now(&self) -> TurnEnvironmentSnapshot {
-        Self::snapshot_state(&self.configured)
+        self.snapshot_state(&self.configured)
     }
 
-    fn snapshot_state(state: &Mutex<ThreadEnvironmentsState>) -> TurnEnvironmentSnapshot {
+    fn snapshot_state(&self, state: &Mutex<ThreadEnvironmentsState>) -> TurnEnvironmentSnapshot {
         // Keep the startup results, but not the senders that would keep removed Pending work alive.
-        let environments = state
+        let mut environments: Vec<_> = state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .environments
@@ -1139,6 +1196,16 @@ impl ThreadEnvironments {
                 })
             })
             .collect();
+        for (index, selection) in &self.unavailable {
+            environments.insert(
+                (*index).min(environments.len()),
+                TurnEnvironmentState::Failed {
+                    selection: selection.clone(),
+                    required_skills: Vec::new(),
+                    error: "executor is unavailable for this thread".to_string(),
+                },
+            );
+        }
         TurnEnvironmentSnapshot { environments }
     }
 
@@ -1193,8 +1260,8 @@ impl TurnEnvironmentState {
         resolved: Option<TurnEnvironmentResult>,
     ) -> Self {
         let required_skills = starting.attachment.environment.required_skills().to_vec();
-        if let EnvironmentConfigState::Failed(error) = &starting.selection.config {
-            let error = error.clone();
+        if let Some(error) = starting.selection.config.failure_reason() {
+            let error = error.to_string();
             return Self::Failed {
                 required_skills,
                 selection: starting
@@ -1466,6 +1533,11 @@ impl TurnEnvironmentSnapshot {
                         .config_origin
                         .into_input_selection(environment.selection.clone()),
                 ),
+                TurnEnvironmentState::Failed { selection, .. }
+                    if matches!(selection.config, EnvironmentConfigState::Unavailable) =>
+                {
+                    Some(selection.clone())
+                }
                 TurnEnvironmentState::Failed { .. } => None,
             })
             .map(TurnEnvironmentSelection::into_request)

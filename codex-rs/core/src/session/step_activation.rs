@@ -292,12 +292,17 @@ impl Session {
             service_tier,
         } = update;
         let environments = environment_requests.map(|requests| {
-            requests
+            let mut selections = requests
                 .into_iter()
                 .map(|request| {
                     TurnEnvironmentSelection::new(request, &self.services.selected_capability_roots)
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            crate::environment_selection::retain_unavailable_selections(
+                &self.services.turn_environments.selections(),
+                &mut selections,
+            );
+            selections
         });
         let updates_step_settings = updates_model_settings || approvals_reviewer.is_some();
         let update = StepSettingsUpdate {
@@ -361,6 +366,9 @@ impl Session {
                     &self.services.turn_environments.environment_manager(),
                     proposed
                         .iter()
+                        .filter(|selection| {
+                            !matches!(selection.config, EnvironmentConfigState::Unavailable)
+                        })
                         .map(|selection| (selection.environment_id.as_str(), &selection.cwd)),
                 )
                 .map_err(|error| error.to_string())?;
@@ -479,7 +487,9 @@ fn any_environment_has_full_disk_write(
                 config.permission_profile.permission_profile(),
                 &config.workspace_roots,
             ),
-            EnvironmentConfigState::Pending | EnvironmentConfigState::Failed(_) => return None,
+            EnvironmentConfigState::Pending
+            | EnvironmentConfigState::Failed(_)
+            | EnvironmentConfigState::Unavailable => return None,
         };
         Some(
             profile

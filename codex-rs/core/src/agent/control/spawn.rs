@@ -458,6 +458,10 @@ impl LocalAgentControl {
                     .as_ref()
                     .map(TurnEnvironmentSnapshot::refresh_readiness);
                 for selection in selections {
+                    // Exclusions carry no executor authority and remain unavailable after resume.
+                    if matches!(selection.config, EnvironmentConfigState::Unavailable) {
+                        continue;
+                    }
                     let environment_id = &selection.environment_id;
                     let invalid_environment = |reason: &str| {
                         CodexErr::InvalidRequest(format!(
@@ -489,7 +493,9 @@ impl LocalAgentControl {
                             continue;
                         }
                         EnvironmentConfigState::Ready(config) => config,
-                        EnvironmentConfigState::Pending | EnvironmentConfigState::Failed(_) => {
+                        EnvironmentConfigState::Pending
+                        | EnvironmentConfigState::Failed(_)
+                        | EnvironmentConfigState::Unavailable => {
                             return Err(invalid_environment("configuration is not ready"));
                         }
                     };
