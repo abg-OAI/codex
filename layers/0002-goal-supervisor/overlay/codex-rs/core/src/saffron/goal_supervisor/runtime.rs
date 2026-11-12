@@ -32,6 +32,7 @@ use super::failure;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::types::SpawnAgentForkMode;
 use crate::agent::types::SpawnAgentOptions;
+use crate::agent::types::SpawnProgramSource;
 use crate::saffron::storage::GoalSupervisorAction;
 use crate::saffron::storage::GoalSupervisorContinuity;
 use crate::saffron::storage::GoalWake;
@@ -749,6 +750,7 @@ async fn spawn_helper(
                 disabled_plugin_ids: None,
                 multi_agent_v2_usage_hints: None,
                 cyber_access_program: None,
+                cyber_access_program_source: SpawnProgramSource::Explicit,
             },
         ),
     )
