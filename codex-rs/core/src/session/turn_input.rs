@@ -813,6 +813,8 @@ impl Session {
     ) {
         let mut state = self.state.lock().await;
         state.last_started_turn_id = Some(turn_id.to_owned());
+        state.last_completed_turn_id = None;
+        crate::saffron::archive_self::cancel(self);
         if let Some(attribution) = attribution {
             state.turn_attribution = Some(attribution);
         }
@@ -1060,6 +1062,7 @@ impl Session {
                 pending_input,
             )
             .await;
+        crate::saffron::archive_self::cancel(self);
         Ok((
             active_turn_id.clone(),
             active_task.turn_context.root_turn_id(),
