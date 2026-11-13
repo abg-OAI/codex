@@ -16,6 +16,15 @@ pub struct AgentMetadata {
     pub agent_path: Option<AgentPath>,
     pub agent_nickname: Option<String>,
     pub agent_role: Option<String>,
+    pub(crate) visibility: AgentListingVisibility,
+}
+
+/// Controls whether an agent participates in the user-facing agent surface.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum AgentListingVisibility {
+    #[default]
+    Listed,
+    Hidden,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
