@@ -1,0 +1,164 @@
+diff --git a/codex-rs/core/src/agent/control.rs b/codex-rs/core/src/agent/control.rs
+index 5587d34398aa91a9dee482b5771fa537efb97c16..650fc424eaf252f67aaf3e53e23553a50767158a 100644
+--- a/codex-rs/core/src/agent/control.rs
++++ b/codex-rs/core/src/agent/control.rs
+@@ -77,6 +77,7 @@ mod interrupt;
+ mod legacy;
+ mod mailbox;
+ mod residency;
++mod retirement;
+ pub use residency::ThreadEvictionOutcome;
+ mod resume;
+ mod root_handoff;
+diff --git a/codex-rs/core/src/agent/control/runtime_context.rs b/codex-rs/core/src/agent/control/runtime_context.rs
+index 133c2c1535b92ce54cc8039fa4360a06e4207e9c..6dda74d4c9a0c6655a9181d2f5c40a92ea3018f7 100644
+--- a/codex-rs/core/src/agent/control/runtime_context.rs
++++ b/codex-rs/core/src/agent/control/runtime_context.rs
+@@ -130,6 +130,13 @@ impl LocalAgentRuntime {
+         Ok(descendants)
+     }
+
++    /// Shares the host's persistent ancestry store without exposing its runtime registry.
++    pub(crate) fn agent_graph_store(
++        &self,
++    ) -> CodexResult<Option<Arc<dyn codex_agent_graph_store::AgentGraphStore>>> {
++        Ok(self.upgrade()?.agent_graph_store())
++    }
++
+     pub(in crate::agent) fn upgrade(&self) -> CodexResult<Arc<ThreadManagerState>> {
+         self.manager.upgrade().ok_or_else(|| {
+             CodexErr::UnsupportedOperation("thread manager dropped".to_string())
+diff --git a/codex-rs/core/src/saffron/fork_thread.rs b/codex-rs/core/src/saffron/fork_thread.rs
+index cd7482b0161535753a71f8f62d7b9360dd03d2f0..c4a05e3a04114199ebd3f989ec7fceaef5041bb9 100644
+--- a/codex-rs/core/src/saffron/fork_thread.rs
++++ b/codex-rs/core/src/saffron/fork_thread.rs
+@@ -88,6 +88,7 @@ pub(super) fn register(session: &Session, turn: &TurnContext, registry: &mut Too
+     if !turn.session_source.is_non_root_agent()
+         && let Some(host) = session.services.thread_extension_data.get::<ForkHost>()
+     {
++        super::promote_subagent::register(registry, host.manager.clone());
+         registry.add(Handler { host });
+     }
+ }
+diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
+index ce8e8400ad356646d5e366dbc955e27bf81d8132..cb6a63e7b963bc9f8637b001d9e208d73cc50971 100644
+--- a/codex-rs/core/src/saffron/mod.rs
++++ b/codex-rs/core/src/saffron/mod.rs
+@@ -15,6 +15,7 @@ mod goal_edit;
+ pub(crate) mod goal_resume;
+ pub(crate) mod goal_scheduler;
+ pub(crate) mod goal_supervisor;
++mod promote_subagent;
+ pub(crate) mod saved_thread_persistence;
+ mod storage;
+ pub(crate) mod subagent_completion;
+diff --git a/codex-rs/core/src/saffron/storage.rs b/codex-rs/core/src/saffron/storage.rs
+index 346dbd52314b34ffab67c257f9d6ebe743616dc3..a704f68d423001d3b876de2ca140a7b845ec8149 100644
+--- a/codex-rs/core/src/saffron/storage.rs
++++ b/codex-rs/core/src/saffron/storage.rs
+@@ -6,7 +6,9 @@
+ //! need only provide the configured SQLite home.
+
+ mod executor_exclusions;
++mod promotions;
+ pub(super) use executor_exclusions::ExecutorExclusion;
++pub(super) use promotions::{CompletedAgent, Promotion, PromotionPhase};
+
+ use std::sync::LazyLock;
+
+diff --git a/codex-rs/core/src/saffron/storage_tests.rs b/codex-rs/core/src/saffron/storage_tests.rs
+index acdf265011530888ea129652cc46a860fcac5cd1..27d24713a640c402fb2f51dc121281f231a07194 100644
+--- a/codex-rs/core/src/saffron/storage_tests.rs
++++ b/codex-rs/core/src/saffron/storage_tests.rs
+@@ -17,7 +17,7 @@ async fn saffron_migrations_have_an_independent_ledger() -> anyhow::Result<()> {
+
+     assert_eq!(
+         migration_versions(home.path().join(SAFFRON_DB_FILENAME), &sqlite).await?,
+-        vec![1, 2, 3, 4]
++        vec![1, 2, 3, 4, 5]
+     );
+     assert_eq!(
+         migration_versions(state.sqlite().state_db_path(), &sqlite).await?,
+diff --git a/codex-rs/core/src/session/completion_shutdown.rs b/codex-rs/core/src/session/completion_shutdown.rs
+index 5cb12ce5d2a848c84b51da6acaaa98bf2b28d492..6f3cd776d19954c092e6fc863b168c0bbd7ec38c 100644
+--- a/codex-rs/core/src/session/completion_shutdown.rs
++++ b/codex-rs/core/src/session/completion_shutdown.rs
+@@ -7,6 +7,21 @@
+ use super::session::Session;
+
+ impl Session {
++    /// Certifies the latest finished turn while the caller holds the idle admission slot.
++    /// The caller must flush persistence first and keep that slot through its snapshot.
++    pub(crate) async fn checkpoint_idle_completion(&self) -> Option<String> {
++        if !matches!(
++            *self.agent_status.borrow(),
++            codex_protocol::protocol::AgentStatus::Completed(_)
++        ) {
++            return None;
++        }
++        let mut state = self.state.lock().await;
++        let turn_id = state.last_started_turn_id.clone()?;
++        state.last_completed_turn_id = Some(turn_id.clone());
++        Some(turn_id)
++    }
++
+     /// Checkpoints a terminal turn without certifying a superseding task.
+     #[expect(
+         clippy::await_holding_invalid_type,
+@@ -23,12 +38,13 @@ impl Session {
+         Ok(true)
+     }
+
+-    /// Called only by the submission loop immediately before explicit shutdown.
++    /// Checks whether the captured completed turn still permits teardown.
++    /// The submission loop checks before shutdown; lifecycle cleanup may check after termination.
+     #[expect(
+         clippy::await_holding_invalid_type,
+         reason = "shutdown must inspect the active-turn reservation and completion witness together"
+     )]
+-    pub(super) async fn can_shutdown_after_turn(&self, turn_id: &str) -> bool {
++    pub(crate) async fn can_shutdown_after_turn(&self, turn_id: &str) -> bool {
+         let active = self.active_turn.lock().await;
+         if active.is_some()
+             || self.is_interrupted()
+@@ -47,6 +63,40 @@ mod tests {
+     use crate::session::tests::make_session_and_context;
+     use crate::state::ActiveTurn;
+
++    /// An idle snapshot certifies only completed work and cannot certify a later turn.
++    #[tokio::test]
++    async fn idle_snapshot_requires_completed_status_and_keeps_turn_identity() {
++        use codex_protocol::protocol::AgentStatus;
++        let (session, _) = make_session_and_context().await;
++        session.record_started_turn("one", None).await;
++        session.agent_status.send_replace(AgentStatus::Running);
++        let slot = session.active_turn.lock().await;
++        assert!(session.checkpoint_idle_completion().await.is_none());
++        drop(slot);
++        session
++            .agent_status
++            .send_replace(AgentStatus::Completed(None));
++        let slot = session.active_turn.lock().await;
++        assert_eq!(
++            session.checkpoint_idle_completion().await.as_deref(),
++            Some("one")
++        );
++        drop(slot);
++        assert!(session.can_shutdown_after_turn("one").await);
++        session.record_started_turn("two", None).await;
++        session
++            .agent_status
++            .send_replace(AgentStatus::Completed(None));
++        let slot = session.active_turn.lock().await;
++        assert_eq!(
++            session.checkpoint_idle_completion().await.as_deref(),
++            Some("two")
++        );
++        drop(slot);
++        assert!(!session.can_shutdown_after_turn("one").await);
++        assert!(session.can_shutdown_after_turn("two").await);
++    }
++
+     #[tokio::test]
+     async fn shutdown_requires_persisted_latest_completion() {
+         let (session, _) = make_session_and_context().await;
