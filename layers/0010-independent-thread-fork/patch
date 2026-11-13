@@ -11,10 +11,10 @@ index 8a0a4f864043a011362044b830ab7bd4678f9b68..ea8a1d7bceb8e2c0f5a09cbb65b28e8f
          codex_goal_extension::install_with_backend(
              &mut builder,
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 1e589462ff89bbcc8c517232a3812457cab15c4a..226f17d7a4a107e9d47cd2042cd94f7973710132 100644
+index 124c0bc855c0a1e61863ae5cab8723050e7bc37f..9fc1e9aea0b8b9da2f60a950374ce016b13e7fc3 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -149,6 +149,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -148,6 +148,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
@@ -55,10 +55,10 @@ index 0e5b94605cafe76a6c7fe66b8627aa905dd16dd4..e548b2f1503cf3cf31fa705c73e46c3b
 +    fork_thread::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index a9b44b36656355bcd084cbc4e0609dc6ff3f164b..3dccff5bd24558e27b34de90bab25836f4ff43d3 100644
+index f824aebe97f879489d8df7c23092f62921ac9a83..739c19a464e87165b2dee2f58c406769a3337b1d 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -1228,6 +1228,11 @@ impl ThreadManager {
+@@ -1230,6 +1230,11 @@ impl ThreadManager {
          self.state.thread_created_tx.subscribe()
      }
 

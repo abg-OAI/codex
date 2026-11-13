@@ -103,10 +103,10 @@ index 90caddabcff5be1722c877398cbe725ae480f909..68043e9c2a5b0388d46877e5ee9be928
          if let Some(worker) = &self.turn_cost_worker {
              worker.shutdown();
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 3988399e76cd3736f14f598c428109d09fea576a..4ed0715bcd742a26c479405df4fa20d35ab32b8d 100644
+index 41d813ad03f4229a147e5c1d23d88ddec1929da3..b27f526e959b289499b4e022c391ff17caa70160 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -7049,6 +7049,7 @@ fn build_thread_from_loaded_snapshot(
+@@ -7048,6 +7048,7 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -127,7 +127,7 @@ index 10abe7dd6ce02886f0dcb601608fe0d6e92ec974..8cd2d0ecfa1abda992a660e76124d6f5
  mod saffron_goal_supervisor;
  mod saffron_goal_supervisor_history;
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index ca61f4f8342822335fafa0e795e21088778b7b32..425a289704ec254ab63b0f986aa329d31b41aef8 100644
+index 980bd833e2602fd2794f96aa89a35d44c46828f8..58b3767e631ed554a1717ad456595c55bd0a0208 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -405,6 +405,18 @@ impl CodexThread {
@@ -160,10 +160,10 @@ index ca61f4f8342822335fafa0e795e21088778b7b32..425a289704ec254ab63b0f986aa329d3
              .await
              .map(crate::saffron::goal_supervisor::CheckinStart::is_saffron_owned)
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 226f17d7a4a107e9d47cd2042cd94f7973710132..516da469bb4e6a2edaf497364d531285996a111a 100644
+index 9fc1e9aea0b8b9da2f60a950374ce016b13e7fc3..ef2d4a6d7e0e3413f73c930a2a228505e8acc8ec 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -149,6 +149,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
+@@ -148,6 +148,8 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  pub(crate) use skills::skills_load_input_from_config;
  mod saffron;
 
@@ -191,10 +191,10 @@ index 4ad09f9286b6230e5bd1d9401b205184d69e55b2..cc05582f7d44a99b371269332c42086e
 +    archive_self::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index 2687fbafbbfbfb265565afaa09342ec7f9a51a90..125c2a5adf525ba48615d35e3b6d4266664c0d28 100644
+index 285fee27259e8a02b8c81b0b5b93e97e42308ec5..cd2dfc305c6df515d54710cd15e51c5d4e012bd9 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
-@@ -869,6 +869,19 @@ pub(super) async fn submission_loop(
+@@ -936,6 +936,19 @@ pub(super) async fn submission_loop(
                      false
                  }
                  Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
@@ -215,10 +215,10 @@ index 2687fbafbbfbfb265565afaa09342ec7f9a51a90..125c2a5adf525ba48615d35e3b6d4266
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 1a87374ff194207875fd67e7408aa1ce209a63f8..5203efca2f15874f79f3d5dc8f2acdac0b8f9f30 100644
+index a113f1e554ca1c13673dee3a74774ed2a21604d8..cb36fd8caf95748e5b855c011af0674a66c37467 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -255,6 +255,7 @@ pub(crate) use file_audio::FileAudioDurations;
+@@ -254,6 +254,7 @@ pub(crate) use file_audio::FileAudioDurations;
 
  mod approved_plan;
  mod code_mode_warning;
@@ -227,10 +227,10 @@ index 1a87374ff194207875fd67e7408aa1ce209a63f8..5203efca2f15874f79f3d5dc8f2acdac
  pub(crate) mod context_window;
  mod daemon_recovery;
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 938562102bb350cd81e6ac5e0beb231110a0c770..7888abb1d5170ed56a2f0111d2485384d32828be 100644
+index 761501dc93d1fc7b5404471bb5bc06d14929c109..03e03fba0c4a5d3f1df0b1733d4f27b35a642449 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -785,7 +785,8 @@ impl Session {
+@@ -683,7 +683,8 @@ impl Session {
      }
 
      pub(crate) async fn should_retain_while_idle(&self) -> bool {
@@ -241,10 +241,10 @@ index 938562102bb350cd81e6ac5e0beb231110a0c770..7888abb1d5170ed56a2f0111d2485384
      }
 
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index f682cc25844b568fc7aaf0134de2e8b37f37c6ce..16bf99706a12d77ec52656c30372291f40691f58 100644
+index 5ea72dcab7d81333546a2bf0f62af73d9346b546..efd7fd922bfaa503bb6f6051834036f661743932 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
-@@ -644,20 +644,41 @@ pub(crate) async fn run_turn(
+@@ -646,21 +646,42 @@ pub(crate) async fn run_turn(
                  .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
                  .await;
 
@@ -255,6 +255,7 @@ index f682cc25844b568fc7aaf0134de2e8b37f37c6ce..16bf99706a12d77ec52656c30372291f
 -                Arc::clone(&turn_diff_tracker),
 -                &mut client_session,
 -                sampling_request_input,
+-                &mut unfinished_plan_id,
 -                cancellation_token.child_token(),
 +            let execution = cancellation_token.child_token();
 +            crate::saffron::archive_self::terminal::run_sampling(
@@ -268,6 +269,7 @@ index f682cc25844b568fc7aaf0134de2e8b37f37c6ce..16bf99706a12d77ec52656c30372291f
 +                    Arc::clone(&turn_diff_tracker),
 +                    &mut client_session,
 +                    sampling_request_input,
++                    &mut unfinished_plan_id,
 +                    execution,
 +                ),
              )
@@ -296,10 +298,10 @@ index f682cc25844b568fc7aaf0134de2e8b37f37c6ce..16bf99706a12d77ec52656c30372291f
                  let SamplingRequestResult {
                      needs_follow_up: model_needs_follow_up,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index fdebe3320e208e5c6da59000c37a1c698a3e5466..1f79482a76fa1942f9efbcdecc3c27337c55924e 100644
+index fb50c5976f3efb7ae161f2538513bd3f4c2d93d1..3607c5d5c4af3bae828f9d19d03c01e2a834ff2e 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
-@@ -813,6 +813,8 @@ impl Session {
+@@ -819,6 +819,8 @@ impl Session {
      ) {
          let mut state = self.state.lock().await;
          state.last_started_turn_id = Some(turn_id.to_owned());
@@ -308,7 +310,7 @@ index fdebe3320e208e5c6da59000c37a1c698a3e5466..1f79482a76fa1942f9efbcdecc3c2733
          if let Some(attribution) = attribution {
              state.turn_attribution = Some(attribution);
          }
-@@ -1060,6 +1062,7 @@ impl Session {
+@@ -1070,6 +1072,7 @@ impl Session {
                  pending_input,
              )
              .await;
@@ -338,10 +340,10 @@ index e90bd010c66d8b26f5dce54ac3b92a82690803df..721faa6cadb0c84f60fd89ca55f6d234
              restored_turn_routing: None,
              auto_compact_window: AutoCompactWindow::new_with_ids(auto_compact_window_ids),
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 4d8f627704919fb67c8d206a5513625b144a8342..dd00946fb7c8d641d9c3a6f5fedc83e9bd99bf0a 100644
+index 487c1fb01c7a8733ee5c1c082692c934161a38e1..5f61649ce02ae239142e2884adf5a83f4c3c96d9 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -810,7 +810,8 @@ impl Session {
+@@ -809,7 +809,8 @@ impl Session {
              if !Arc::ptr_eq(&active_turn.task.as_ref()?.turn_context, &turn_context) {
                  return None;
              }
@@ -351,7 +353,7 @@ index 4d8f627704919fb67c8d206a5513625b144a8342..dd00946fb7c8d641d9c3a6f5fedc83e9
                  let state = active_turn.turn_state.lock().await;
                  if state.accepts_mailbox_delivery_for_current_turn()
                      && !state.pending_input.is_empty()
-@@ -1069,15 +1070,24 @@ impl Session {
+@@ -1068,15 +1069,24 @@ impl Session {
          drop(outcome_handoff);
          drop(agent_execution_guard);
          drop(ancestor_turn_retention_guard);

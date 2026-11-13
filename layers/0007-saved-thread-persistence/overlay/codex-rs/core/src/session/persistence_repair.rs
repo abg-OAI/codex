@@ -1,6 +1,7 @@
 use super::*;
 use codex_protocol::items::FunctionCallOutputItem;
 use codex_thread_store::LoadThreadHistoryParams;
+use codex_thread_store::ThreadPersistenceMetadata;
 use std::sync::OnceLock;
 
 /// Teardown closes writer attachment before it observes the current live writer.
