@@ -450,6 +450,10 @@ impl SessionConfiguration {
         if let Some(environments) = &updates.environments {
             next_configuration.legacy_fallback_cwd = environments.legacy_fallback_cwd.clone();
             next_configuration.environments = environments.environments.clone();
+            crate::environment_selection::retain_unavailable_selections(
+                current_environments,
+                &mut next_configuration.environments,
+            );
         }
         let cwd_changed = next_configuration.legacy_fallback_cwd != current_cwd;
         if let Some(runtime_workspace_roots) = &updates.runtime_workspace_roots {
@@ -1089,6 +1093,30 @@ impl Session {
                     Arc::default()
                 }
             });
+        // Keep executor discovery out of the embedded startup/resume future.
+        let admitted = Box::pin(crate::saffron::executor_startup::prepare(
+            &config,
+            thread_id,
+            matches!(&initial_history, InitialHistory::Resumed(_)),
+            &thread_extension_init,
+            crate::saffron::executor_startup::StartupEnvironments {
+                manager: Arc::clone(&environment_manager),
+                shell: session_configuration
+                    .user_shell_override
+                    .clone()
+                    .unwrap_or_else(shell::default_user_shell),
+                defaults: ThreadEnvironmentDefaults::new(
+                    session_configuration.inferred_environment_config(),
+                    session_configuration.windows_sandbox_type,
+                ),
+                selections: environment_selections.to_vec(),
+                inherited: inherited_environments.unwrap_or_default(),
+                project_instructions_pinned: instructions.project_snapshot.is_some(),
+            },
+        ))
+        .await?;
+        let environment_selections = admitted.selections.as_slice();
+        let inherited_environments = Some(admitted.inherited);
         let mcp_thread_init = thread_extension_init.clone();
         let thread_extension_data = codex_extension_api::ExtensionData::new_with_init(
             thread_id.to_string(),
@@ -1537,24 +1565,29 @@ impl Session {
                 ShellSnapshot::disabled()
             };
             let inherited_environments = inherited_environments.unwrap_or_default();
-            let turn_environments = Arc::new(ThreadEnvironments::new(
-                environment_manager,
-                default_shell.clone(),
-                ThreadEnvironmentDefaults::new(
-                    session_configuration.inferred_environment_config(),
-                    session_configuration.windows_sandbox_type,
-                ),
-                shell_snapshot,
-                inherited_environments.clone(),
-                config.features.enabled(Feature::DeferredExecutor),
-            ));
+            let turn_environments = Arc::new(
+                ThreadEnvironments::new(
+                    environment_manager,
+                    default_shell.clone(),
+                    ThreadEnvironmentDefaults::new(
+                        session_configuration.inferred_environment_config(),
+                        session_configuration.windows_sandbox_type,
+                    ),
+                    shell_snapshot,
+                    inherited_environments.clone(),
+                    config.features.enabled(Feature::DeferredExecutor),
+                )
+                .with_unavailable_selections(environment_selections),
+            );
             turn_environments.update_configured_selections(environment_selections);
             let configured_environments = turn_environments.configured_snapshot_now();
             session_configuration.environments = configured_environments.all_selections();
             let resolved_environments = turn_environments
                 .resolve_snapshot(configured_environments)
                 .await;
-            let agents_md_manager = Arc::new(AgentsMdManager::new(instructions));
+            let agents_md_manager = Arc::new(
+                AgentsMdManager::new(instructions).with_startup_discovery(admitted.instructions),
+            );
             // Keep discovery's future out of the large embedded startup/resume frame.
             let plugin_skill_warmup = Box::pin(warm_plugins_and_skills_for_session_init(
                 Arc::clone(&config),
@@ -1585,7 +1618,8 @@ impl Session {
                 plugin_skill_warmup,
                 thread_name_lookup,
             );
-            let (agents_md_result, instruction_warnings) = instruction_refresh;
+            let (agents_md_result, mut instruction_warnings) = instruction_refresh;
+            instruction_warnings.extend(admitted.warnings);
             // TODO(anp): Present AGENTS.md discovery errors more clearly to the user.
             agents_md_result?;
             post_session_configured_events.extend(instruction_warnings.into_iter().map(
