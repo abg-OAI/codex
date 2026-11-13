@@ -1541,7 +1541,7 @@ index 63957c93264bc3f05a964c6af88e8e692b504bef..87a8b46b154f162a62d9b9db5a53f007
      goal_edit::register_root_if_available(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index 771ee486beffe548f252b181a2b599e04c52d80f..9bcabf16d054beeb65ef2047782fc938f1607f7a 100644
+index 771ee486beffe548f252b181a2b599e04c52d80f..7bd57cffe2167def21a4cda15502e6d8dcaf8d3d 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
 @@ -86,11 +86,37 @@ pub async fn inter_agent_communication(
@@ -1604,6 +1604,20 @@ index 771ee486beffe548f252b181a2b599e04c52d80f..9bcabf16d054beeb65ef2047782fc938
      if let Some(reporting) = &sess.outcome_reporting {
          reporting.handoffs.wait().await;
      }
+@@ -555,11 +584,11 @@ pub(super) async fn submission_loop(
+                         },
+                         async {
+                             while let Ok(sub) = rx_sub.recv().await {
+-                                if let Op::InterAgentCommunication { communication, start_options } = sub.op
++                                if let Op::InterAgentCommunication { communication, start_options, accepted } = sub.op
+                                     && sub.message_delivery.as_ref().is_some_and(crate::agent_communication::MessageDelivery::awaits_result_write)
+                                 {
+                                     let mail = crate::PendingAgentMessage::new(communication, sub.message_delivery);
+-                                    inter_agent_communication(&sess, sub.id, mail, start_options).await;
++                                    inter_agent_communication(&sess, sub.id, mail, start_options, accepted).await;
+                                 }
+                             }
+                         },
 @@ -821,11 +850,18 @@ pub(super) async fn submission_loop(
                  Op::InterAgentCommunication {
                      communication,
