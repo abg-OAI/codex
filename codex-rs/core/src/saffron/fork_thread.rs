@@ -88,6 +88,7 @@ pub(super) fn register(session: &Session, turn: &TurnContext, registry: &mut Too
     if !turn.session_source.is_non_root_agent()
         && let Some(host) = session.services.thread_extension_data.get::<ForkHost>()
     {
+        super::promote_subagent::register(registry, host.manager.clone());
         registry.add(Handler { host });
     }
 }
