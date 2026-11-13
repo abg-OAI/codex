@@ -157,6 +157,19 @@ pub enum EnvironmentConfigState {
     Ready(EnvironmentConfig),
     /// The owner could not supply configuration for this environment attachment.
     Failed(String),
+    /// This executor is excluded for the lifetime of the thread and its children.
+    Unavailable,
+}
+
+impl EnvironmentConfigState {
+    /// Explains why this selection cannot grant executor access.
+    pub fn failure_reason(&self) -> Option<&str> {
+        match self {
+            Self::Failed(error) => Some(error),
+            Self::Unavailable => Some("executor is unavailable for this thread"),
+            Self::FromThread | Self::Pending | Self::Ready(_) => None,
+        }
+    }
 }
 
 /// Full Access requires no approvals and unrestricted permissions everywhere selected.
@@ -182,7 +195,9 @@ pub fn has_full_access<'a>(
                         PermissionProfile::Disabled
                     )
                 }
-                EnvironmentConfigState::Pending | EnvironmentConfigState::Failed(_) => false,
+                EnvironmentConfigState::Pending
+                | EnvironmentConfigState::Failed(_)
+                | EnvironmentConfigState::Unavailable => false,
             })
         }
 }
