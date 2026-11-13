@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 4ed0715bcd742a26c479405df4fa20d35ab32b8d..ede5fd599f42bba38225ad2ac7df28c604e83362 100644
+index b27f526e959b289499b4e022c391ff17caa70160..ea2e5b31bfb95e4d86672ad5b9ada5c9918b3e32 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -1586,6 +1586,7 @@ impl ThreadRequestProcessor {
+@@ -1583,6 +1583,7 @@ impl ThreadRequestProcessor {
              }
          }
 
@@ -10,7 +10,7 @@ index 4ed0715bcd742a26c479405df4fa20d35ab32b8d..ede5fd599f42bba38225ad2ac7df28c6
          let environment_requests = environment_requests.unwrap_or_else(|| {
              listener_task_context
                  .thread_manager
-@@ -1608,6 +1609,10 @@ impl ThreadRequestProcessor {
+@@ -1605,6 +1606,10 @@ impl ThreadRequestProcessor {
                  .then_some(ThreadHistoryMode::Paginated)
          });
          let mut thread_extension_init = ExtensionDataInit::new();
@@ -22,10 +22,10 @@ index 4ed0715bcd742a26c479405df4fa20d35ab32b8d..ede5fd599f42bba38225ad2ac7df28c6
              thread_extension_init.insert(selected_capability_roots);
          }
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 9fc8409cd19cab4ecbc3bf1cb9012db0979ffa3d..b2dfe606bbace2f34b2fa4f6dec02cf31fc04f6b 100644
+index 2eb3248a84194773784c839f4bde9ccc9fb1769d..9c50ff2162987cbbdbf48ef9db86e735a54a8342 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
-@@ -458,6 +458,10 @@ impl LocalAgentControl {
+@@ -465,6 +465,10 @@ impl LocalAgentControl {
                      .as_ref()
                      .map(TurnEnvironmentSnapshot::refresh_readiness);
                  for selection in selections {
@@ -36,7 +36,7 @@ index 9fc8409cd19cab4ecbc3bf1cb9012db0979ffa3d..b2dfe606bbace2f34b2fa4f6dec02cf3
                      let environment_id = &selection.environment_id;
                      let invalid_environment = |reason: &str| {
                          CodexErr::InvalidRequest(format!(
-@@ -489,7 +493,9 @@ impl LocalAgentControl {
+@@ -496,7 +500,9 @@ impl LocalAgentControl {
                              continue;
                          }
                          EnvironmentConfigState::Ready(config) => config,
@@ -817,10 +817,10 @@ index 848e8579863044aad8a6607d6c03618c5abf7fa3..e70813f506568dfc71e7f9ba16d24d72
 +    );
 +}
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 516da469bb4e6a2edaf497364d531285996a111a..dee5400eed066eb96d6691c910d0db2c03d7988d 100644
+index ef2d4a6d7e0e3413f73c930a2a228505e8acc8ec..e075dab7b361c434361de61ea75d96ce9010f104 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -151,6 +151,7 @@ mod saffron;
+@@ -150,6 +150,7 @@ mod saffron;
 
  pub use saffron::archive_self::ArchiveRequest as SaffronArchiveRequest;
  pub use saffron::archive_self::install as install_saffron_archive_self;
@@ -885,10 +885,10 @@ index 52a52eb7ea5468d7200c1bc06f95997ed6ed60c0..acdf265011530888ea129652cc46a860
      assert_eq!(
          migration_versions(state.sqlite().state_db_path(), &sqlite).await?,
 diff --git a/codex-rs/core/src/session/environment.rs b/codex-rs/core/src/session/environment.rs
-index e4469afbc9b61d66cddacbffcc91703b7d0e1c71..965d8ba0bfb3ba6988f5c0869dabdf03e52fffff 100644
+index c096d3ae13b04bae0e5a9281889b258888f5dd12..91fa1ce377eb4fab73b0d66c8ea4667f430e8ab3 100644
 --- a/codex-rs/core/src/session/environment.rs
 +++ b/codex-rs/core/src/session/environment.rs
-@@ -59,7 +59,8 @@ pub(super) fn validate_environment_configs(
+@@ -63,7 +63,8 @@ pub(super) fn validate_environment_configs(
          match &selection.config {
              EnvironmentConfigState::FromThread
              | EnvironmentConfigState::Pending
@@ -898,7 +898,7 @@ index e4469afbc9b61d66cddacbffcc91703b7d0e1c71..965d8ba0bfb3ba6988f5c0869dabdf03
              EnvironmentConfigState::Ready(config) => {
                  validate_environment_config(selection, config, features).map_err(|error| {
                      ConstraintError::InvalidValue {
-@@ -83,7 +84,10 @@ pub(super) fn ensure_configs_stay_owner_provided(
+@@ -87,7 +88,10 @@ pub(super) fn ensure_configs_stay_owner_provided(
          environment.config == EnvironmentConfigState::FromThread
              && current.iter().any(|current| {
                  current.environment_id == environment.environment_id
@@ -910,7 +910,7 @@ index e4469afbc9b61d66cddacbffcc91703b7d0e1c71..965d8ba0bfb3ba6988f5c0869dabdf03
              })
      }) {
          return Err(ConstraintError::InvalidValue {
-@@ -297,6 +301,19 @@ impl Session {
+@@ -346,6 +350,19 @@ impl Session {
          let mut current = self.services.turn_environments.selections();
          let mut future = state.session_configuration.environments.clone();
          let inherited = matches!(source, ConfigUpdateSource::Inherited);
@@ -931,10 +931,10 @@ index e4469afbc9b61d66cddacbffcc91703b7d0e1c71..965d8ba0bfb3ba6988f5c0869dabdf03
              environment.has_same_workspace(selection)
                  && (!inherited || matches!(environment.config, EnvironmentConfigState::Pending))
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 7888abb1d5170ed56a2f0111d2485384d32828be..4fa5633bb05d26b36908259dbb171ce4c6863232 100644
+index 03e03fba0c4a5d3f1df0b1733d4f27b35a642449..97b78166d59c94e5cacf5ca5fbedef41a0a7a7ba 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -471,6 +471,10 @@ impl SessionConfiguration {
+@@ -450,6 +450,10 @@ impl SessionConfiguration {
          if let Some(environments) = &updates.environments {
              next_configuration.legacy_fallback_cwd = environments.legacy_fallback_cwd.clone();
              next_configuration.environments = environments.environments.clone();
@@ -945,7 +945,7 @@ index 7888abb1d5170ed56a2f0111d2485384d32828be..4fa5633bb05d26b36908259dbb171ce4
          }
          let cwd_changed = next_configuration.legacy_fallback_cwd != current_cwd;
          if let Some(runtime_workspace_roots) = &updates.runtime_workspace_roots {
-@@ -1189,6 +1193,30 @@ impl Session {
+@@ -1089,6 +1093,30 @@ impl Session {
                      Arc::default()
                  }
              });
@@ -976,7 +976,7 @@ index 7888abb1d5170ed56a2f0111d2485384d32828be..4fa5633bb05d26b36908259dbb171ce4
          let mcp_thread_init = thread_extension_init.clone();
          let thread_extension_data = codex_extension_api::ExtensionData::new_with_init(
              thread_id.to_string(),
-@@ -1642,24 +1670,29 @@ impl Session {
+@@ -1537,24 +1565,29 @@ impl Session {
                  ShellSnapshot::disabled()
              };
              let inherited_environments = inherited_environments.unwrap_or_default();
@@ -1018,7 +1018,7 @@ index 7888abb1d5170ed56a2f0111d2485384d32828be..4fa5633bb05d26b36908259dbb171ce4
              // Keep discovery's future out of the large embedded startup/resume frame.
              let plugin_skill_warmup = Box::pin(warm_plugins_and_skills_for_session_init(
                  Arc::clone(&config),
-@@ -1690,7 +1723,8 @@ impl Session {
+@@ -1585,7 +1618,8 @@ impl Session {
                  plugin_skill_warmup,
                  thread_name_lookup,
              );
@@ -1074,10 +1074,10 @@ index ff09dd5f886b8b45b8fc55d2a68ffa1ff96366ff..2f476ea1599012d386fcef5e896d2fdc
          Some(
              profile
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 85798d5a224ade279098547407f21fe88b9db8ed..39c7dd55b0bc239aabb37becf3ff0cbd3635eead 100644
+index 8b8a19c2f56440d76a58ee9c4521631a31f70169..be6bd1c961b1be688df1be1565fb8bdb888a6276 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -25,6 +25,8 @@ use super::turn_context::TurnEnvironment;
+@@ -26,6 +26,8 @@ use super::turn_context::TurnEnvironment;
  use super::*;
  #[path = "config_refresh_tests.rs"]
  mod config_refresh_tests;
@@ -1103,10 +1103,10 @@ index dfbc6ced17cf0bc030775cc521b1fe5ae23c3a79..b7425807abf71ae5178ffac8e5cd2360
          );
          config.model = Some(
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 3dccff5bd24558e27b34de90bab25836f4ff43d3..6e62686134d02ae21b26e8fbc6e6490903f6e571 100644
+index 739c19a464e87165b2dee2f58c406769a3337b1d..2b3513ac7ead60cfaf9d8cec15d93a49a88c4fa3 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -2586,6 +2586,10 @@ impl ThreadManagerState {
+@@ -2633,6 +2633,10 @@ impl ThreadManagerState {
                  }
              });
          thread_extension_init.insert(isolation);

@@ -275,10 +275,10 @@ index efb5adb26be25866b0d9163c731493ec99856488..e102cb0fa520adbef53c03815f94999a
 +yourself. Do not create sub-agents. After any optional edit, call exactly one
 +supervisor action. After the action returns, end your turn.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 6e578f0908d2529f05dd1f333174b1e8787f0462..8c8c82352ff6b89e365f8383cb3e1c5bfc1b72a7 100644
+index 44a5408af924fd7f25cc1b37377d15b7bba9cfca..523aa4383fab08419cc668846f54ac3f84f4c77d 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-@@ -95,7 +95,8 @@ enum IdleDisposition {
+@@ -96,7 +96,8 @@ enum IdleDisposition {
  struct ActiveHelper {
      thread_id: ThreadId,
      continuation: ContinuationPermit,
@@ -288,7 +288,7 @@ index 6e578f0908d2529f05dd1f333174b1e8787f0462..8c8c82352ff6b89e365f8383cb3e1c5b
      action: Option<Action>,
  }
 
-@@ -128,6 +129,14 @@ impl CheckinStart {
+@@ -129,6 +130,14 @@ impl CheckinStart {
      }
  }
 
@@ -303,7 +303,7 @@ index 6e578f0908d2529f05dd1f333174b1e8787f0462..8c8c82352ff6b89e365f8383cb3e1c5b
  #[derive(Clone)]
  pub(super) struct Snooze {
      wake: GoalWake,
-@@ -247,7 +256,7 @@ pub(crate) async fn start_checkin(
+@@ -248,7 +257,7 @@ pub(crate) async fn start_checkin(
              (
                  active.thread_id,
                  active.continuation,
@@ -312,7 +312,7 @@ index 6e578f0908d2529f05dd1f333174b1e8787f0462..8c8c82352ff6b89e365f8383cb3e1c5b
              )
          });
          (state.starting, active)
-@@ -343,7 +352,8 @@ pub(crate) async fn start_checkin(
+@@ -344,7 +353,8 @@ pub(crate) async fn start_checkin(
              runtime.state.lock().await.active = Some(ActiveHelper {
                  thread_id: helper_id,
                  continuation,
@@ -322,7 +322,7 @@ index 6e578f0908d2529f05dd1f333174b1e8787f0462..8c8c82352ff6b89e365f8383cb3e1c5b
                  action: None,
              });
              settle_persisted_wake(parent, goal, &runtime, continuation).await;
-@@ -376,7 +386,9 @@ pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: Contin
+@@ -377,7 +387,9 @@ pub(crate) async fn claim_root_continuation(parent: &Arc<Session>, owner: Contin
          state.starting = None;
          state
              .active
@@ -333,7 +333,7 @@ index 6e578f0908d2529f05dd1f333174b1e8787f0462..8c8c82352ff6b89e365f8383cb3e1c5b
              .map(|active| active.thread_id)
      };
      drop(_transition);
-@@ -492,11 +504,78 @@ pub(super) async fn select_action(
+@@ -493,11 +505,78 @@ pub(super) async fn select_action(
      if active.action.is_some() {
          return Err("a supervisor action was already selected for this check-in".to_string());
      }

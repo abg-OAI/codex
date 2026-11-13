@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 90d089405b3df06bb015cb159ac2a57c4798be10..143e251f345d322a5c1e5d450b25a6f71301c963 100644
+index 109cb6e4dd64c7572578a7282cd2cccaad46b899..d65220b69d52982e0fc0b9fc2b6b7b0471b9e05b 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -147,6 +147,7 @@ mod skills;
+@@ -146,6 +146,7 @@ mod skills;
  pub(crate) use skills::maybe_emit_implicit_skill_invocation;
  #[cfg(test)]
  pub(crate) use skills::skills_load_input_from_config;
@@ -107,10 +107,10 @@ index 315dbee40276aa415982ec7ec00689526eceba43..343d94e16133e616a9393fc363387b92
  ///
  /// In production builds this value should remain at its default (`false`) and
 diff --git a/codex-rs/core/tests/suite/mod.rs b/codex-rs/core/tests/suite/mod.rs
-index b1f7a42313f7ef49289038ee839cc986643afd7b..9ad011425cf01cae962ce17960eaf507e6525a35 100644
+index 756524d6c56f58a9629775f8c54c948265d9db09..065a44d64e850607f2960a075daea3c3f66b9cdc 100644
 --- a/codex-rs/core/tests/suite/mod.rs
 +++ b/codex-rs/core/tests/suite/mod.rs
-@@ -218,6 +218,7 @@ mod runtime_auth;
+@@ -219,6 +219,7 @@ mod runtime_auth;
  mod runtime_auth_denials;
  mod safety_buffering;
  mod safety_check_downgrade;
