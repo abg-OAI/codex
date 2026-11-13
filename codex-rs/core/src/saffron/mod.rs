@@ -6,6 +6,7 @@
 //! only the integration points that upstream registration needs.
 
 pub(crate) mod await_exec;
+pub(crate) mod compaction_requests;
 mod goal_edit;
 pub(crate) mod goal_resume;
 pub(crate) mod goal_scheduler;
