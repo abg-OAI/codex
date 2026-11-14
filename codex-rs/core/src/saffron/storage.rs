@@ -5,6 +5,9 @@
 //! module owns the complete storage contract so upstream integration points
 //! need only provide the configured SQLite home.
 
+mod executor_exclusions;
+pub(super) use executor_exclusions::ExecutorExclusion;
+
 use std::sync::LazyLock;
 
 use codex_protocol::ThreadId;
