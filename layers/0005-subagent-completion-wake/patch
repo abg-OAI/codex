@@ -1484,10 +1484,10 @@ index 66eb053fb12a5665201852fda3a4864b79b0cfe6..dd7618be8749021dc6c491b8636d2813
  fn reservation_drop_releases_slot() {
      let registry = Arc::new(AgentRegistry::default());
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 49631ea69e4902a39af62c0b01eb1b36da0915f4..2a55b8fc5eb621ed4abb8da39a066e600389df12 100644
+index dbf1cb41fc429837e8b7fb7623cbc3d864d94fe6..9b988818c6445ac3e85ab39cf525c5ac4b584e24 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -394,6 +394,17 @@ impl CodexThread {
+@@ -396,6 +396,17 @@ impl CodexThread {
          self.io.shutdown_and_wait().await
      }
 
@@ -1505,7 +1505,7 @@ index 49631ea69e4902a39af62c0b01eb1b36da0915f4..2a55b8fc5eb621ed4abb8da39a066e60
      /// Wait until the underlying session loop has terminated.
      pub async fn wait_until_terminated(&self) {
          self.io.session_loop_termination.clone().await;
-@@ -499,7 +510,7 @@ impl CodexThread {
+@@ -501,7 +512,7 @@ impl CodexThread {
      /// deferred core task is not discarded before its durable state changes.
      #[doc(hidden)]
      pub async fn should_retain_while_idle(&self) -> bool {
@@ -1660,7 +1660,7 @@ index 771ee486beffe548f252b181a2b599e04c52d80f..7bd57cffe2167def21a4cda15502e6d8
                      review(&sess, &config, sub.id.clone(), review_request).await;
                      false
 diff --git a/codex-rs/core/src/session/input_queue.rs b/codex-rs/core/src/session/input_queue.rs
-index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f5956547f 100644
+index a80ab9436fa68272f2278451f23ce194afddef97..da8c7847cd396716ca60da28af8793d842abcc6d 100644
 --- a/codex-rs/core/src/session/input_queue.rs
 +++ b/codex-rs/core/src/session/input_queue.rs
 @@ -1,5 +1,6 @@
@@ -1670,7 +1670,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
  use crate::state::ActiveTurn;
  use crate::state::MailboxDeliveryPhase;
  use crate::state::TurnState;
-@@ -136,6 +137,7 @@ pub(crate) struct InputQueue {
+@@ -138,6 +139,7 @@ pub(crate) struct InputQueue {
  pub(crate) struct PendingMailboxCommunication {
      pub(crate) communication: crate::PendingAgentMessage,
      start_options: TurnStartOptions,
@@ -1678,7 +1678,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
      _diagnostics_guard: GaugeGuard,
  }
 
-@@ -176,6 +178,7 @@ impl InputQueue {
+@@ -178,6 +180,7 @@ impl InputQueue {
                      .map(|communication| PendingMailboxCommunication {
                          communication,
                          start_options: TurnStartOptions::default(),
@@ -1686,7 +1686,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
                          _diagnostics_guard: PENDING_MAILBOX_MESSAGES.track(),
                      }),
              );
-@@ -209,6 +212,32 @@ impl InputQueue {
+@@ -211,6 +214,32 @@ impl InputQueue {
          &self,
          communication: crate::PendingAgentMessage,
          start_options: TurnStartOptions,
@@ -1719,7 +1719,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
      ) {
          let mut pending = self.mailbox_pending_mails.lock().await;
          // Mail retained while unloaded precedes new submissions to the loaded session.
-@@ -216,6 +245,7 @@ impl InputQueue {
+@@ -218,6 +247,7 @@ impl InputQueue {
          pending.push_back(PendingMailboxCommunication {
              communication,
              start_options,
@@ -1727,7 +1727,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
              _diagnostics_guard: PENDING_MAILBOX_MESSAGES.track(),
          });
          self.activity_tx.send_replace(InputQueueActivity::Mailbox);
-@@ -255,6 +285,14 @@ impl InputQueue {
+@@ -257,6 +287,14 @@ impl InputQueue {
              })
      }
 
@@ -1742,7 +1742,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
      pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
          self.mailbox_pending_mails
              .lock()
-@@ -269,6 +307,26 @@ impl InputQueue {
+@@ -271,6 +309,26 @@ impl InputQueue {
          pending.drain(..).collect()
      }
 
@@ -1769,7 +1769,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
      pub(crate) async fn pending_wake_options(&self) -> Option<TurnStartOptions> {
          let mut mails = self.mailbox_pending_mails.lock().await;
          self.read_mailbox(&mut mails);
-@@ -282,6 +340,7 @@ impl InputQueue {
+@@ -284,6 +342,7 @@ impl InputQueue {
      fn trigger_turn_options(
          pending_mails: &VecDeque<PendingMailboxCommunication>,
      ) -> Option<TurnStartOptions> {
@@ -1777,7 +1777,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
          // A later follow-up supersedes the earlier choice, including an omitted choice.
          let mut start_options = pending_mails
              .iter()
-@@ -310,11 +369,35 @@ impl InputQueue {
+@@ -312,11 +371,35 @@ impl InputQueue {
      }
 
      pub(crate) async fn drain_mailbox_input_items(&self) -> (Vec<TurnInput>, TurnStartOptions) {
@@ -1816,7 +1816,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
              .map(|mail| TurnInput::InterAgentCommunication(mail.communication))
              .collect();
          (items, start_options)
-@@ -364,6 +447,7 @@ impl InputQueue {
+@@ -366,6 +449,7 @@ impl InputQueue {
          let pending_input = {
              let mut turn_state = active_turn.turn_state.lock().await;
              turn_state.clear_pending_waiters();
@@ -1824,7 +1824,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
              std::mem::take(&mut turn_state.pending_input)
          };
          // A terminal result still in the queue has no writer yet. Keep it available
-@@ -384,6 +468,7 @@ impl InputQueue {
+@@ -386,6 +470,7 @@ impl InputQueue {
                  pending.push_front(PendingMailboxCommunication {
                      communication,
                      start_options: TurnStartOptions::default(),
@@ -1832,7 +1832,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
                      _diagnostics_guard: PENDING_MAILBOX_MESSAGES.track(),
                  });
              }
-@@ -479,7 +564,7 @@ impl InputQueue {
+@@ -481,7 +566,7 @@ impl InputQueue {
          &self,
          active_turn: &Mutex<Option<ActiveTurn>>,
      ) -> (Vec<TurnInput>, TurnStartOptions) {
@@ -1841,7 +1841,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
              let mut active = active_turn.lock().await;
              match active.as_mut() {
                  Some(active_turn) => {
-@@ -491,15 +576,25 @@ impl InputQueue {
+@@ -493,15 +578,25 @@ impl InputQueue {
                      } else {
                          Vec::new()
                      };
@@ -1870,7 +1870,7 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
          if pending_input.is_empty() {
              (mailbox_items, start_options)
          } else {
-@@ -835,6 +930,68 @@ mod tests {
+@@ -837,6 +932,68 @@ mod tests {
          assert!(!input_queue.has_pending_mailbox_items().await);
      }
 
@@ -1940,10 +1940,10 @@ index f5aa2f69ef7971811f84e4908748c4eac640270c..f231f9ec3c697e387de25c21488ad99f
      async fn input_queue_uses_unambiguous_trigger_parent_and_first_root() {
          let (parent, peer, root, root2) = (Some("a"), Some("b"), Some("r"), Some("s"));
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 02831284f28823c5c673bd9f3c3d140814e3c32d..fae9c3530acf5ec46a33520e93c3f7c86aab02e4 100644
+index c2a7dc042512bd351c918cf735773041c7d27995..78cf4bb41e19ed415af31ae680be80501e017fe4 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2879,6 +2879,10 @@ impl Session {
+@@ -2868,6 +2868,10 @@ impl Session {
          if crate::saffron::goal_supervisor::is_helper_source(&turn_context.session_source) {
              return;
          }
@@ -1954,7 +1954,7 @@ index 02831284f28823c5c673bd9f3c3d140814e3c32d..fae9c3530acf5ec46a33520e93c3f7c8
 
          let outcome = AgentTurnOutcome {
              thread_id: self.thread_id,
-@@ -2891,6 +2895,7 @@ impl Session {
+@@ -2880,6 +2884,7 @@ impl Session {
                  .cloned(),
              status,
              error_info,
@@ -1963,10 +1963,10 @@ index 02831284f28823c5c673bd9f3c3d140814e3c32d..fae9c3530acf5ec46a33520e93c3f7c8
          let host_outcome = if notify_native_parent {
              let host_outcome = reporter.is_some().then(|| outcome.clone());
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index db260bfd21f09be2e5fe899124b92ab6ed223e03..b7cd40a3ae6ff2fb0aefe8e49dd6c515289eb511 100644
+index 017d5124dab97b9e0bde6ef5902dedcca3550c34..55a320bcb18a800bc12e9227722887315ffd10b2 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -679,6 +679,20 @@ impl Session {
+@@ -668,6 +668,20 @@ impl Session {
          self.services.agent_control.identity()
      }
 
@@ -1988,10 +1988,10 @@ index db260bfd21f09be2e5fe899124b92ab6ed223e03..b7cd40a3ae6ff2fb0aefe8e49dd6c515
          let state = self.state.lock().await;
          state.session_configuration.originator.clone()
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 3c9e91b6fadfb6499325ef4c7d3b82fb6926a1c6..fb50c5976f3efb7ae161f2538513bd3f4c2d93d1 100644
+index 470d28d3dcae21684e1ab1c1dfe30306b7edc302..49a2391ee6852883ffe1c04fa624560ca2819ecd 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
-@@ -496,6 +496,12 @@ async fn start_or_steer(
+@@ -508,6 +508,12 @@ async fn start_or_steer(
                  .await;
              let mut task_input =
                  merge_additional_context_input(session, &turn_context, additional_context).await;
@@ -2004,7 +2004,7 @@ index 3c9e91b6fadfb6499325ef4c7d3b82fb6926a1c6..fb50c5976f3efb7ae161f2538513bd3f
              if has_explicit_input {
                  task_input.push(
                      pending_turn_input(
-@@ -651,6 +657,12 @@ async fn start_if_idle(
+@@ -663,6 +669,12 @@ async fn start_if_idle(
      let mut task_input =
          merge_additional_context_input(session, &turn_context, additional_context).await;
      let sender_messages = capture_sender_user_messages(session, &mut input).await;
@@ -2287,10 +2287,10 @@ index e2fd1b5ad916df5526ec6634383ee9f665715082..b1233423cf74b3f2a06201033f85a337
      let first_mail = "First deferred worker update.";
      let second_mail = "Worker update after stop.";
 diff --git a/codex-rs/core/tests/suite/compact_remote.rs b/codex-rs/core/tests/suite/compact_remote.rs
-index 2f65cf709d25d9205f7ba3f7181479fceba33c87..b652e5f364df1fa658b68342ca348226ce207ead 100644
+index 71ca48832dcb322df3c93c6e1c21ced9962ef7cf..72316ed1c9d9260c18a3b885013b698b2ad101b0 100644
 --- a/codex-rs/core/tests/suite/compact_remote.rs
 +++ b/codex-rs/core/tests/suite/compact_remote.rs
-@@ -1134,6 +1134,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
+@@ -1130,6 +1130,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -2298,7 +2298,7 @@ index 2f65cf709d25d9205f7ba3f7181479fceba33c87..b652e5f364df1fa658b68342ca348226
          })
          .await?;
      let channel_progress = "Message Type: CHANNEL_POST\nSender: /root/child\nChannel: progress\nMessage ID: aaaabbbbcccc\nThread ID: aaaabbbbcccc\nPayload:\nchild channel progress";
-@@ -1147,6 +1148,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
+@@ -1143,6 +1144,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -2306,7 +2306,7 @@ index 2f65cf709d25d9205f7ba3f7181479fceba33c87..b652e5f364df1fa658b68342ca348226
          })
          .await?;
      codex
-@@ -1159,6 +1161,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
+@@ -1155,6 +1157,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -2314,7 +2314,7 @@ index 2f65cf709d25d9205f7ba3f7181479fceba33c87..b652e5f364df1fa658b68342ca348226
          })
          .await?;
      let delegated_task_ciphertext = format!("delegated compact task{}", "x".repeat(40_000));
-@@ -1172,6 +1175,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
+@@ -1168,6 +1171,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2322,7 +2322,7 @@ index 2f65cf709d25d9205f7ba3f7181479fceba33c87..b652e5f364df1fa658b68342ca348226
          })
          .await?;
      wait_for_turn_complete(&codex).await;
-@@ -1188,6 +1192,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
+@@ -1184,6 +1188,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2812,7 +2812,7 @@ index d5634b3be00f1531b4caaf81f1f7e87d9f5e3fcf..9168c2745626287e9a661c267084dcf1
      Ok(())
  }
 diff --git a/codex-rs/core/tests/suite/turn_input_submission.rs b/codex-rs/core/tests/suite/turn_input_submission.rs
-index 1c505abfd797c5983c1fa8e879b767d6a67cecca..8ee62595e192093f4ca018a9a105d4b5045410a6 100644
+index 59168fec8b024d1283ca12349bf749e781ae6b52..2db84163fdb5991e16364608c1633ce9904d3ff0 100644
 --- a/codex-rs/core/tests/suite/turn_input_submission.rs
 +++ b/codex-rs/core/tests/suite/turn_input_submission.rs
 @@ -198,6 +198,7 @@ async fn turn_extension_data_is_captured_for_automatic_turns() -> anyhow::Result
@@ -2844,10 +2844,10 @@ index f24b30c550552216ac094c4fe45293361508f579..d4ba9ae2123d842f157e3e7d8606f161
          .await?;
      codex.submit(Op::RealtimeConversationListVoices).await?;
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index 8d4b3fe8be6b245f7dddc7fab5c4f33d0d5671af..b3bffc63aaeb2e3af1d8c8f15c0f41a5fe016eec 100644
+index cb89b2515091062b95d2661fc64ac569f75e3394..177f5eccc8ea6a1fcae4e5ffc3510053c948957d 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
-@@ -832,6 +832,9 @@ pub enum Op {
+@@ -836,6 +836,9 @@ pub enum Op {
      InterAgentCommunication {
          communication: InterAgentCommunication,
          start_options: TurnStartOptions,
@@ -2857,7 +2857,7 @@ index 8d4b3fe8be6b245f7dddc7fab5c4f33d0d5671af..b3bffc63aaeb2e3af1d8c8f15c0f41a5
      },
 
      /// Approve a command execution
-@@ -941,6 +944,15 @@ pub enum Op {
+@@ -945,6 +948,15 @@ pub enum Op {
      /// Request to shut down codex instance.
      Shutdown,
 
@@ -2873,7 +2873,7 @@ index 8d4b3fe8be6b245f7dddc7fab5c4f33d0d5671af..b3bffc63aaeb2e3af1d8c8f15c0f41a5
      /// Execute a user-initiated one-off shell command (triggered by "!cmd").
      ///
      /// The command string is executed using the user's default shell and may
-@@ -1157,6 +1169,7 @@ impl Op {
+@@ -1161,6 +1173,7 @@ impl Op {
              Self::Review { .. } => "review",
              Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
              Self::Shutdown => "shutdown",

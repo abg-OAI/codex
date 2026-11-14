@@ -1,8 +1,8 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 9ff507f98fad8f3b7852ddb8ec01a8c001588dac..6396a29a05ea42b8a0364e569388f4b5f163a546 100644
+index 7ff1484ad7814ea47c0e75fda8b9341f7d268235..ba2a0339cea0644dfe2e731cb836a1a190ec2e56 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -3129,6 +3129,7 @@ dependencies = [
+@@ -3142,6 +3142,7 @@ dependencies = [
   "sha1 0.10.6",
   "shlex",
   "similar",
@@ -23,7 +23,7 @@ index ff31e9e3954387dc395f2e653baa2d7471f1a475..8a0a4f864043a011362044b830ab7bd4
      codex_git_attribution::install(
          &mut builder,
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 4bf10fc6ccd2c95824020ae2a09300977df41d4e..90caddabcff5be1722c877398cbe725ae480f909 100644
+index 33cf7b80c3fca73a8cccda8719a342f1ff06a0f4..e4de4bd130b1ce9aa9318730944cddcda4076516 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -79,6 +79,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
@@ -730,10 +730,10 @@ index 8d4e5c366313bd09ea9016247aeaf5e7229f6214..9eea479bb1357324bfa3aef6d781198b
          .await
          .expect_err("fork requires a parent spawn call id");
 diff --git a/codex-rs/core/src/agent/history.rs b/codex-rs/core/src/agent/history.rs
-index d985b54344ec6ba88d94520c4214b1ab05536f30..e34e93332008f7eb647954b4a60ac8c6d44b8cdd 100644
+index da2153852615b860e019119dde54e01e8faa8744..3a2ff1ec56f7ef33289e5686cba5263f7ef2b051 100644
 --- a/codex-rs/core/src/agent/history.rs
 +++ b/codex-rs/core/src/agent/history.rs
-@@ -282,7 +282,9 @@ pub(super) async fn prepare_forked_history(
+@@ -330,7 +330,9 @@ pub(super) async fn prepare_forked_history(
          if matches!(response_item, ResponseItem::AdditionalTools { .. }) {
              return preserve_context_baselines;
          }
@@ -744,7 +744,7 @@ index d985b54344ec6ba88d94520c4214b1ab05536f30..e34e93332008f7eb647954b4a60ac8c6
              return false;
          }
          if !retain_forked_developer_message(
-@@ -342,7 +344,8 @@ pub(super) async fn prepare_forked_history(
+@@ -390,7 +392,8 @@ pub(super) async fn prepare_forked_history(
      };
      forked_rollout_items.retain_mut(|item| {
          let keep = (preserve_fork_prefix && matches!(item, RolloutItem::ResponseItem(_)))
@@ -978,10 +978,10 @@ index 55699aae2ea6c37372a868835c9a8460b47d1901..e8f7db68d62c92401db8826a4c786b51
 
  #[derive(Clone, Debug, PartialEq, Eq)]
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 1ad0ce3d6849dca95813db4469993f7c04e98d4e..49631ea69e4902a39af62c0b01eb1b36da0915f4 100644
+index 0e8bde3ddee5a705921550b8dbb53ede2c8766f7..dbf1cb41fc429837e8b7fb7623cbc3d864d94fe6 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -476,6 +476,38 @@ impl CodexThread {
+@@ -478,6 +478,38 @@ impl CodexThread {
              .await
      }
 
@@ -1020,7 +1020,7 @@ index 1ad0ce3d6849dca95813db4469993f7c04e98d4e..49631ea69e4902a39af62c0b01eb1b36
      #[doc(hidden)]
      pub async fn ensure_rollout_materialized(&self) {
          self.session
-@@ -1518,6 +1550,10 @@ impl CodexThread {
+@@ -1552,6 +1584,10 @@ impl CodexThread {
          let multi_agent_version = self
              .multi_agent_version()
              .unwrap_or_else(|| config.multi_agent_version_from_features());
@@ -1110,10 +1110,10 @@ index 670d1f484bd4968050ff2464deb94840304ad107..771ee486beffe548f252b181a2b599e0
          || sess.features.enabled(Feature::WakeOnAgentMessages)
          || sess.has_outstanding_durable_sleep()
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 5d02f2b6d57a30a53aab185045c1892c9cf793c6..02831284f28823c5c673bd9f3c3d140814e3c32d 100644
+index bc6462c155bc4ebc0bf42d23ff59dfa70108df1a..c2a7dc042512bd351c918cf735773041c7d27995 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -2681,6 +2681,7 @@ impl Session {
+@@ -2670,6 +2670,7 @@ impl Session {
 
      /// Record a terminal CodexErr before the app-server completion notification is reduced.
      pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {
@@ -1121,7 +1121,7 @@ index 5d02f2b6d57a30a53aab185045c1892c9cf793c6..02831284f28823c5c673bd9f3c3d1408
          self.services
              .analytics_events_client
              .track_turn_codex_error(TurnCodexErrorFact::from_codex_err(
-@@ -2875,6 +2876,9 @@ impl Session {
+@@ -2864,6 +2865,9 @@ impl Session {
          if !is_final(&status) {
              return;
          }
@@ -1132,10 +1132,10 @@ index 5d02f2b6d57a30a53aab185045c1892c9cf793c6..02831284f28823c5c673bd9f3c3d1408
          let outcome = AgentTurnOutcome {
              thread_id: self.thread_id,
 diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
-index 794fa420c0c6280311ee45a9c1ec21fec55b6c56..dfbc6ced17cf0bc030775cc521b1fe5ae23c3a79 100644
+index ebf12d21ddd9beabf5d88ad0b4ac448396ca618a..7e31273b58b1c95260204a9a278fcb0c88d39c9b 100644
 --- a/codex-rs/core/src/session/turn_context.rs
 +++ b/codex-rs/core/src/session/turn_context.rs
-@@ -1077,6 +1077,22 @@ impl Session {
+@@ -1069,6 +1069,22 @@ impl Session {
          config
      }
 

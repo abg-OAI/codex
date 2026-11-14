@@ -829,7 +829,7 @@ index ef2d4a6d7e0e3413f73c930a2a228505e8acc8ec..e075dab7b361c434361de61ea75d96ce
 
  /// Installs Saffrodex-owned model guidance that accompanies goal tools.
 diff --git a/codex-rs/core/src/mcp.rs b/codex-rs/core/src/mcp.rs
-index 3331dbfa7bc7fc939aa35696119c6cff5895f3bc..acd35abb77a97932f4c1e7c01765da35b917969c 100644
+index 8a057989dde37a599bb2070e657cce93008f1cc3..b7ee79c81030b4c10c031d71839d75f027509099 100644
 --- a/codex-rs/core/src/mcp.rs
 +++ b/codex-rs/core/src/mcp.rs
 @@ -79,9 +79,9 @@ impl<'a> McpEnvironmentScope<'a> {
@@ -931,10 +931,10 @@ index c096d3ae13b04bae0e5a9281889b258888f5dd12..91fa1ce377eb4fab73b0d66c8ea4667f
              environment.has_same_workspace(selection)
                  && (!inherited || matches!(environment.config, EnvironmentConfigState::Pending))
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 03e03fba0c4a5d3f1df0b1733d4f27b35a642449..97b78166d59c94e5cacf5ca5fbedef41a0a7a7ba 100644
+index e244b1d975325e9b98c233070eb1cc203839a2df..699fdf3ac8ef715955e8c34bcc071ad0f846b32e 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -450,6 +450,10 @@ impl SessionConfiguration {
+@@ -439,6 +439,10 @@ impl SessionConfiguration {
          if let Some(environments) = &updates.environments {
              next_configuration.legacy_fallback_cwd = environments.legacy_fallback_cwd.clone();
              next_configuration.environments = environments.environments.clone();
@@ -945,7 +945,7 @@ index 03e03fba0c4a5d3f1df0b1733d4f27b35a642449..97b78166d59c94e5cacf5ca5fbedef41
          }
          let cwd_changed = next_configuration.legacy_fallback_cwd != current_cwd;
          if let Some(runtime_workspace_roots) = &updates.runtime_workspace_roots {
-@@ -1089,6 +1093,30 @@ impl Session {
+@@ -1085,6 +1089,30 @@ impl Session {
                      Arc::default()
                  }
              });
@@ -976,7 +976,7 @@ index 03e03fba0c4a5d3f1df0b1733d4f27b35a642449..97b78166d59c94e5cacf5ca5fbedef41
          let mcp_thread_init = thread_extension_init.clone();
          let thread_extension_data = codex_extension_api::ExtensionData::new_with_init(
              thread_id.to_string(),
-@@ -1537,24 +1565,29 @@ impl Session {
+@@ -1533,24 +1561,29 @@ impl Session {
                  ShellSnapshot::disabled()
              };
              let inherited_environments = inherited_environments.unwrap_or_default();
@@ -1018,7 +1018,7 @@ index 03e03fba0c4a5d3f1df0b1733d4f27b35a642449..97b78166d59c94e5cacf5ca5fbedef41
              // Keep discovery's future out of the large embedded startup/resume frame.
              let plugin_skill_warmup = Box::pin(warm_plugins_and_skills_for_session_init(
                  Arc::clone(&config),
-@@ -1585,7 +1618,8 @@ impl Session {
+@@ -1581,7 +1614,8 @@ impl Session {
                  plugin_skill_warmup,
                  thread_name_lookup,
              );
@@ -1074,7 +1074,7 @@ index ff09dd5f886b8b45b8fc55d2a68ffa1ff96366ff..2f476ea1599012d386fcef5e896d2fdc
          Some(
              profile
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 8b8a19c2f56440d76a58ee9c4521631a31f70169..be6bd1c961b1be688df1be1565fb8bdb888a6276 100644
+index 30defab43aa817772248b01f664dc683a9ee574a..97bfbfe81601dda58867b8ed17154e9e9216de5e 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
 @@ -26,6 +26,8 @@ use super::turn_context::TurnEnvironment;
@@ -1087,10 +1087,10 @@ index 8b8a19c2f56440d76a58ee9c4521631a31f70169..be6bd1c961b1be688df1be1565fb8bdb
  use crate::agents_md_manager::SessionInstructions;
  use crate::config::ConfigBuilder;
 diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
-index dfbc6ced17cf0bc030775cc521b1fe5ae23c3a79..b7425807abf71ae5178ffac8e5cd2360a69eaba1 100644
+index 7e31273b58b1c95260204a9a278fcb0c88d39c9b..88757eb8f94e823e139780dd9b3b3b92dae5a57c 100644
 --- a/codex-rs/core/src/session/turn_context.rs
 +++ b/codex-rs/core/src/session/turn_context.rs
-@@ -1064,7 +1064,10 @@ impl Session {
+@@ -1056,7 +1056,10 @@ impl Session {
                  .iter()
                  .find(|environment| {
                      environment.environment_id == codex_exec_server::LOCAL_ENVIRONMENT_ID

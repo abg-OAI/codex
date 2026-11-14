@@ -14,31 +14,31 @@ index b84082fff7c4ea1a113a6169bc0a1ec90d2c0507..b401f382d03b3945a97f138451e5b0d2
                                      // Tool bodies are not sender authorization evidence.
                                      TruncationPolicy::Bytes(0),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index 4aa7e07adf69cb47a47340f6a506a41e363634bb..f77f9f046d59c2716dbc76e9c865a57776b93dd5 100644
+index b980c8ff880c54dea8b816eb73c53ffe66471a85..2052a0c64a56fc0f82b01f300f015b6779c20d2e 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
-@@ -20,6 +20,7 @@ use crate::hook_runtime::run_post_compact_hooks;
+@@ -22,6 +22,7 @@ use crate::hook_runtime::run_post_compact_hooks;
  use crate::hook_runtime::run_pre_compact_hooks;
  use crate::responses_metadata::CodexResponsesMetadata;
  use crate::responses_metadata::CompactionTurnMetadata;
 +use crate::saffron::compaction_requests::CompactedInput;
+ use crate::session::FileAudioDurations;
  use crate::session::RequestEffortUsage;
  use crate::session::session::Session;
- use crate::session::step_context::StepContext;
-@@ -392,7 +393,11 @@ async fn run_compact_task_inner_impl(
-         get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default()
+@@ -395,7 +396,11 @@ async fn run_compact_task_inner_impl(
      };
      let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
--    let user_messages = collect_annotated_user_messages(history_items);
+
+-    let mut new_history = build_compacted_history(&history_snapshot, &summary_text);
 +    let agent_path = turn_context
 +        .session_source
 +        .get_agent_path()
 +        .unwrap_or_else(codex_protocol::AgentPath::root);
-+    let user_messages = collect_annotated_user_messages(history_items, &agent_path);
-
-     let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
++    let mut new_history = build_compacted_history(&history_snapshot, &summary_text, &agent_path);
      if let Some(summary_item) = new_history.last_mut() {
-@@ -599,19 +604,39 @@ pub(crate) struct CompactedUserMessage<'a> {
+         // This replacement history skips `record_conversation_items`; only the appended summary
+         // belongs to this compaction turn.
+@@ -603,20 +608,43 @@ pub(crate) struct CompactedUserMessage<'a> {
  }
 
  #[cfg(test)]
@@ -54,61 +54,78 @@ index 4aa7e07adf69cb47a47340f6a506a41e363634bb..f77f9f046d59c2716dbc76e9c865a577
          .collect()
  }
 
--pub(crate) fn collect_annotated_user_messages(
+-fn annotated_user_messages(
 -    items: &[ResponseItemEnvelope],
--) -> Vec<CompactedUserMessage<'_>> {
-+/// Collects ordinary user input and admitted requests in source history order.
-+/// Parent instructions must address the supplied agent, including on rollout replay.
-+pub(crate) fn collect_annotated_user_messages<'a>(
+-) -> impl DoubleEndedIterator<Item = (usize, CompactedUserMessage<'_>)> {
+-    items.iter().enumerate().filter_map(|(position, envelope)| {
+-        let message = compacted_user_message(&envelope.item, envelope.metadata.as_ref())?;
+-        Some((position, message))
+-    })
++/// Visits ordinary user input and this agent's admitted requests in source order.
++/// Source positions also identify inputs selected by the separate client-retention budget.
++fn annotated_user_messages<'a>(
 +    items: &'a [ResponseItemEnvelope],
 +    agent_path: &codex_protocol::AgentPath,
-+) -> Vec<CompactedInput<'a>> {
-     items
-         .iter()
--        .filter_map(|envelope| compacted_user_message(&envelope.item, envelope.metadata.as_ref()))
-+        .filter_map(|envelope| {
-+            if crate::saffron::compaction_requests::is_request(
++) -> impl DoubleEndedIterator<Item = (usize, CompactedInput<'a>)> {
++    items
++        .iter()
++        .enumerate()
++        .filter_map(move |(position, envelope)| {
++            let input = if crate::saffron::compaction_requests::is_request(
 +                &envelope.item,
 +                envelope.metadata.as_ref(),
 +                agent_path,
 +            ) {
-+                Some(CompactedInput::Request {
++                CompactedInput::Request {
 +                    item: &envelope.item,
 +                    metadata: envelope.metadata.as_ref(),
-+                })
++                }
 +            } else {
-+                compacted_user_message(&envelope.item, envelope.metadata.as_ref())
-+                    .map(CompactedInput::User)
-+            }
++                CompactedInput::User(compacted_user_message(
++                    &envelope.item,
++                    envelope.metadata.as_ref(),
++                )?)
++            };
++            Some((position, input))
 +        })
-         .collect()
  }
 
-@@ -713,9 +738,10 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
+ fn compacted_user_message<'a>(
+@@ -717,23 +745,28 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
      compacted_history
  }
 
 +/// Retains recent input under the local token budget and appends the summary last.
  pub(crate) fn build_compacted_history(
-     initial_context: Vec<ResponseItemEnvelope>,
--    user_messages: &[CompactedUserMessage<'_>],
-+    user_messages: &[CompactedInput<'_>],
+     history: &ContextManager,
      summary_text: &str,
++    agent_path: &codex_protocol::AgentPath,
  ) -> Vec<ResponseItemEnvelope> {
      build_compacted_history_with_limit(
-@@ -726,9 +752,10 @@ pub(crate) fn build_compacted_history(
+         history.annotated_items(),
+         summary_text,
+         COMPACT_USER_MESSAGE_MAX_TOKENS,
+         &history.file_audio_durations,
++        agent_path,
      )
  }
 
 +/// Shares one chronological budget across ordinary user input and admitted requests.
  fn build_compacted_history_with_limit(
-     mut history: Vec<ResponseItemEnvelope>,
--    user_messages: &[CompactedUserMessage<'_>],
-+    user_messages: &[CompactedInput<'_>],
+     items: &[ResponseItemEnvelope],
      summary_text: &str,
      max_tokens: usize,
+     audio_durations: &FileAudioDurations,
++    agent_path: &codex_protocol::AgentPath,
  ) -> Vec<ResponseItemEnvelope> {
-@@ -739,6 +766,26 @@ fn build_compacted_history_with_limit(
+     // An injected user message can qualify under both budgets. Its position
+     // identifies the occurrence even if another message has the same client ID.
+@@ -744,10 +777,34 @@ fn build_compacted_history_with_limit(
+     );
+     if max_tokens > 0 {
+         let mut remaining = max_tokens;
+-        for (position, message) in annotated_user_messages(items).rev() {
++        for (position, message) in annotated_user_messages(items, agent_path).rev() {
              if remaining == 0 {
                  break;
              }
@@ -119,14 +136,18 @@ index 4aa7e07adf69cb47a47340f6a506a41e363634bb..f77f9f046d59c2716dbc76e9c865a577
 +                        usize::try_from(crate::context_manager::estimate_item_token_count(item))
 +                            .unwrap_or(usize::MAX)
 +                            .max(1);
++                    if selected.contains_key(&position) {
++                        remaining = remaining.saturating_sub(tokens);
++                        continue;
++                    }
 +                    let envelope = ResponseItemEnvelope {
-+                        item: (*item).clone(),
++                        item: item.clone(),
 +                        metadata: metadata.cloned(),
 +                    };
 +                    if let Some(retained) =
 +                        crate::saffron::compaction_requests::retain(envelope, remaining)
 +                    {
-+                        selected_messages.push(retained);
++                        selected.insert(position, retained);
 +                    }
 +                    remaining = remaining.saturating_sub(tokens);
 +                    continue;
@@ -136,10 +157,10 @@ index 4aa7e07adf69cb47a47340f6a506a41e363634bb..f77f9f046d59c2716dbc76e9c865a577
              let ResponseItem::Message {
                  id,
 diff --git a/codex-rs/core/src/compact_remote_history.rs b/codex-rs/core/src/compact_remote_history.rs
-index 3a6f1500f3933ac893a46c0be2cf37bbbc1e07e5..87c7ecb231049931d2bec16cecf317151c4fcbbc 100644
+index 25321d6464cdef80976f18118d131a7262a92b5a..126001c67b221f6cd460f383e8afd3c47caa223f 100644
 --- a/codex-rs/core/src/compact_remote_history.rs
 +++ b/codex-rs/core/src/compact_remote_history.rs
-@@ -149,6 +149,10 @@ pub(crate) fn trim_function_call_history_to_fit_context_window(
+@@ -168,6 +168,10 @@ pub(crate) fn trim_function_call_history_to_fit_context_window(
  fn rewritten_output_for_context_window(
      envelope: &ResponseItemEnvelope,
  ) -> Option<ResponseItemEnvelope> {
@@ -176,7 +197,7 @@ index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62
  fn rewritten_output_preserves_harness_metadata() {
      let envelope = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index ad59b2676d37f7825ce29472e8f93b707d11fd04..0c69da838b26733a050cc98f452e8bfdbae113fb 100644
+index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007328c7e53 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
 @@ -491,6 +491,7 @@ async fn collect_compaction_output(
@@ -195,28 +216,34 @@ index ad59b2676d37f7825ce29472e8f93b707d11fd04..0c69da838b26733a050cc98f452e8bfd
  ) -> (Vec<ResponseItemEnvelope>, usize) {
      debug_assert_eq!(prompt_input.len(), prompt_input_metadata.len());
      let prompt_input = prompt_input
-@@ -512,7 +514,11 @@ fn build_v2_compacted_history(
-     let pending_sequence = crate::compact_pending_input::pending_mail_sequence(&prompt_input);
-     let retained = v2_history_item_groups(prompt_input)
-         .filter(|group| {
--            is_retained_for_remote_compaction_v2(&group.source, features)
+@@ -513,12 +515,17 @@ fn build_v2_compacted_history(
+     let retained = select_retained_items(
+         &prompt_input,
+         |item| {
+-            is_retained_for_remote_compaction_v2(item, features)
 +            crate::saffron::compaction_requests::is_request(
-+                &group.source.item,
-+                group.source.metadata.as_ref(),
++                &item.item,
++                item.metadata.as_ref(),
 +                agent_path,
-+            ) || is_retained_for_remote_compaction_v2(&group.source, features)
-                 || pending_sequence
-                     .is_some_and(|first| is_retained_pending_mail(&group.source, first))
-         })
-@@ -523,6 +529,7 @@ fn build_v2_compacted_history(
++            ) || is_retained_for_remote_compaction_v2(item, features)
+                 || pending_sequence.is_some_and(|first| is_retained_pending_mail(item, first))
+         },
          RETAINED_MESSAGE_TOKEN_BUDGET,
          image_budget,
          audio_durations,
 +        Some(agent_path),
-     );
-     let retained_image_count = retained
-         .iter()
-@@ -642,14 +649,18 @@ pub(crate) fn truncate_retained_messages_for_remote_compaction(
+     )
+     .into_values()
+     .collect::<Vec<_>>();
+@@ -549,6 +556,7 @@ pub(crate) fn retained_client_items(
+         RETAINED_MESSAGE_TOKEN_BUDGET,
+         RetainedImageBudget::Disabled,
+         audio_durations,
++        None,
+     )
+ }
+
+@@ -644,18 +652,29 @@ pub(crate) fn truncate_retained_messages_for_remote_compaction(
          max_tokens,
          RetainedImageBudget::Disabled,
          audio_durations,
@@ -233,9 +260,31 @@ index ad59b2676d37f7825ce29472e8f93b707d11fd04..0c69da838b26733a050cc98f452e8bfd
      audio_durations: &FileAudioDurations,
 +    agent_path: Option<&codex_protocol::AgentPath>,
  ) -> Vec<ResponseItemEnvelope> {
+-    select_retained_items(&items, |_| true, max_tokens, image_budget, audio_durations)
+-        .into_values()
+-        .collect()
++    select_retained_items(
++        &items,
++        |_| true,
++        max_tokens,
++        image_budget,
++        audio_durations,
++        agent_path,
++    )
++    .into_values()
++    .collect()
+ }
+
+ /// Select newest first, then return the items at their original positions.
+@@ -665,6 +684,7 @@ fn select_retained_items(
+     max_tokens: usize,
+     image_budget: RetainedImageBudget,
+     audio_durations: &FileAudioDurations,
++    agent_path: Option<&codex_protocol::AgentPath>,
+ ) -> BTreeMap<usize, ResponseItemEnvelope> {
      let mut remaining = max_tokens;
-     let mut truncated_reversed = Vec::with_capacity(items.len());
-@@ -662,6 +673,13 @@ fn truncate_retained_messages(
+     let mut selected = BTreeMap::new();
+@@ -676,6 +696,13 @@ fn select_retained_items(
              continue;
          }
 
@@ -246,22 +295,22 @@ index ad59b2676d37f7825ce29472e8f93b707d11fd04..0c69da838b26733a050cc98f452e8bfd
 +                agent_path,
 +            )
 +        });
-         let client_developer = is_client_authored_developer_message(&group.source);
-         let image_budget = if client_developer {
-             RetainedImageBudget::Disabled
-@@ -720,7 +738,9 @@ fn truncate_retained_messages(
+         let charge_full_item =
+             group.source.is_always_retained() || is_client_authored_developer_message(group.source);
+         let image_budget = if charge_full_item {
+@@ -738,7 +765,9 @@ fn select_retained_items(
                  // the remaining budget with older messages in that case.
                  remaining = 0;
              }
 -            let truncated_item = if requires_media_boundary_truncation {
 +            let truncated_item = if request {
-+                crate::saffron::compaction_requests::retain(group.source, content_budget)
++                crate::saffron::compaction_requests::retain(group.source.clone(), content_budget)
 +            } else if requires_media_boundary_truncation {
                  media::truncate_message_to_token_budget(
-                     group.source,
+                     group.source.clone(),
                      content_budget,
-@@ -731,6 +751,11 @@ fn truncate_retained_messages(
-                 truncate_message_text_to_token_budget(group.source, content_budget)
+@@ -749,6 +778,11 @@ fn select_retained_items(
+                 truncate_message_text_to_token_budget(group.source.clone(), content_budget)
              };
              let Some(mut truncated_item) = truncated_item else {
 +                // An opaque request cannot be shortened. Older inputs must not
@@ -271,17 +320,17 @@ index ad59b2676d37f7825ce29472e8f93b707d11fd04..0c69da838b26733a050cc98f452e8bfd
 +                }
                  continue;
              };
-             if client_developer {
-@@ -773,7 +798,7 @@ fn truncate_retained_messages(
+             if charge_full_item {
+@@ -788,7 +822,7 @@ fn select_retained_items(
              }
-             truncated_reversed.push(truncated_item);
              remaining = 0;
+             truncated_item
 -        } else if requires_media_boundary_truncation {
 +        } else if request || requires_media_boundary_truncation {
-             remaining = 0;
-         }
-     }
-@@ -917,6 +942,7 @@ mod tests {
+             break;
+         } else {
+             continue;
+@@ -934,6 +968,7 @@ mod tests {
              &Features::with_defaults(),
              RetainedImageBudget::Disabled,
              &FileAudioDurations::default(),
@@ -289,7 +338,7 @@ index ad59b2676d37f7825ce29472e8f93b707d11fd04..0c69da838b26733a050cc98f452e8bfd
          )
      }
 
-@@ -1002,6 +1028,68 @@ mod tests {
+@@ -1019,6 +1054,68 @@ mod tests {
          );
      }
 
@@ -358,7 +407,7 @@ index ad59b2676d37f7825ce29472e8f93b707d11fd04..0c69da838b26733a050cc98f452e8bfd
      #[test]
      fn build_v2_compacted_history_preserves_retained_metadata_sidecar() {
          let retained = message("user", "keep", /*phase*/ None);
-@@ -1047,6 +1135,7 @@ mod tests {
+@@ -1064,6 +1161,7 @@ mod tests {
                  &features,
                  RetainedImageBudget::Disabled,
                  &FileAudioDurations::default(),
@@ -366,7 +415,7 @@ index ad59b2676d37f7825ce29472e8f93b707d11fd04..0c69da838b26733a050cc98f452e8bfd
              );
              let mut expected = vec![
                  ResponseItemEnvelope {
-@@ -1078,6 +1167,135 @@ mod tests {
+@@ -1095,6 +1193,135 @@ mod tests {
          }
      }
 
@@ -574,10 +623,10 @@ index ef92fb2ddcd62e450a86e3f897173766756bca95..60582b60616bd14a7bf8e9482f45d956
              truncate_retained_messages_for_remote_compaction(
                  vec![source.clone()],
 diff --git a/codex-rs/core/src/compact_tests.rs b/codex-rs/core/src/compact_tests.rs
-index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f403277cb2cba 100644
+index 32e8026225a5d8acb01fc8016117a1fb57e789d8..3ca0b3efe28652fbf279305cdfb6c148281cc4d3 100644
 --- a/codex-rs/core/src/compact_tests.rs
 +++ b/codex-rs/core/src/compact_tests.rs
-@@ -243,6 +243,114 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
+@@ -243,6 +243,143 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
      items.into_iter().map(ResponseItemEnvelope::new).collect()
  }
 
@@ -597,11 +646,13 @@ index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f4032
 +        user_message("Catalogue the garden fixtures."),
 +        assignment.clone(),
 +    ]);
-+    let inputs = collect_annotated_user_messages(
++    let compacted = build_compacted_history_with_limit(
 +        &history,
++        "summary",
++        COMPACT_USER_MESSAGE_MAX_TOKENS,
++        &FileAudioDurations::default(),
 +        &codex_protocol::AgentPath::try_from("/root/orchard").unwrap(),
 +    );
-+    let compacted = build_compacted_history(Vec::new(), &inputs, "summary");
 +    assert_eq!(compacted[0], history[0]);
 +    assert_eq!(compacted[1].item, assignment);
 +    assert_eq!(compacted.len(), 3);
@@ -630,9 +681,8 @@ index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f4032
 +    ];
 +    let expected = vec![first, assignment, steer, user];
 +    for _ in 0..3 {
-+        history = build_compacted_history(
-+            Vec::new(),
-+            &collect_annotated_user_messages(&history, &codex_protocol::AgentPath::root()),
++        history = compact_items(
++            &history,
 +            &format!("{SUMMARY_PREFIX}\nThe orchard investigation is active."),
 +        );
 +        assert_eq!(&history[..history.len() - 1], &expected);
@@ -650,13 +700,40 @@ index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f4032
 +        ResponseItemEnvelope::new(user_message("New task.")),
 +    ];
 +    let compacted = build_compacted_history_with_limit(
-+        Vec::new(),
-+        &collect_annotated_user_messages(&history, &codex_protocol::AgentPath::root()),
++        &history,
 +        "summary",
 +        approx_token_count("New task."),
++        &FileAudioDurations::default(),
++        &codex_protocol::AgentPath::root(),
 +    );
 +    assert_eq!(compacted.len(), 2);
 +    assert_eq!(compacted[0], history[1]);
++}
++
++/// Explicit retention keeps a whole delivery without duplicating or shortening it.
++#[test]
++fn local_compaction_keeps_explicit_delivery_once_without_truncating_it() {
++    let mut delivery = crate::saffron::compaction_requests::tests::admitted_delivery(
++        "Inspect the complete orchard export before changing its configuration.",
++        2,
++    );
++    delivery
++        .metadata
++        .get_or_insert_default()
++        .retain_across_windows = Some(true);
++    let history = vec![
++        ResponseItemEnvelope::new(user_message("Earlier task.")),
++        delivery.clone(),
++    ];
++    let compacted = build_compacted_history_with_limit(
++        &history,
++        "summary",
++        1,
++        &FileAudioDurations::default(),
++        &codex_protocol::AgentPath::root(),
++    );
++    assert_eq!(compacted.len(), 2);
++    assert_eq!(compacted[0], delivery);
 +}
 +
 +/// Copied instructions to a sibling and child reports are not this agent's task.
@@ -682,17 +759,18 @@ index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f4032
 +            internal_chat_message_metadata_passthrough: None,
 +        },
 +    ]);
-+    let inputs = collect_annotated_user_messages(
-+        &history,
-+        &codex_protocol::AgentPath::try_from("/root/fruit").unwrap(),
++    let agent_path = codex_protocol::AgentPath::try_from("/root/fruit").unwrap();
++    assert!(
++        annotated_user_messages(&history, &agent_path)
++            .next()
++            .is_none()
 +    );
-+    assert!(inputs.is_empty());
 +}
 +
  fn raw(items: Vec<ResponseItemEnvelope>) -> Vec<ResponseItem> {
      items
          .into_iter()
-@@ -264,12 +372,12 @@ fn user_message(text: &str) -> ResponseItem {
+@@ -264,12 +401,12 @@ fn user_message(text: &str) -> ResponseItem {
      }
  }
 
@@ -707,17 +785,25 @@ index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f4032
 +    })
  }
 
- #[tokio::test]
-@@ -429,7 +537,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+ fn compact_items(items: &[ResponseItemEnvelope], summary: &str) -> Vec<ResponseItemEnvelope> {
+@@ -278,6 +415,7 @@ fn compact_items(items: &[ResponseItemEnvelope], summary: &str) -> Vec<ResponseI
+         summary,
+         COMPACT_USER_MESSAGE_MAX_TOKENS,
+         &FileAudioDurations::default(),
++        &codex_protocol::AgentPath::root(),
+     )
+ }
+
+@@ -438,7 +576,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
          ResponseItemEnvelope::new(ResponseItem::Other),
      ];
 
--    let collected = collect_annotated_user_messages(&items);
-+    let collected = collect_annotated_user_messages(&items, &codex_protocol::AgentPath::root());
+-    let collected: Vec<_> = annotated_user_messages(&items)
++    let collected: Vec<_> = annotated_user_messages(&items, &codex_protocol::AgentPath::root())
+         .map(|(_, message)| message)
+         .collect();
 
-     if !preserve_content {
-         item = user_message(expected_text);
-@@ -451,11 +559,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+@@ -462,11 +600,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
      };
      assert_eq!(
          collected,
@@ -730,30 +816,14 @@ index a57d2f024069fea9987ee1f24f3c3b42f470ccaf..0411c1becb7be89a57714490893f4032
 +        })]
      );
      assert_eq!(
-         build_compacted_history(Vec::new(), &collected, "summary"),
-@@ -577,7 +685,10 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages(
-     original.metadata = Some(CodexHarnessMetadata::default());
-     let history = super::build_compacted_history_with_limit(
-         Vec::new(),
--        &collect_annotated_user_messages(std::slice::from_ref(&original)),
-+        &collect_annotated_user_messages(
-+            std::slice::from_ref(&original),
-+            &codex_protocol::AgentPath::root(),
-+        ),
+         compact_items(&items, "summary"),
+@@ -591,6 +729,7 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages(
          "SUMMARY",
          max_tokens,
+         &FileAudioDurations::default(),
++        &codex_protocol::AgentPath::root(),
      );
-@@ -706,7 +817,10 @@ fn build_compacted_history_preserves_user_message_passthrough_metadata(attribute
-     };
-     let history = build_compacted_history(
-         Vec::new(),
--        &collect_annotated_user_messages(std::slice::from_ref(&original)),
-+        &collect_annotated_user_messages(
-+            std::slice::from_ref(&original),
-+            &codex_protocol::AgentPath::root(),
-+        ),
-         "summary text",
-     );
+     assert_eq!(history.len(), 2);
 
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
 index 4c07b7fb3fa63829b359472d3c7d1a0254614193..7d0e070005e0ea8f91e3ce70d0dacf3aec729f76 100644
@@ -778,7 +848,7 @@ index 4c07b7fb3fa63829b359472d3c7d1a0254614193..7d0e070005e0ea8f91e3ce70d0dacf3a
                  estimate_item_token_count_with_audio(&envelope.item, &self.file_audio_durations)
              })
 diff --git a/codex-rs/core/src/context_manager/history_tests.rs b/codex-rs/core/src/context_manager/history_tests.rs
-index 62bd597a8e191d2d1c6b5e4c86a460558d1c5b53..d8b0880a4f80098a70c53260340e888cc7089410 100644
+index 1bb1c18ea23a6b1753adb1a10ead4b5151c2b963..831a31e8c6470625d55a16f9d9184f7fb34e41c7 100644
 --- a/codex-rs/core/src/context_manager/history_tests.rs
 +++ b/codex-rs/core/src/context_manager/history_tests.rs
 @@ -84,6 +84,95 @@ fn sampling_checkpoint_excludes_input_appended_during_request() {
@@ -890,7 +960,7 @@ index ce13be03f1986a62708aa751fef7e5d35d633a67..0e5b94605cafe76a6c7fe66b8627aa90
  pub(crate) mod goal_resume;
  pub(crate) mod goal_scheduler;
 diff --git a/codex-rs/core/src/session/rollout_reconstruction.rs b/codex-rs/core/src/session/rollout_reconstruction.rs
-index b5e37406b3ffa5e87ef88a11f6e9ee1bd80005f8..507cbb2a9799adc01883b2ef52c12052c45cb453 100644
+index dc5e73aa93715632b80aaaee8753bc244a17827d..fef9e6e252da8b9bd02a5162c8b2d3842863e11f 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction.rs
 @@ -196,6 +196,10 @@ impl Session {
@@ -912,24 +982,25 @@ index b5e37406b3ffa5e87ef88a11f6e9ee1bd80005f8..507cbb2a9799adc01883b2ef52c12052
          mut history: Self,
          truncation_policy: TruncationPolicy,
      ) -> RolloutReconstruction {
-@@ -561,8 +566,10 @@ impl ContextManager {
+@@ -561,8 +566,11 @@ impl ContextManager {
                          // prompt shape.
                          // TODO(ccunningham): if we drop support for None replacement_history compaction items,
                          // we can get rid of this second loop entirely and just build `history` directly in the first loop.
--                        let user_messages =
--                            compact::collect_annotated_user_messages(history.annotated_items());
-+                        let user_messages = compact::collect_annotated_user_messages(
-+                            history.annotated_items(),
+-                        let rebuilt =
+-                            compact::build_compacted_history(&history, &compacted.message);
++                        let rebuilt = compact::build_compacted_history(
++                            &history,
++                            &compacted.message,
 +                            agent_path,
 +                        );
-                         let rebuilt = compact::build_compacted_history(
-                             Vec::new(),
-                             &user_messages,
+                         let retained_context = history.retained_context().clone();
+                         history.replace_annotated(rebuilt);
+                         history.restore_retained_context(Some(&retained_context));
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index 96181f9f9ae9567cb35bb894667d1098e79623f2..113fcf70c8f2f7e3cb5f69f2ee8c24bf9efbcf21 100644
+index 96181f9f9ae9567cb35bb894667d1098e79623f2..8cc837cd8af5bfa886ce53ce32502b756cb84cfa 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-@@ -1481,6 +1481,124 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
+@@ -1481,6 +1481,129 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
      assert_eq!(reconstructed.window_id, Some(initial_window_id));
  }
 
@@ -942,9 +1013,11 @@ index 96181f9f9ae9567cb35bb894667d1098e79623f2..113fcf70c8f2f7e3cb5f69f2ee8c24bf
 +        id: None,
 +        author: "/root".to_owned(),
 +        recipient: "/root/fruit".to_owned(),
-+        content: vec![codex_protocol::models::AgentMessageInputContent::InputText {
-+            text: "Message Type: NEW_TASK\nPayload:\nInspect the orchard.".to_owned(),
-+        }],
++        content: vec![
++            codex_protocol::models::AgentMessageInputContent::InputText {
++                text: "Message Type: NEW_TASK\nPayload:\nInspect the orchard.".to_owned(),
++            },
++        ],
 +        internal_chat_message_metadata_passthrough: None,
 +    });
 +    let rollout = vec![
@@ -1009,13 +1082,15 @@ index 96181f9f9ae9567cb35bb894667d1098e79623f2..113fcf70c8f2f7e3cb5f69f2ee8c24bf
 +        assignment.clone(),
 +        steer.clone(),
 +    ];
++    let mut context = ContextManager::default();
++    context.replace_annotated(history);
 +    let compacted = crate::compact::build_compacted_history(
-+        Vec::new(),
-+        &crate::compact::collect_annotated_user_messages(&history, &AgentPath::root()),
++        &context,
 +        &format!(
 +            "{}\nThe orchard investigation is active.",
 +            crate::compact::SUMMARY_PREFIX
 +        ),
++        &AgentPath::root(),
 +    );
 +    let checkpoint = RolloutItem::Compacted(Box::new(CompactedItem {
 +        message: String::new(),
@@ -1038,13 +1113,14 @@ index 96181f9f9ae9567cb35bb894667d1098e79623f2..113fcf70c8f2f7e3cb5f69f2ee8c24bf
 +        .await;
 +    assert_eq!(replayed.history[1], assignment);
 +    assert_eq!(replayed.history[2], steer);
++    context.replace_annotated(replayed.history);
 +    let next = crate::compact::build_compacted_history(
-+        Vec::new(),
-+        &crate::compact::collect_annotated_user_messages(&replayed.history, &AgentPath::root()),
++        &context,
 +        &format!(
 +            "{}\nStill investigating the orchard.",
 +            crate::compact::SUMMARY_PREFIX
 +        ),
++        &AgentPath::root(),
 +    );
 +    assert_eq!(next.len(), 4);
 +    assert_eq!(next[1], assignment);
@@ -1054,13 +1130,35 @@ index 96181f9f9ae9567cb35bb894667d1098e79623f2..113fcf70c8f2f7e3cb5f69f2ee8c24bf
  #[tokio::test]
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
+diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
+index 9bc53dbe65dc903aa2e69f596a5d7486025973f3..30defab43aa817772248b01f664dc683a9ee574a 100644
+--- a/codex-rs/core/src/session/tests.rs
++++ b/codex-rs/core/src/session/tests.rs
+@@ -13426,7 +13426,7 @@ async fn sample_rollout(
+     rollout_items.push(RolloutItem::ResponseItem(assistant1.clone().into()));
+
+     let summary1 = "summary one";
+-    let rebuilt1 = compact::build_compacted_history(&live_history, summary1);
++    let rebuilt1 = compact::build_compacted_history(&live_history, summary1, &AgentPath::root());
+     live_history.replace_annotated(rebuilt1);
+     let (window_number, window_ids) = session.advance_auto_compact_window().await;
+     rollout_items.push(RolloutItem::Compacted(Box::new(CompactedItem {
+@@ -13459,7 +13459,7 @@ async fn sample_rollout(
+     rollout_items.push(RolloutItem::ResponseItem(assistant2.clone().into()));
+
+     let summary2 = "summary two";
+-    let rebuilt2 = compact::build_compacted_history(&live_history, summary2);
++    let rebuilt2 = compact::build_compacted_history(&live_history, summary2, &AgentPath::root());
+     live_history.replace_annotated(rebuilt2);
+     let (window_number, window_ids) = session.advance_auto_compact_window().await;
+     rollout_items.push(RolloutItem::Compacted(Box::new(CompactedItem {
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index cee005424eaa30829199eb58b21ff8b6fea0bfc2..a0fcafd51d42ebba4ca9cd6ee0eb1beb83873a2a 100644
+index cbf3934e428d69f4958b9c63e736015200098bbf..d938e8864fee123c82b1c22ccecfef66a04a99e2 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
-@@ -75,6 +75,11 @@ pub struct CodexHarnessMetadata {
-     #[serde(default, skip_serializing_if = "Option::is_none")]
-     pub sampled_through_sequence: Option<u64>,
+@@ -81,6 +81,11 @@ pub struct CodexHarnessMetadata {
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+     pub image_replay_sources: Vec<ImageReplaySource>,
 
 +    /// Namespaced host extension checkpoints, never sent as model input.
 +    /// Unknown namespaces survive persistence without acquiring harness meaning.
