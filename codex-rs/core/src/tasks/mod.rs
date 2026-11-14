@@ -283,6 +283,11 @@ impl Session {
         input: Vec<TurnInput>,
         task: T,
     ) -> TurnInputSubmission {
+        crate::saffron::goal_supervisor::claim_root_continuation(
+            self,
+            crate::saffron::goal_supervisor::ContinuationOwner::RootTurn,
+        )
+        .await;
         self.abort_all_tasks(TurnAbortReason::Replaced).await;
         self.clear_connector_selection().await;
         self.start_task(turn_context, input, task).await
@@ -399,6 +404,7 @@ impl Session {
             Some(_) => (None, Vec::new(), Some(input)),
             None => (
                 self.services.agent_control.admit_turn(
+                    self.thread_id,
                     turn_context.multi_agent_version,
                     &turn_context.session_source,
                 ),
@@ -558,6 +564,11 @@ impl Session {
         let Some((turn_state, previous_options)) = self.reserve_pending_work_turn().await else {
             return;
         };
+        crate::saffron::goal_supervisor::claim_root_continuation(
+            self,
+            crate::saffron::goal_supervisor::ContinuationOwner::RootTurn,
+        )
+        .await;
 
         let helper_admission = HelperTurnAdmission::capture(self);
         self.services
@@ -585,7 +596,11 @@ impl Session {
         // Read the routing options now and leave the mail queued until task registration.
         let wake_options = self.input_queue.pending_wake_options().await;
         let triggered = wake_options.is_some();
-        let start_options = wake_options.unwrap_or(previous_options);
+        let mut start_options = wake_options.unwrap_or(previous_options);
+        if triggered && start_options.turn_trigger.is_none() {
+            start_options.turn_trigger =
+                crate::saffron::goal_supervisor::active_goal_turn_trigger(self).await;
+        }
         let options = NewTurnContextOptions {
             direct_only_tool_namespaces: start_options.direct_only_tool_namespaces,
             final_output_json_schema: start_options.final_output_json_schema,
