@@ -17,7 +17,7 @@ async fn saffron_migrations_have_an_independent_ledger() -> anyhow::Result<()> {
 
     assert_eq!(
         migration_versions(home.path().join(SAFFRON_DB_FILENAME), &sqlite).await?,
-        vec![1, 2, 3, 4]
+        vec![1, 2, 3, 4, 5]
     );
     assert_eq!(
         migration_versions(state.sqlite().state_db_path(), &sqlite).await?,

@@ -130,6 +130,13 @@ impl LocalAgentRuntime {
         Ok(descendants)
     }
 
+    /// Shares the host's persistent ancestry store without exposing its runtime registry.
+    pub(crate) fn agent_graph_store(
+        &self,
+    ) -> CodexResult<Option<Arc<dyn codex_agent_graph_store::AgentGraphStore>>> {
+        Ok(self.upgrade()?.agent_graph_store())
+    }
+
     pub(in crate::agent) fn upgrade(&self) -> CodexResult<Arc<ThreadManagerState>> {
         self.manager.upgrade().ok_or_else(|| {
             CodexErr::UnsupportedOperation("thread manager dropped".to_string())

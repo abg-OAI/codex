@@ -77,6 +77,7 @@ mod interrupt;
 mod legacy;
 mod mailbox;
 mod residency;
+mod retirement;
 pub use residency::ThreadEvictionOutcome;
 mod resume;
 mod root_handoff;
