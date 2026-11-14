@@ -22,6 +22,7 @@ use crate::hook_runtime::run_post_compact_hooks;
 use crate::hook_runtime::run_pre_compact_hooks;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CompactionTurnMetadata;
+use crate::saffron::compaction_requests::CompactedInput;
 use crate::session::FileAudioDurations;
 use crate::session::RequestEffortUsage;
 use crate::session::session::Session;
@@ -395,7 +396,11 @@ async fn run_compact_task_inner_impl(
     };
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
 
-    let mut new_history = build_compacted_history(&history_snapshot, &summary_text);
+    let agent_path = turn_context
+        .session_source
+        .get_agent_path()
+        .unwrap_or_else(codex_protocol::AgentPath::root);
+    let mut new_history = build_compacted_history(&history_snapshot, &summary_text, &agent_path);
     if let Some(summary_item) = new_history.last_mut() {
         // This replacement history skips `record_conversation_items`; only the appended summary
         // belongs to this compaction turn.
@@ -603,20 +608,43 @@ pub(crate) struct CompactedUserMessage<'a> {
 }
 
 #[cfg(test)]
-pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<CompactedUserMessage<'_>> {
+/// Collects ordinary user input for compaction tests.
+pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<CompactedInput<'_>> {
     items
         .iter()
-        .filter_map(|item| compacted_user_message(item, /*harness_metadata*/ None))
+        .filter_map(|item| {
+            compacted_user_message(item, /*harness_metadata*/ None).map(CompactedInput::User)
+        })
         .collect()
 }
 
-fn annotated_user_messages(
-    items: &[ResponseItemEnvelope],
-) -> impl DoubleEndedIterator<Item = (usize, CompactedUserMessage<'_>)> {
-    items.iter().enumerate().filter_map(|(position, envelope)| {
-        let message = compacted_user_message(&envelope.item, envelope.metadata.as_ref())?;
-        Some((position, message))
-    })
+/// Visits ordinary user input and this agent's admitted requests in source order.
+/// Source positions also identify inputs selected by the separate client-retention budget.
+fn annotated_user_messages<'a>(
+    items: &'a [ResponseItemEnvelope],
+    agent_path: &codex_protocol::AgentPath,
+) -> impl DoubleEndedIterator<Item = (usize, CompactedInput<'a>)> {
+    items
+        .iter()
+        .enumerate()
+        .filter_map(move |(position, envelope)| {
+            let input = if crate::saffron::compaction_requests::is_request(
+                &envelope.item,
+                envelope.metadata.as_ref(),
+                agent_path,
+            ) {
+                CompactedInput::Request {
+                    item: &envelope.item,
+                    metadata: envelope.metadata.as_ref(),
+                }
+            } else {
+                CompactedInput::User(compacted_user_message(
+                    &envelope.item,
+                    envelope.metadata.as_ref(),
+                )?)
+            };
+            Some((position, input))
+        })
 }
 
 fn compacted_user_message<'a>(
@@ -717,23 +745,28 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
     compacted_history
 }
 
+/// Retains recent input under the local token budget and appends the summary last.
 pub(crate) fn build_compacted_history(
     history: &ContextManager,
     summary_text: &str,
+    agent_path: &codex_protocol::AgentPath,
 ) -> Vec<ResponseItemEnvelope> {
     build_compacted_history_with_limit(
         history.annotated_items(),
         summary_text,
         COMPACT_USER_MESSAGE_MAX_TOKENS,
         &history.file_audio_durations,
+        agent_path,
     )
 }
 
+/// Shares one chronological budget across ordinary user input and admitted requests.
 fn build_compacted_history_with_limit(
     items: &[ResponseItemEnvelope],
     summary_text: &str,
     max_tokens: usize,
     audio_durations: &FileAudioDurations,
+    agent_path: &codex_protocol::AgentPath,
 ) -> Vec<ResponseItemEnvelope> {
     // An injected user message can qualify under both budgets. Its position
     // identifies the occurrence even if another message has the same client ID.
@@ -744,10 +777,34 @@ fn build_compacted_history_with_limit(
     );
     if max_tokens > 0 {
         let mut remaining = max_tokens;
-        for (position, message) in annotated_user_messages(items).rev() {
+        for (position, message) in annotated_user_messages(items, agent_path).rev() {
             if remaining == 0 {
                 break;
             }
+            let message = match message {
+                CompactedInput::User(message) => message,
+                CompactedInput::Request { item, metadata } => {
+                    let tokens =
+                        usize::try_from(crate::context_manager::estimate_item_token_count(item))
+                            .unwrap_or(usize::MAX)
+                            .max(1);
+                    if selected.contains_key(&position) {
+                        remaining = remaining.saturating_sub(tokens);
+                        continue;
+                    }
+                    let envelope = ResponseItemEnvelope {
+                        item: item.clone(),
+                        metadata: metadata.cloned(),
+                    };
+                    if let Some(retained) =
+                        crate::saffron::compaction_requests::retain(envelope, remaining)
+                    {
+                        selected.insert(position, retained);
+                    }
+                    remaining = remaining.saturating_sub(tokens);
+                    continue;
+                }
+            };
             let tokens = approx_token_count(&message.message);
             let ResponseItem::Message {
                 id,

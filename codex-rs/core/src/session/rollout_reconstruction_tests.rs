@@ -1481,6 +1481,129 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
     assert_eq!(reconstructed.window_id, Some(initial_window_id));
 }
 
+/// Legacy replay retains an ancestor assignment only for its receiving agent.
+#[test_case("/root/fruit", true; "receiving child")]
+#[test_case("/root/vegetables", false; "sibling child")]
+#[test_case("/root", false; "parent")]
+fn legacy_replay_scopes_assignments_to_receiver(agent_path: &str, retained: bool) {
+    let assignment = ResponseItemEnvelope::new(ResponseItem::AgentMessage {
+        id: None,
+        author: "/root".to_owned(),
+        recipient: "/root/fruit".to_owned(),
+        content: vec![
+            codex_protocol::models::AgentMessageInputContent::InputText {
+                text: "Message Type: NEW_TASK\nPayload:\nInspect the orchard.".to_owned(),
+            },
+        ],
+        internal_chat_message_metadata_passthrough: None,
+    });
+    let rollout = vec![
+        RolloutItem::ResponseItem(assignment.clone()),
+        RolloutItem::Compacted(Box::new(CompactedItem {
+            message: "The inspection is underway.".to_owned(),
+            replacement_history: None,
+            retained_context: None,
+            guardian_history: None,
+            mcp_resource_origins: None,
+            window_number: None,
+            first_window_id: None,
+            previous_window_id: None,
+            window_id: None,
+            compaction_response_id: None,
+            latest_token_usage_record: None,
+            resume_metadata: None,
+        })),
+    ];
+    let reconstructed = ContextManager::reconstruct_rollout(
+        &rollout,
+        ThreadHistoryMode::Legacy,
+        &AgentPath::try_from(agent_path).unwrap(),
+        ContextManager::default(),
+        codex_utils_output_truncation::TruncationPolicy::Bytes(10_000),
+    );
+    assert_eq!(
+        reconstructed
+            .history
+            .iter()
+            .any(|envelope| envelope.item == assignment.item),
+        retained
+    );
+}
+
+/// Persisted replacement history keeps delivery bodies and identity on cold replay.
+#[tokio::test]
+async fn compaction_delivery_survives_rollout_replay_and_next_compaction() {
+    let (session, turn_context) = make_session_and_context().await;
+    let mut assignment = crate::saffron::compaction_requests::tests::admitted_delivery(
+        "Investigate the orchard export instead.",
+        2,
+    );
+    let mut steer = crate::saffron::compaction_requests::tests::admitted_delivery(
+        "Inspect its midnight batch first.",
+        3,
+    );
+    for (envelope, sequence) in [(&mut assignment, 2), (&mut steer, 3)] {
+        let metadata = envelope.metadata.get_or_insert_default();
+        metadata.history_sequence = Some(sequence);
+        metadata.sampled_through_sequence = Some(0);
+    }
+    let history = vec![
+        ResponseItemEnvelope {
+            item: user_message("Catalogue garden fixtures."),
+            metadata: Some(codex_history::CodexHarnessMetadata {
+                history_sequence: Some(1),
+                sampled_through_sequence: Some(0),
+                ..Default::default()
+            }),
+        },
+        assignment.clone(),
+        steer.clone(),
+    ];
+    let mut context = ContextManager::default();
+    context.replace_annotated(history);
+    let compacted = crate::compact::build_compacted_history(
+        &context,
+        &format!(
+            "{}\nThe orchard investigation is active.",
+            crate::compact::SUMMARY_PREFIX
+        ),
+        &AgentPath::root(),
+    );
+    let checkpoint = RolloutItem::Compacted(Box::new(CompactedItem {
+        message: String::new(),
+        replacement_history: Some(compacted),
+        guardian_history: None,
+        retained_context: None,
+        mcp_resource_origins: None,
+        window_number: Some(1),
+        first_window_id: None,
+        previous_window_id: None,
+        window_id: None,
+        compaction_response_id: None,
+        latest_token_usage_record: None,
+        resume_metadata: None,
+    }));
+    let encoded = serde_json::to_vec(&checkpoint).unwrap();
+    let restored: RolloutItem = serde_json::from_slice(&encoded).unwrap();
+    let replayed = session
+        .reconstruct_history_from_rollout(&turn_context, &[restored])
+        .await;
+    assert_eq!(replayed.history[1], assignment);
+    assert_eq!(replayed.history[2], steer);
+    context.replace_annotated(replayed.history);
+    let next = crate::compact::build_compacted_history(
+        &context,
+        &format!(
+            "{}\nStill investigating the orchard.",
+            crate::compact::SUMMARY_PREFIX
+        ),
+        &AgentPath::root(),
+    );
+    assert_eq!(next.len(), 4);
+    assert_eq!(next[1], assignment);
+    assert_eq!(next[2], steer);
+}
+
 #[tokio::test]
 async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
     let (session, turn_context) = make_session_and_context().await;

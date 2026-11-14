@@ -491,6 +491,7 @@ async fn collect_compaction_output(
     })
 }
 
+/// Keeps eligible inputs in source order before the terminal remote checkpoint.
 fn build_v2_compacted_history(
     prompt_input: Vec<ResponseItem>,
     prompt_input_metadata: Vec<Option<CodexHarnessMetadata>>,
@@ -498,6 +499,7 @@ fn build_v2_compacted_history(
     features: &Features,
     image_budget: RetainedImageBudget,
     audio_durations: &FileAudioDurations,
+    agent_path: &codex_protocol::AgentPath,
 ) -> (Vec<ResponseItemEnvelope>, usize) {
     debug_assert_eq!(prompt_input.len(), prompt_input_metadata.len());
     let prompt_input = prompt_input
@@ -513,12 +515,17 @@ fn build_v2_compacted_history(
     let retained = select_retained_items(
         &prompt_input,
         |item| {
-            is_retained_for_remote_compaction_v2(item, features)
+            crate::saffron::compaction_requests::is_request(
+                &item.item,
+                item.metadata.as_ref(),
+                agent_path,
+            ) || is_retained_for_remote_compaction_v2(item, features)
                 || pending_sequence.is_some_and(|first| is_retained_pending_mail(item, first))
         },
         RETAINED_MESSAGE_TOKEN_BUDGET,
         image_budget,
         audio_durations,
+        Some(agent_path),
     )
     .into_values()
     .collect::<Vec<_>>();
@@ -549,6 +556,7 @@ pub(crate) fn retained_client_items(
         RETAINED_MESSAGE_TOKEN_BUDGET,
         RetainedImageBudget::Disabled,
         audio_durations,
+        None,
     )
 }
 
@@ -644,18 +652,29 @@ pub(crate) fn truncate_retained_messages_for_remote_compaction(
         max_tokens,
         RetainedImageBudget::Disabled,
         audio_durations,
+        None,
     )
 }
 
+/// Applies the remote window budget, optionally including this agent's requests.
+/// Generic callers without an agent path retain the upstream boundary behavior.
 fn truncate_retained_messages(
     items: Vec<ResponseItemEnvelope>,
     max_tokens: usize,
     image_budget: RetainedImageBudget,
     audio_durations: &FileAudioDurations,
+    agent_path: Option<&codex_protocol::AgentPath>,
 ) -> Vec<ResponseItemEnvelope> {
-    select_retained_items(&items, |_| true, max_tokens, image_budget, audio_durations)
-        .into_values()
-        .collect()
+    select_retained_items(
+        &items,
+        |_| true,
+        max_tokens,
+        image_budget,
+        audio_durations,
+        agent_path,
+    )
+    .into_values()
+    .collect()
 }
 
 /// Select newest first, then return the items at their original positions.
@@ -665,6 +684,7 @@ fn select_retained_items(
     max_tokens: usize,
     image_budget: RetainedImageBudget,
     audio_durations: &FileAudioDurations,
+    agent_path: Option<&codex_protocol::AgentPath>,
 ) -> BTreeMap<usize, ResponseItemEnvelope> {
     let mut remaining = max_tokens;
     let mut selected = BTreeMap::new();
@@ -676,6 +696,13 @@ fn select_retained_items(
             continue;
         }
 
+        let request = agent_path.is_some_and(|agent_path| {
+            crate::saffron::compaction_requests::is_request(
+                &group.source.item,
+                group.source.metadata.as_ref(),
+                agent_path,
+            )
+        });
         let charge_full_item =
             group.source.is_always_retained() || is_client_authored_developer_message(group.source);
         let image_budget = if charge_full_item {
@@ -738,7 +765,9 @@ fn select_retained_items(
                 // the remaining budget with older messages in that case.
                 remaining = 0;
             }
-            let truncated_item = if requires_media_boundary_truncation {
+            let truncated_item = if request {
+                crate::saffron::compaction_requests::retain(group.source.clone(), content_budget)
+            } else if requires_media_boundary_truncation {
                 media::truncate_message_to_token_budget(
                     group.source.clone(),
                     content_budget,
@@ -749,6 +778,11 @@ fn select_retained_items(
                 truncate_message_text_to_token_budget(group.source.clone(), content_budget)
             };
             let Some(mut truncated_item) = truncated_item else {
+                // An opaque request cannot be shortened. Older inputs must not
+                // displace the instruction at the budget boundary.
+                if request {
+                    remaining = 0;
+                }
                 continue;
             };
             if charge_full_item {
@@ -788,7 +822,7 @@ fn select_retained_items(
             }
             remaining = 0;
             truncated_item
-        } else if requires_media_boundary_truncation {
+        } else if request || requires_media_boundary_truncation {
             break;
         } else {
             continue;
@@ -934,6 +968,7 @@ mod tests {
             &Features::with_defaults(),
             RetainedImageBudget::Disabled,
             &FileAudioDurations::default(),
+            &codex_protocol::AgentPath::root(),
         )
     }
 
@@ -1020,6 +1055,68 @@ mod tests {
     }
 
     #[test]
+    /// A delivered replacement assignment remains after the older user request.
+    fn build_v2_compacted_history_preserves_delivered_assignment() {
+        let assignment = ResponseItemEnvelope {
+            item: ResponseItem::FunctionCallOutput {
+                id: Some(codex_protocol::ResponseItemId::with_suffix(
+                    "fco",
+                    "assignment",
+                )),
+                call_id: None,
+                name: Some("send_message_to_thread".to_owned()),
+                namespace: Some("codex_app".to_owned()),
+                output: codex_protocol::models::FunctionCallOutputPayload::from_text(
+                    "Stop cataloguing fixtures. Investigate the failing orchard export.".to_owned(),
+                ),
+                internal_chat_message_metadata_passthrough: None,
+            },
+            metadata: Some(CodexHarnessMetadata {
+                user_input_order: Some(2),
+                sender_user_messages: Some(Box::new(codex_history::SenderUserMessages {
+                    receiver_turn_id: "turn_assignment".to_owned(),
+                    receiver_message_id: "fco_assignment".to_owned(),
+                    text: "Host: Sender asked for the orchard export investigation.".to_owned(),
+                })),
+                ..Default::default()
+            }),
+        };
+        let older_request = message("user", "Catalogue the garden fixtures.", None);
+        let checkpoint = ResponseItem::Compaction {
+            id: None,
+            encrypted_content: "checkpoint".to_owned(),
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let (history, _) = build_v2_compacted_history(
+            vec![
+                older_request.clone(),
+                assignment.item.clone(),
+                message("assistant", "Investigating the orchard export.", None),
+            ],
+            vec![None, assignment.metadata.clone(), None],
+            checkpoint.clone(),
+            &Features::default(),
+            RetainedImageBudget::Disabled,
+            &FileAudioDurations::default(),
+            &codex_protocol::AgentPath::root(),
+        );
+        assert_eq!(
+            history,
+            vec![
+                older_request.into(),
+                assignment,
+                ResponseItemEnvelope {
+                    item: checkpoint,
+                    metadata: Some(CodexHarnessMetadata {
+                        compaction_without_file_error_sources: true,
+                        ..Default::default()
+                    }),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn build_v2_compacted_history_preserves_retained_metadata_sidecar() {
         let retained = message("user", "keep", /*phase*/ None);
         let generated_notice = message(
@@ -1064,6 +1161,7 @@ mod tests {
                 &features,
                 RetainedImageBudget::Disabled,
                 &FileAudioDurations::default(),
+                &codex_protocol::AgentPath::root(),
             );
             let mut expected = vec![
                 ResponseItemEnvelope {
@@ -1093,6 +1191,135 @@ mod tests {
             }
             assert_eq!(history, expected);
         }
+    }
+
+    /// Request chains within the token budget survive repeated checkpoints.
+    #[tokio::test]
+    async fn build_v2_compacted_history_preserves_order_without_duplication() {
+        let mut expected = vec![ResponseItemEnvelope::new(message(
+            "user",
+            "Original request.",
+            None,
+        ))];
+        for order in 2..=20 {
+            expected.push(
+                crate::saffron::compaction_requests::tests::admitted_delivery(
+                    &format!("For the orchard export, also inspect batch {order}."),
+                    order,
+                ),
+            );
+        }
+        let mut history = expected.clone();
+        for cycle in 0..3 {
+            let checkpoint = ResponseItem::Compaction {
+                id: None,
+                encrypted_content: format!("checkpoint_{cycle}"),
+                internal_chat_message_metadata_passthrough: None,
+            };
+            let (items, metadata) = history
+                .into_iter()
+                .map(|item| (item.item, item.metadata))
+                .unzip();
+            (history, _) = build_v2_compacted_history(
+                items,
+                metadata,
+                checkpoint.clone(),
+                &Features::default(),
+                RetainedImageBudget::Disabled,
+                &FileAudioDurations::default(),
+                &codex_protocol::AgentPath::root(),
+            );
+            assert_eq!(&history[..history.len() - 1], &expected);
+            assert_eq!(history.last().unwrap().item, checkpoint);
+
+            let mut normalized = crate::context_manager::ContextManager::default();
+            normalized.replace_annotated(history.clone());
+            let recorded = normalized.annotated_items().to_vec();
+            let prompt = normalized
+                .for_prompt_annotated(
+                    &[codex_protocol::openai_models::InputModality::Text],
+                    &codex_attachment_store::InlineAttachmentStore,
+                )
+                .await;
+            assert_eq!(prompt.len(), history.len());
+            assert_eq!(
+                prompt[1..],
+                recorded[1..],
+                "standalone outputs need no fabricated tool calls"
+            );
+        }
+    }
+
+    /// The remote budget gives a newer user steer priority over an older delivery.
+    #[test]
+    fn request_budget_prefers_newer_user_over_delivery() {
+        let user = ResponseItemEnvelope::new(message("user", "New task.", None));
+        let delivery =
+            crate::saffron::compaction_requests::tests::admitted_delivery("Old task.", 2);
+        let retained = truncate_retained_messages(
+            vec![delivery, user.clone()],
+            approx_token_count("New task."),
+            RetainedImageBudget::Disabled,
+            &FileAudioDurations::default(),
+            Some(&codex_protocol::AgentPath::root()),
+        );
+        assert_eq!(retained, vec![user]);
+    }
+
+    /// Peer reports keep the existing omission behavior at the token boundary.
+    #[test]
+    fn request_retention_preserves_peer_boundary_policy() {
+        let user = ResponseItemEnvelope::new(message("user", "New task.", None));
+        let peer = ResponseItemEnvelope::new(ResponseItem::AgentMessage {
+            id: None,
+            author: "/root/vegetables".to_owned(),
+            recipient: "/root/fruit".to_owned(),
+            content: vec![AgentMessageInputContent::InputText {
+                text: format!("Message Type: MESSAGE\n{}", "peer findings ".repeat(100)),
+            }],
+            internal_chat_message_metadata_passthrough: None,
+        });
+        let retained = truncate_retained_messages(
+            vec![user.clone(), peer],
+            20,
+            RetainedImageBudget::Disabled,
+            &FileAudioDurations::default(),
+            Some(&codex_protocol::AgentPath::try_from("/root/fruit").unwrap()),
+        );
+        assert_eq!(retained, vec![user]);
+    }
+
+    /// Parent assignments use the shared window rather than the smaller report cutoff.
+    #[test]
+    fn build_v2_compacted_history_preserves_large_parent_assignment() {
+        let assignment = ResponseItem::AgentMessage {
+            id: None,
+            author: "/root".to_owned(),
+            recipient: "/root/fruit".to_owned(),
+            content: vec![AgentMessageInputContent::InputText {
+                text: format!(
+                    "Message Type: NEW_TASK\n{}",
+                    "Inspect this batch. ".repeat(3000)
+                ),
+            }],
+            internal_chat_message_metadata_passthrough: None,
+        };
+        assert!(estimate_item_token_count(&assignment) > MAX_RETAINED_AGENT_MESSAGE_TOKENS);
+        let checkpoint = ResponseItem::Compaction {
+            id: None,
+            encrypted_content: "checkpoint".to_owned(),
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let (history, _) = build_v2_compacted_history(
+            vec![assignment.clone()],
+            vec![None],
+            checkpoint.clone(),
+            &Features::default(),
+            RetainedImageBudget::Disabled,
+            &FileAudioDurations::default(),
+            &codex_protocol::AgentPath::try_from("/root/fruit").unwrap(),
+        );
+        assert_eq!(raw(history), vec![assignment, checkpoint]);
     }
 
     #[test]
