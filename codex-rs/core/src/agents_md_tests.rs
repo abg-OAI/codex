@@ -740,7 +740,7 @@ async fn read_agents_md_loads_cwd_instructions_when_parent_markers_are_unreadabl
     let cwd = config.cwd.clone();
     let loaded = read_agents_md(
         &config.config,
-        &fs,
+        InstructionFiles::Live(&fs),
         "local",
         &PathUri::from_abs_path(&cwd),
         config.project_doc_max_bytes,
@@ -768,7 +768,7 @@ async fn read_agents_md_propagates_read_errors() {
     let cwd = config.cwd.clone();
     let err = read_agents_md(
         &config.config,
-        &fs,
+        InstructionFiles::Live(&fs),
         "local",
         &PathUri::from_abs_path(&cwd),
         config.project_doc_max_bytes,
@@ -795,7 +795,7 @@ async fn read_agents_md_ignores_files_removed_after_discovery() {
     let cwd = config.cwd.clone();
     let loaded = read_agents_md(
         &config.config,
-        &fs,
+        InstructionFiles::Live(&fs),
         "local",
         &PathUri::from_abs_path(&cwd),
         config.project_doc_max_bytes,
@@ -1797,4 +1797,139 @@ fn create_skill(codex_home: PathBuf, name: &str, description: &str) {
     fs::create_dir_all(&skill_dir).unwrap();
     let content = format!("---\nname: {name}\ndescription: {description}\n---\n\n# Body\n");
     fs::write(skill_dir.join("SKILL.md"), content).unwrap();
+}
+
+/// Admission reads are reused under the same global budget, including invalid UTF-8.
+#[tokio::test]
+async fn startup_discovery_reuses_files_and_preserves_the_shared_budget() {
+    let first = TempDir::new().unwrap();
+    let second = TempDir::new().unwrap();
+    fs::write(first.path().join("AGENTS.md"), b"first").unwrap();
+    fs::write(second.path().join("AGENTS.md"), b"ab\xffcdefghijklmnop").unwrap();
+    let config = make_config(&first, 11, None).await;
+    let environments =
+        resolved_local_environments([("first", first.abs()), ("second", second.abs())]);
+    let mut ordinary_warnings = Vec::new();
+    let ordinary = load_project_instructions(&config, &environments, &mut ordinary_warnings)
+        .await
+        .unwrap();
+    let mut discovered = Vec::new();
+    for environment in environments.turn_environments() {
+        discovered.push(
+            discover_project_instructions(&config, environment)
+                .await
+                .unwrap(),
+        );
+    }
+    fs::remove_file(first.path().join("AGENTS.md")).unwrap();
+    fs::remove_file(second.path().join("AGENTS.md")).unwrap();
+    let mut cached_warnings = Vec::new();
+    let cached = load_project_instructions_with_discovery(
+        &config,
+        &environments,
+        &mut cached_warnings,
+        &discovered,
+    )
+    .await
+    .unwrap();
+    assert_eq!(cached, ordinary);
+    assert_eq!(cached_warnings, ordinary_warnings);
+}
+
+/// Every budget left by an earlier environment must preserve native contents and warnings.
+#[tokio::test]
+async fn startup_discovery_preserves_every_smaller_budget() {
+    let root = TempDir::new().unwrap();
+    let child = root.path().join("child");
+    let leaf = child.join("leaf");
+    fs::create_dir_all(&leaf).unwrap();
+    fs::create_dir(root.path().join(".git")).unwrap();
+    fs::write(leaf.join("AGENTS.md"), b"leaf instructions").unwrap();
+    let config = make_config(&root, 24, None).await;
+    let environments = resolved_local_environments([("remote", leaf.abs())]);
+    let environment = environments.turn_environments().next().unwrap();
+    let patterns: &[&[u8]] = &[
+        b"",
+        b"          abcdefghij",
+        "\u{2003}\u{2003}content".as_bytes(),
+        "\u{2003}\u{2003}\u{2003}".as_bytes(),
+        b" \xffcontent",
+        b"content without leading whitespace",
+    ];
+    for parent_contents in patterns {
+        for child_contents in patterns {
+            fs::write(root.path().join("AGENTS.md"), parent_contents).unwrap();
+            fs::write(child.join("AGENTS.md"), child_contents).unwrap();
+            let discovered = discover_project_instructions(&config, environment)
+                .await
+                .unwrap();
+            let filesystem = environment.environment().get_filesystem();
+            for remaining in 0..=config.project_doc_max_bytes {
+                let mut live_warnings = Vec::new();
+                let live = read_agents_md(
+                    &config,
+                    InstructionFiles::Live(filesystem.as_ref()),
+                    "remote",
+                    environment.cwd(),
+                    remaining,
+                    None,
+                    &mut live_warnings,
+                )
+                .await
+                .unwrap();
+                let mut cached_warnings = Vec::new();
+                let cached = read_agents_md(
+                    &config,
+                    InstructionFiles::Cached(&discovered),
+                    "remote",
+                    environment.cwd(),
+                    remaining,
+                    None,
+                    &mut cached_warnings,
+                )
+                .await
+                .unwrap();
+                assert_eq!(cached, live, "remaining budget {remaining}");
+                assert_eq!(
+                    cached_warnings, live_warnings,
+                    "remaining budget {remaining}"
+                );
+            }
+        }
+    }
+}
+
+/// The initial admission cache does not freeze instructions across workspace changes.
+#[tokio::test]
+async fn startup_discovery_is_consumed_once_and_later_workspace_changes_refresh() {
+    use crate::agents_md_manager::AgentsMdManager;
+    use crate::agents_md_manager::SessionInstructions;
+    let first = TempDir::new().unwrap();
+    let second = TempDir::new().unwrap();
+    fs::write(first.path().join("AGENTS.md"), "initial instructions").unwrap();
+    fs::write(
+        second.path().join("AGENTS.md"),
+        "new workspace instructions",
+    )
+    .unwrap();
+    let config = make_config(&first, 1024, None).await;
+    let environments = resolved_local_environments([("local", first.abs())]);
+    let discovered =
+        discover_project_instructions(&config, environments.turn_environments().next().unwrap())
+            .await
+            .unwrap();
+    fs::remove_file(first.path().join("AGENTS.md")).unwrap();
+    let manager = AgentsMdManager::new(SessionInstructions::default())
+        .with_startup_discovery(vec![discovered]);
+    let initial = manager
+        .refresh(&config, &environments)
+        .await
+        .0
+        .unwrap()
+        .unwrap();
+    assert!(initial.text().contains("initial instructions"));
+    let changed = resolved_local_environments([("local", second.abs())]);
+    let refreshed = manager.refresh(&config, &changed).await.0.unwrap().unwrap();
+    assert!(refreshed.text().contains("new workspace instructions"));
+    assert!(!refreshed.text().contains("initial instructions"));
 }
