@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
-index 564df6c80fd00429eda1ebf66a5079c7daf96944..ea7723dc1b376bc9c6cc0fe647da53a1439e27dd 100644
+index f596a1cfc50f69beb495972352d1f17702baebcd..73dba4535b3c2aac8af0f7ee5303d360138a7d37 100644
 --- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 @@ -6,6 +6,7 @@ use app_test_support::MockResponsesConfig;

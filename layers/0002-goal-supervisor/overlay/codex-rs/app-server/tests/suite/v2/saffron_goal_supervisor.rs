@@ -297,7 +297,7 @@ async fn same_app_server_recovers_snoozed_root_without_client_clock() -> Result<
     let config_path = codex_home.path().join("config.toml");
     let mut config = std::fs::read_to_string(&config_path)?;
     config.push_str(
-        "\n[features.current_time_reminder]\nenabled = true\nclock_source = \"external\"\n",
+        "\n[features.current_time_reminder]\nenabled = true\nclock_source = \"system\"\n",
     );
     std::fs::write(config_path, config)?;
     let mut app_server = start_restart_app(&codex_home).await?;
