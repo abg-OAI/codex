@@ -164,6 +164,7 @@ impl RegularTask {
                 // input instead of restarting the failed turn for that same input.
                 if ctx.terminal_error.lock().await.is_some()
                     || sess.work_budget().is_exhausted()
+                    || crate::saffron::archive_self::terminal::pending(&sess, &ctx)
                     || !sess.input_queue.has_pending_input(&sess.active_turn).await
                 {
                     return Ok(Some(RegularTaskOutput {
