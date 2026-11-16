@@ -56,6 +56,10 @@ impl Session {
 
         let turn_context = self.new_inject_items_context().await;
         let _settings = self.thread_settings_persistence.acquire().await?;
+        let observation_clock_floor_ms = match &self.realtime_history {
+            Some(history) => history.lock().await.observation_clock.floor_ms(),
+            None => None,
+        };
         let mut state = self.state.lock().await;
         let repair = self.persistence_repair.state.lock().await;
         anyhow::ensure!(
@@ -263,7 +267,7 @@ impl Session {
             // batch cannot hide a response whose UI item was not saved.
             presentation_items.append(&mut recovered);
             recovered = presentation_items;
-            recovered.extend(self.persistence_repair_checkpoint(&state));
+            recovered.extend(self.persistence_repair_checkpoint(&state, observation_clock_floor_ms));
             live_thread.append_items(&recovered).await?;
             live_thread.flush().await?;
 
@@ -307,7 +311,11 @@ impl Session {
         Ok(())
     }
 
-    fn persistence_repair_checkpoint(&self, state: &SessionState) -> Vec<RolloutItem> {
+    fn persistence_repair_checkpoint(
+        &self,
+        state: &SessionState,
+        observation_clock_floor_ms: Option<i64>,
+    ) -> Vec<RolloutItem> {
         let window_ids = state.auto_compact_window_ids();
         let history = state.clone_history();
         let compacted = CompactedItem {
@@ -329,6 +337,7 @@ impl Session {
                     thread_id: self.thread_id(),
                     tools: state.persisted_dynamic_tools.to_vec(),
                 })),
+                observation_clock_floor_ms,
                 multi_agent_version: self.multi_agent_version(),
                 last_started_turn_id: state.last_started_turn_id.clone(),
                 turn_attribution: state.turn_attribution.clone(),

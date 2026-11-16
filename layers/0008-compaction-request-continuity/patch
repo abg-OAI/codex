@@ -14,10 +14,10 @@ index b84082fff7c4ea1a113a6169bc0a1ec90d2c0507..b401f382d03b3945a97f138451e5b0d2
                                      // Tool bodies are not sender authorization evidence.
                                      TruncationPolicy::Bytes(0),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index b980c8ff880c54dea8b816eb73c53ffe66471a85..2052a0c64a56fc0f82b01f300f015b6779c20d2e 100644
+index 84a8b920d31e37c06284725d5a40f5be8eda096d..34aa6402a9b5a9140a02c065f53228643aa46ede 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
-@@ -22,6 +22,7 @@ use crate::hook_runtime::run_post_compact_hooks;
+@@ -24,6 +24,7 @@ use crate::hook_runtime::run_post_compact_hooks;
  use crate::hook_runtime::run_pre_compact_hooks;
  use crate::responses_metadata::CodexResponsesMetadata;
  use crate::responses_metadata::CompactionTurnMetadata;
@@ -25,7 +25,7 @@ index b980c8ff880c54dea8b816eb73c53ffe66471a85..2052a0c64a56fc0f82b01f300f015b67
  use crate::session::FileAudioDurations;
  use crate::session::RequestEffortUsage;
  use crate::session::session::Session;
-@@ -395,7 +396,11 @@ async fn run_compact_task_inner_impl(
+@@ -407,7 +408,11 @@ async fn run_compact_task_inner_impl(
      };
      let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
 
@@ -38,7 +38,7 @@ index b980c8ff880c54dea8b816eb73c53ffe66471a85..2052a0c64a56fc0f82b01f300f015b67
      if let Some(summary_item) = new_history.last_mut() {
          // This replacement history skips `record_conversation_items`; only the appended summary
          // belongs to this compaction turn.
-@@ -603,20 +608,43 @@ pub(crate) struct CompactedUserMessage<'a> {
+@@ -619,20 +624,43 @@ pub(crate) struct CompactedUserMessage<'a> {
  }
 
  #[cfg(test)]
@@ -91,7 +91,7 @@ index b980c8ff880c54dea8b816eb73c53ffe66471a85..2052a0c64a56fc0f82b01f300f015b67
  }
 
  fn compacted_user_message<'a>(
-@@ -717,23 +745,28 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
+@@ -733,23 +761,28 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
      compacted_history
  }
 
@@ -120,7 +120,7 @@ index b980c8ff880c54dea8b816eb73c53ffe66471a85..2052a0c64a56fc0f82b01f300f015b67
  ) -> Vec<ResponseItemEnvelope> {
      // An injected user message can qualify under both budgets. Its position
      // identifies the occurrence even if another message has the same client ID.
-@@ -744,10 +777,34 @@ fn build_compacted_history_with_limit(
+@@ -760,10 +793,34 @@ fn build_compacted_history_with_limit(
      );
      if max_tokens > 0 {
          let mut remaining = max_tokens;
@@ -197,10 +197,10 @@ index c1dde7d9d67c56b070e28448485c4afe392f849b..877baae82ba59ab79bdda38a29669f62
  fn rewritten_output_preserves_harness_metadata() {
      let envelope = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2.rs b/codex-rs/core/src/compact_remote_v2.rs
-index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007328c7e53 100644
+index d4797bf2ea9df2bfb88ea0b6631eeb680a159fbc..2f6d9d4992cb7ddc65fad3aab0ea0ca618485484 100644
 --- a/codex-rs/core/src/compact_remote_v2.rs
 +++ b/codex-rs/core/src/compact_remote_v2.rs
-@@ -491,6 +491,7 @@ async fn collect_compaction_output(
+@@ -530,6 +530,7 @@ async fn collect_compaction_output(
      })
  }
 
@@ -208,7 +208,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
  fn build_v2_compacted_history(
      prompt_input: Vec<ResponseItem>,
      prompt_input_metadata: Vec<Option<CodexHarnessMetadata>>,
-@@ -498,6 +499,7 @@ fn build_v2_compacted_history(
+@@ -537,6 +538,7 @@ fn build_v2_compacted_history(
      features: &Features,
      image_budget: RetainedImageBudget,
      audio_durations: &FileAudioDurations,
@@ -216,7 +216,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
  ) -> (Vec<ResponseItemEnvelope>, usize) {
      debug_assert_eq!(prompt_input.len(), prompt_input_metadata.len());
      let prompt_input = prompt_input
-@@ -513,12 +515,17 @@ fn build_v2_compacted_history(
+@@ -552,12 +554,17 @@ fn build_v2_compacted_history(
      let retained = select_retained_items(
          &prompt_input,
          |item| {
@@ -235,7 +235,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
      )
      .into_values()
      .collect::<Vec<_>>();
-@@ -549,6 +556,7 @@ pub(crate) fn retained_client_items(
+@@ -588,6 +595,7 @@ pub(crate) fn retained_client_items(
          RETAINED_MESSAGE_TOKEN_BUDGET,
          RetainedImageBudget::Disabled,
          audio_durations,
@@ -243,7 +243,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
      )
  }
 
-@@ -644,18 +652,29 @@ pub(crate) fn truncate_retained_messages_for_remote_compaction(
+@@ -683,18 +691,29 @@ pub(crate) fn truncate_retained_messages_for_remote_compaction(
          max_tokens,
          RetainedImageBudget::Disabled,
          audio_durations,
@@ -276,7 +276,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
  }
 
  /// Select newest first, then return the items at their original positions.
-@@ -665,6 +684,7 @@ fn select_retained_items(
+@@ -704,6 +723,7 @@ fn select_retained_items(
      max_tokens: usize,
      image_budget: RetainedImageBudget,
      audio_durations: &FileAudioDurations,
@@ -284,7 +284,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
  ) -> BTreeMap<usize, ResponseItemEnvelope> {
      let mut remaining = max_tokens;
      let mut selected = BTreeMap::new();
-@@ -676,6 +696,13 @@ fn select_retained_items(
+@@ -715,6 +735,13 @@ fn select_retained_items(
              continue;
          }
 
@@ -298,7 +298,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
          let charge_full_item =
              group.source.is_always_retained() || is_client_authored_developer_message(group.source);
          let image_budget = if charge_full_item {
-@@ -738,7 +765,9 @@ fn select_retained_items(
+@@ -777,7 +804,9 @@ fn select_retained_items(
                  // the remaining budget with older messages in that case.
                  remaining = 0;
              }
@@ -309,7 +309,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
                  media::truncate_message_to_token_budget(
                      group.source.clone(),
                      content_budget,
-@@ -749,6 +778,11 @@ fn select_retained_items(
+@@ -788,6 +817,11 @@ fn select_retained_items(
                  truncate_message_text_to_token_budget(group.source.clone(), content_budget)
              };
              let Some(mut truncated_item) = truncated_item else {
@@ -321,7 +321,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
                  continue;
              };
              if charge_full_item {
-@@ -788,7 +822,7 @@ fn select_retained_items(
+@@ -827,7 +861,7 @@ fn select_retained_items(
              }
              remaining = 0;
              truncated_item
@@ -330,7 +330,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
              break;
          } else {
              continue;
-@@ -934,6 +968,7 @@ mod tests {
+@@ -973,6 +1007,7 @@ mod tests {
              &Features::with_defaults(),
              RetainedImageBudget::Disabled,
              &FileAudioDurations::default(),
@@ -338,7 +338,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
          )
      }
 
-@@ -1019,6 +1054,68 @@ mod tests {
+@@ -1059,6 +1094,68 @@ mod tests {
          );
      }
 
@@ -407,7 +407,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
      #[test]
      fn build_v2_compacted_history_preserves_retained_metadata_sidecar() {
          let retained = message("user", "keep", /*phase*/ None);
-@@ -1064,6 +1161,7 @@ mod tests {
+@@ -1104,6 +1201,7 @@ mod tests {
                  &features,
                  RetainedImageBudget::Disabled,
                  &FileAudioDurations::default(),
@@ -415,7 +415,7 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
              );
              let mut expected = vec![
                  ResponseItemEnvelope {
-@@ -1095,6 +1193,135 @@ mod tests {
+@@ -1135,6 +1233,135 @@ mod tests {
          }
      }
 
@@ -552,10 +552,10 @@ index 6d9f535b5cf87d185d6833ae45cedd10b4e0d2a9..7657390c6e6a56ba529003f76896e007
      fn retained_history_truncation_preserves_metadata() {
          let item = ResponseItemEnvelope {
 diff --git a/codex-rs/core/src/compact_remote_v2_installation.rs b/codex-rs/core/src/compact_remote_v2_installation.rs
-index f14c10a0895729c614e0c84615768f4566cb6bcb..c3a666f2ba358690ab166586c8cd3ebe075c8486 100644
+index 950e78fa58499578b67c16ffff522d5cf4ab86db..23e30f6f9250ec249893b1a09fb063fb05b7f6e9 100644
 --- a/codex-rs/core/src/compact_remote_v2_installation.rs
 +++ b/codex-rs/core/src/compact_remote_v2_installation.rs
-@@ -202,6 +202,10 @@ async fn build_and_install_compaction(
+@@ -220,6 +220,10 @@ async fn build_and_install_compaction(
              RetainedImageBudget::Disabled
          },
          crate::session::file_audio::snapshot(sess).await.as_ref(),
@@ -826,10 +826,10 @@ index 32e8026225a5d8acb01fc8016117a1fb57e789d8..3ca0b3efe28652fbf279305cdfb6c148
      assert_eq!(history.len(), 2);
 
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
-index 4c07b7fb3fa63829b359472d3c7d1a0254614193..7d0e070005e0ea8f91e3ce70d0dacf3aec729f76 100644
+index 9e2624bf03b619007490eb3a066638b63f58e2f0..0e80958c5f84639dca4d96ea9d84450c1b8b9e5e 100644
 --- a/codex-rs/core/src/context_manager/history.rs
 +++ b/codex-rs/core/src/context_manager/history.rs
-@@ -745,6 +745,9 @@ impl ContextManager {
+@@ -746,6 +746,9 @@ impl ContextManager {
          .await;
          self.project_file_audio_for_prompt();
          Arc::unwrap_or_clone(self.items)
@@ -839,7 +839,7 @@ index 4c07b7fb3fa63829b359472d3c7d1a0254614193..7d0e070005e0ea8f91e3ce70d0dacf3a
      }
 
      /// Applies the file-audio request projection to a normalized snapshot whose
-@@ -858,6 +861,7 @@ impl ContextManager {
+@@ -859,6 +862,7 @@ impl ContextManager {
          let items_tokens = self
              .items
              .iter()
@@ -997,7 +997,7 @@ index dc5e73aa93715632b80aaaee8753bc244a17827d..fef9e6e252da8b9bd02a5162c8b2d384
                          history.replace_annotated(rebuilt);
                          history.restore_retained_context(Some(&retained_context));
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index 96181f9f9ae9567cb35bb894667d1098e79623f2..8cc837cd8af5bfa886ce53ce32502b756cb84cfa 100644
+index fc36c4ccfed4469659d1565425824c2536cdf9c5..b1a627911a44860eb31a81988dfc23ae83ab4151 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 @@ -1481,6 +1481,129 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
@@ -1131,10 +1131,10 @@ index 96181f9f9ae9567cb35bb894667d1098e79623f2..8cc837cd8af5bfa886ce53ce32502b75
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 9bc53dbe65dc903aa2e69f596a5d7486025973f3..30defab43aa817772248b01f664dc683a9ee574a 100644
+index eb4e96266bd0e2e22b804d0816a6762ba96aed7c..cd72757c799055879cff2338f7fd37b3714e0fb1 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -13426,7 +13426,7 @@ async fn sample_rollout(
+@@ -13368,7 +13368,7 @@ async fn sample_rollout(
      rollout_items.push(RolloutItem::ResponseItem(assistant1.clone().into()));
 
      let summary1 = "summary one";
@@ -1143,7 +1143,7 @@ index 9bc53dbe65dc903aa2e69f596a5d7486025973f3..30defab43aa817772248b01f664dc683
      live_history.replace_annotated(rebuilt1);
      let (window_number, window_ids) = session.advance_auto_compact_window().await;
      rollout_items.push(RolloutItem::Compacted(Box::new(CompactedItem {
-@@ -13459,7 +13459,7 @@ async fn sample_rollout(
+@@ -13401,7 +13401,7 @@ async fn sample_rollout(
      rollout_items.push(RolloutItem::ResponseItem(assistant2.clone().into()));
 
      let summary2 = "summary two";
@@ -1153,7 +1153,7 @@ index 9bc53dbe65dc903aa2e69f596a5d7486025973f3..30defab43aa817772248b01f664dc683
      let (window_number, window_ids) = session.advance_auto_compact_window().await;
      rollout_items.push(RolloutItem::Compacted(Box::new(CompactedItem {
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index cbf3934e428d69f4958b9c63e736015200098bbf..d938e8864fee123c82b1c22ccecfef66a04a99e2 100644
+index 8a2ec57b375d106a98920b3f25098652b79c7f47..cc6d976a9c23b6669ef0d94634b1436bcf5c6f43 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
 @@ -81,6 +81,11 @@ pub struct CodexHarnessMetadata {

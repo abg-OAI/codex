@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
-index 480a67fef2d0f9a74ed809208bf13426836561b7..564df6c80fd00429eda1ebf66a5079c7daf96944 100644
+index 6c6c340143a0891084f9cffab34679349ecd626a..f596a1cfc50f69beb495972352d1f17702baebcd 100644
 --- a/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 +++ b/codex-rs/app-server/tests/suite/v2/saffron_goal_supervisor.rs
 @@ -28,6 +28,106 @@ use wiremock::ResponseTemplate;
@@ -275,7 +275,7 @@ index efb5adb26be25866b0d9163c731493ec99856488..e102cb0fa520adbef53c03815f94999a
 +yourself. Do not create sub-agents. After any optional edit, call exactly one
 +supervisor action. After the action returns, end your turn.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 44a5408af924fd7f25cc1b37377d15b7bba9cfca..523aa4383fab08419cc668846f54ac3f84f4c77d 100644
+index 035f0b2f7be2b4f35b08baa1134a8f437ba920d9..759a4ba6d59bfcaccc346e0d15e23cec2a448f85 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -96,7 +96,8 @@ enum IdleDisposition {
