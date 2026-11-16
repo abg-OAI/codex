@@ -740,6 +740,7 @@ async fn spawn_helper(
             }],
             source,
             SpawnAgentOptions {
+                request_country: parent.thread_config_snapshot().await.request_country,
                 fork_parent_spawn_call_id: Some("saffron-goal-supervisor".to_string()),
                 fork_mode: Some(SpawnAgentForkMode::FullHistory),
                 parent_thread_id: Some(parent.thread_id),

@@ -275,7 +275,7 @@ index efb5adb26be25866b0d9163c731493ec99856488..e102cb0fa520adbef53c03815f94999a
 +yourself. Do not create sub-agents. After any optional edit, call exactly one
 +supervisor action. After the action returns, end your turn.
 diff --git a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
-index 44a5408af924fd7f25cc1b37377d15b7bba9cfca..523aa4383fab08419cc668846f54ac3f84f4c77d 100644
+index 035f0b2f7be2b4f35b08baa1134a8f437ba920d9..759a4ba6d59bfcaccc346e0d15e23cec2a448f85 100644
 --- a/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 +++ b/codex-rs/core/src/saffron/goal_supervisor/runtime.rs
 @@ -96,7 +96,8 @@ enum IdleDisposition {
