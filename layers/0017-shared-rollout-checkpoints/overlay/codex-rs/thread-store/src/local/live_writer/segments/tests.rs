@@ -11,10 +11,10 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadMemoryMode;
 use tempfile::TempDir;
 
-/// A rollover preserves the old bytes, references their prefix and accepts further native writes.
+/// Native parsing, pagination and append must accept a checkpoint continuation and its fork.
 #[tokio::test]
-async fn continuation_preserves_history_and_native_append() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn continuation_preserves_native_rollout_compatibility()
+-> Result<(), Box<dyn std::error::Error>> {
     let home = TempDir::new()?;
     let config = test_config(home.path());
     let state = codex_state::StateRuntime::init(
@@ -24,17 +24,17 @@ async fn continuation_preserves_history_and_native_append() -> Result<(), Box<dy
     .await?;
     let store = LocalThreadStore::new(config, Some(state.clone()));
     let thread_id = ThreadId::new();
-    create(&store, thread_id).await?;
-    let message: RolloutItem = serde_json::from_value(serde_json::json!({
-        "type": "response_item", "payload": {
-            "type": "message", "role": "user",
-            "content": [{"type": "input_text", "text": "x".repeat(8)}]
-        }
-    }))?;
+    let mut params = create_params(&store, thread_id);
+    params.base_instructions = BaseInstructions {
+        text: "Preserve these instructions across continuation.".into(),
+        ..Default::default()
+    };
+    store.create_thread(params).await?;
+    let initial_turn = compatibility_turn(thread_id, "before")?;
     store
         .append_items(AppendThreadItemsParams {
             thread_id,
-            items: vec![message],
+            items: initial_turn.clone(),
         })
         .await?;
     let old = store.live_rollout_path(thread_id).await?;
@@ -48,28 +48,33 @@ async fn continuation_preserves_history_and_native_append() -> Result<(), Box<dy
         None,
     )
     .await;
-    store
-        .append_items(AppendThreadItemsParams {
-            thread_id,
-            items: vec![serde_json::from_value(serde_json::json!({
-                "type":"event_msg", "payload":{"type":"turn_complete", "turn_id":"completed"}
-            }))?],
-        })
-        .await?;
     let checkpoint = checkpoint(thread_id)?;
     store
         .append_items(AppendThreadItemsParams {
             thread_id,
-            items: checkpoint,
+            items: checkpoint.clone(),
         })
         .await?;
     let next = store.live_rollout_path(thread_id).await?;
     assert_ne!(next, old);
     let sealed = tokio::fs::read(&old).await?;
+    let (original_items, original_id, parse_errors) =
+        RolloutRecorder::load_rollout_items(&old).await?;
+    assert_eq!(parse_errors, 0);
+    assert_eq!(original_id, Some(thread_id));
+    assert_eq!(
+        serde_json::to_value(&original_items[1..initial_turn.len() + 1])?,
+        serde_json::to_value(&initial_turn)?
+    );
+    assert_eq!(
+        serde_json::to_value(&original_items[initial_turn.len() + 1..])?,
+        serde_json::to_value(&checkpoint)?
+    );
     let original_meta = codex_rollout::read_session_meta_line(&old).await?.meta;
     let metadata = codex_rollout::read_session_meta_line(&next).await?.meta;
     assert_eq!(metadata.id, thread_id);
     assert_eq!(metadata.timestamp, original_meta.timestamp);
+    assert_eq!(metadata.base_instructions, original_meta.base_instructions);
     assert_eq!(
         metadata.history_base.unwrap().end_byte_offset,
         sealed.len() as u64
@@ -88,7 +93,16 @@ async fn continuation_preserves_history_and_native_append() -> Result<(), Box<dy
         Some(RolloutItem::Compacted(_))
     ));
 
-    // This native recorder operation is unchanged by segmentation.
+    // Use the native parser and recorder, not the optimized checkpoint reader, to
+    // verify the on-disk contract consumed by vanilla Codex.
+    let (native_items, native_id, parse_errors) =
+        RolloutRecorder::load_rollout_items(&next).await?;
+    assert_eq!(parse_errors, 0);
+    assert_eq!(native_id, Some(thread_id));
+    assert_eq!(
+        serde_json::to_value(&native_items[1..])?,
+        serde_json::to_value(&checkpoint)?
+    );
     let config = RolloutConfig {
         codex_home: home.path().into(),
         sqlite: store.config.sqlite.clone(),
@@ -97,27 +111,32 @@ async fn continuation_preserves_history_and_native_append() -> Result<(), Box<dy
         generate_memories: true,
     };
     let writer = RolloutRecorder::new(&config, RolloutRecorderParams::resume(next.clone())).await?;
-    let appended: RolloutItem = serde_json::from_value(serde_json::json!({
-        "type": "response_item", "payload": {
-            "type": "message", "role": "user", "content": [{"type":"input_text","text":"after rotation"}]
-        }
-    }))?;
-    writer.record_canonical_items(&[appended]).await?;
+    let appended = compatibility_turn(thread_id, "after")?;
+    writer.record_canonical_items(&appended).await?;
     writer.flush().await?;
     writer.shutdown().await?;
     assert_eq!(tokio::fs::read(&old).await?, sealed);
     let lineage = store.resolve_rollout_lineage(thread_id, None).await?;
     assert_eq!(lineage.segments().len(), 2);
-    let context = store
-        .load_latest_model_context(LoadThreadHistoryParams {
-            thread_id,
-            include_archived: false,
-        })
-        .await?;
-    assert!(matches!(
-        context.items.last(),
-        Some(RolloutItem::ResponseItem(_))
-    ));
+    let (native_items, _, parse_errors) = RolloutRecorder::load_rollout_items(&next).await?;
+    assert_eq!(parse_errors, 0);
+    assert_eq!(
+        serde_json::to_value(&native_items[1..checkpoint.len() + 1])?,
+        serde_json::to_value(&checkpoint)?
+    );
+    assert_eq!(
+        serde_json::to_value(&native_items[checkpoint.len() + 1..])?,
+        serde_json::to_value(&appended)?
+    );
+    // The raw recorder writes JSONL only. Native pagination reads its SQLite
+    // projection, so run the same materializer used by the store after a write.
+    crate::local::thread_history_materialization::materialize_to_sqlite(
+        &store,
+        codex_rollout::rollout_id_from_path(&next).unwrap(),
+        &next,
+    )
+    .await?;
+    assert_native_turn_pages(&store, thread_id).await?;
     let fork = store
         .prepare_fork(crate::PrepareForkParams {
             thread_id,
@@ -143,6 +162,17 @@ async fn continuation_preserves_history_and_native_append() -> Result<(), Box<dy
     );
     drop(fork);
     store.shutdown_thread(child).await?;
+    codex_rollout::state_db::reconcile_rollout(
+        Some(&state),
+        &child_path,
+        "test-provider",
+        None,
+        &[],
+        Some(false),
+        None,
+    )
+    .await;
+    assert_native_turn_pages(&store, child).await?;
     assert!(
         store
             .delete_thread(crate::DeleteThreadParams { thread_id })
@@ -159,6 +189,53 @@ async fn continuation_preserves_history_and_native_append() -> Result<(), Box<dy
     assert!(!old.exists());
     assert!(!next.exists());
     Ok(())
+}
+
+/// Reads one turn per page so the native cursor crosses the inherited segment boundary.
+async fn assert_native_turn_pages(
+    store: &LocalThreadStore,
+    thread_id: ThreadId,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut cursor = None;
+    for label in ["before", "after"] {
+        let page = store
+            .list_turns(crate::ListTurnsParams {
+                thread_id,
+                include_archived: false,
+                cursor,
+                page_size: 1,
+                sort_direction: crate::SortDirection::Asc,
+                items_view: crate::StoredTurnItemsView::Summary,
+            })
+            .await?;
+        assert_eq!(page.turns.len(), 1);
+        let turn = &page.turns[0];
+        assert_eq!(turn.turn_id, label);
+        assert_eq!(turn.status, crate::StoredTurnStatus::Completed);
+        assert_eq!(turn.items.len(), 2);
+        let user: serde_json::Value = serde_json::from_slice(&turn.items[0].item_json)?;
+        let agent: serde_json::Value = serde_json::from_slice(&turn.items[1].item_json)?;
+        assert_eq!(user["content"][0]["text"], format!("question {label}"));
+        assert_eq!(agent["text"], format!("answer {label}"));
+        cursor = page.next_cursor;
+        assert_eq!(cursor.is_some(), label == "before");
+    }
+    Ok(())
+}
+
+fn compatibility_turn(thread_id: ThreadId, label: &str) -> serde_json::Result<Vec<RolloutItem>> {
+    serde_json::from_value(serde_json::json!([
+        {"type":"event_msg", "payload":{"type":"turn_started","turn_id":label}},
+        {"type":"response_item", "payload":{"type":"message","role":"user",
+            "content":[{"type":"input_text","text":format!("question {label}")}] }},
+        {"type":"event_msg", "payload":{"type":"item_completed", "thread_id":thread_id,
+            "turn_id":label, "item":{"type":"UserMessage", "id":format!("user-{label}"),
+                "content":[{"type":"text", "text":format!("question {label}"), "text_elements":[]}]}}},
+        {"type":"event_msg", "payload":{"type":"item_completed", "thread_id":thread_id,
+            "turn_id":label, "item":{"type":"AgentMessage", "id":format!("agent-{label}"),
+                "content":[{"type":"Text", "text":format!("answer {label}")}]}}},
+        {"type":"event_msg", "payload":{"type":"turn_complete","turn_id":label}}
+    ]))
 }
 
 /// An active compaction checkpoint keeps lifecycle recovery in the selected file.
