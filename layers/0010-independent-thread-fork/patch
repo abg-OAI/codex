@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 8a0a4f864043a011362044b830ab7bd4678f9b68..ea8a1d7bceb8e2c0f5a09cbb65b28e8feb252228 100644
+index 14a266fafd1902a792fe51c4c246cb15a87e1e55..462ce1cc4bbc84b0e9b466e442606f4b4dad3800 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -84,6 +84,7 @@ pub(crate) fn thread_extensions(
@@ -55,10 +55,10 @@ index 0e5b94605cafe76a6c7fe66b8627aa905dd16dd4..e548b2f1503cf3cf31fa705c73e46c3b
 +    fork_thread::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 75ebd962b95f617d345558c5cf43ba96bd9d9e17..572552f0a2901ef9b03fa5aebee3c07e8d1baf89 100644
+index f726e9443116707d78584d344ef277ad6b28d1bc..7a2bd1fd95368be21d27a92d0f0a31f429df1565 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -1246,6 +1246,11 @@ impl ThreadManager {
+@@ -1251,6 +1251,11 @@ impl ThreadManager {
          self.state.thread_created_tx.subscribe()
      }
 
