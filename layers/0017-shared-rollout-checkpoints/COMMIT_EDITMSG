@@ -1,0 +1,30 @@
+rollouts: Bound checkpoint reads across shared history
+
+Native paginated forks share inherited transcript files, but current
+context reads can still resolve old ancestry before finding a usable
+checkpoint.
+Probe the selected physical file or frozen prefix first, stopping at a
+complete native replacement checkpoint and its required companions.
+Incomplete or oversized probes and historical boundaries retain native
+reconstruction, so the read bound never truncates model context.
+
+Capture child state during fork initialization, retaining effective
+settings and interruption evidence without replaying startup model
+items twice.
+Copied paginated subagents already have a self-contained prefix and do
+not need another copy.
+Compaction uses its existing native checkpoint; rollback keeps its
+native continuation at the retained historical boundary.
+
+An eligible checkpoint with a terminal latest turn can seal its current
+file behind a native history reference.
+The successor keeps the logical thread identity and creation time while
+using a new physical rollout and the existing selected-path update.
+Active turns remain in one file because vanilla daemon recovery reads
+the selected physical file's lifecycle records.
+
+The live writer owns both files until publication is resolved.
+Later writes reconcile an uncertain result before choosing a recorder;
+a positively rejected candidate is stopped and removed.
+Predecessors remain immutable and existing native reference sharing
+supplies fork disk savings without database or wire-format changes.
