@@ -1,5 +1,5 @@
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 67a2376933028218223bafc8a96dca10366fb974..7685b7206f41409eba6c36785ba6640c31d45fc6 100644
+index e97a47bea3d09493d41fc4f3bb7c1764c91fdbba..eb4283c25d693b97af02541ffff37502aa61c31f 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -1176,8 +1176,10 @@ impl CodexThread {
@@ -16,7 +16,7 @@ index 67a2376933028218223bafc8a96dca10366fb974..7685b7206f41409eba6c36785ba6640c
      }
 
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 53a446cc7c8c8ac36237d4490be97b2dbc64f659..4f4f0def82ace8912f122f1427207a4caa7e9885 100644
+index d08d7105194f1680011ab96e531371a93133b3ab..c86da34695981a7e6ff0ff226b1cb99aae48cb84 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -279,6 +279,7 @@ pub(crate) mod multi_agents;
@@ -27,7 +27,7 @@ index 53a446cc7c8c8ac36237d4490be97b2dbc64f659..4f4f0def82ace8912f122f1427207a4c
  mod retained_context;
  mod review;
  mod rollout_budget;
-@@ -1903,6 +1904,18 @@ impl Session {
+@@ -1905,6 +1906,18 @@ impl Session {
                  self.state.lock().await.latest_token_usage_record =
                      Self::last_token_usage_record_from_rollout(&rollout_items);
 
@@ -46,7 +46,7 @@ index 53a446cc7c8c8ac36237d4490be97b2dbc64f659..4f4f0def82ace8912f122f1427207a4c
                  let thread_settings_applied =
                      RolloutItem::EventMsg(thread_settings::applied_event(self).await);
                  match &self.fork_persistence {
-@@ -1929,7 +1942,13 @@ impl Session {
+@@ -1931,7 +1944,13 @@ impl Session {
                          rollout_items.push(thread_settings_applied);
                      }
                  }
@@ -304,7 +304,7 @@ index a038e1e641e63c8f7c63a6325abf2df63823ade7..6d1570171a9f72aabc0ca94df0101a3a
  #[expect(
      clippy::await_holding_invalid_type,
 diff --git a/codex-rs/rollout/src/recorder.rs b/codex-rs/rollout/src/recorder.rs
-index 44fffde8e596b409830af28cdabefabfa60565b0..0ea45ac84a8105afd26e431c4c605ad24fed3363 100644
+index b4b8bda7f94fccff79d7b434692bc8f26b3c22b6..64b3cd41d3bcb7234c76554f77d692a447f7f29b 100644
 --- a/codex-rs/rollout/src/recorder.rs
 +++ b/codex-rs/rollout/src/recorder.rs
 @@ -99,6 +99,8 @@ pub enum RolloutRecorderParams {
@@ -361,10 +361,10 @@ index 44fffde8e596b409830af28cdabefabfa60565b0..0ea45ac84a8105afd26e431c4c605ad2
                      runtime_workspace_roots,
                      originator,
 diff --git a/codex-rs/thread-store/src/live_thread.rs b/codex-rs/thread-store/src/live_thread.rs
-index a104a15ab5e82ab1035467f2a4a09c5101fff378..671bc07189fdcb86341c537bab26da58436e5391 100644
+index bb11518b5c321742acf69e2980b24e8e9e0d1963..dd74161273b091f524e9365568def5231abb911c 100644
 --- a/codex-rs/thread-store/src/live_thread.rs
 +++ b/codex-rs/thread-store/src/live_thread.rs
-@@ -42,6 +42,7 @@ pub struct LiveThread {
+@@ -43,6 +43,7 @@ pub struct LiveThread {
      thread_store: Arc<dyn ThreadStore>,
      metadata_sync: Arc<Mutex<ThreadMetadataSync>>,
      persistence_telemetry: RolloutPersistenceTelemetry,
@@ -372,7 +372,7 @@ index a104a15ab5e82ab1035467f2a4a09c5101fff378..671bc07189fdcb86341c537bab26da58
  }
 
  /// Owns persistence acquisition and its live thread while initialization is still fallible.
-@@ -149,7 +150,9 @@ impl LiveThread {
+@@ -150,7 +151,9 @@ impl LiveThread {
          let metadata_sync =
              ThreadMetadataSync::for_create(&params, inherited_preview.as_deref()).await;
          thread_store.create_thread(params).await?;
@@ -382,7 +382,7 @@ index a104a15ab5e82ab1035467f2a4a09c5101fff378..671bc07189fdcb86341c537bab26da58
              thread_id,
              history_mode,
              thread_store,
-@@ -218,8 +221,10 @@ impl LiveThread {
+@@ -221,8 +224,10 @@ impl LiveThread {
          };
          params.history = Some(Arc::clone(&history));
          let metadata_sync = ThreadMetadataSync::for_resume(&params, metadata.as_ref());
@@ -393,7 +393,7 @@ index a104a15ab5e82ab1035467f2a4a09c5101fff378..671bc07189fdcb86341c537bab26da58
                  thread_id,
                  history_mode,
                  thread_store,
-@@ -403,6 +408,27 @@ impl LiveThread {
+@@ -407,6 +412,27 @@ impl LiveThread {
          }
      }
 
@@ -639,7 +639,7 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..ad0314333e7df8e1ea37b9109c52be2a
          sync_materialized_rollout_path(store, thread_id, recorder.rollout_path()).await?;
      }
 diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
-index ac086941bdfd68b7abb756882984e4e1ebb2b1dc..6f7bcbb29c6b7329c18a13b91884a73622dae3a6 100644
+index 3311c0b8ad842ed8ee46e13ce7d6d108a7a4b759..3716ce3143b2f3ea949399b0256cd444c4d11902 100644
 --- a/codex-rs/thread-store/src/local/mod.rs
 +++ b/codex-rs/thread-store/src/local/mod.rs
 @@ -170,6 +170,10 @@ type WriterLockGuard = Arc<codex_rollout::WriterLockGuard>;
@@ -1009,10 +1009,10 @@ index 6688110d928572b1d4745a85923c4880017d2ef7..c43476ba3a16b69812a656100c2c5a5e
  }
 -
 diff --git a/codex-rs/thread-store/src/local/rollout_lineage.rs b/codex-rs/thread-store/src/local/rollout_lineage.rs
-index d52c01cb389f63eb1cee34a51cac85d4d49db97d..2fd82970e8100c7b1b25125ee783f712c4630c03 100644
+index 55140b466a9a0cedc2462a8a76209606b7dd2d93..c917b5b659755592dd1d73286975ee65cde9b08e 100644
 --- a/codex-rs/thread-store/src/local/rollout_lineage.rs
 +++ b/codex-rs/thread-store/src/local/rollout_lineage.rs
-@@ -238,7 +238,10 @@ async fn attached_history_start(path: &Path, start: u64) -> std::io::Result<u64>
+@@ -108,7 +108,10 @@ async fn attached_history_start(path: &Path, start: u64) -> std::io::Result<u64>
 
  // Resume can retain either a logical or canonical path. Validate both against the same
  // canonical managed roots so a nested symlink cannot escape this home.
