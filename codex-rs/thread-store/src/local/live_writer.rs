@@ -21,6 +21,8 @@ use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
 use crate::types::canonical_history_mode_from_rollout_items;
 
+mod segments;
+
 const ROLLOUT_SIZE_BYTES_METRIC: &str = "codex.rollout.size_bytes";
 
 pub(super) async fn create_thread(
@@ -31,8 +33,25 @@ pub(super) async fn create_thread(
     let inherited_cursor = if params.initial_window_id.allocation().is_some()
         && let (Some(parent), Some(base)) = (params.forked_from_id, params.history_base)
     {
-        let lineage = store.resolve_rollout_lineage_for_reference(parent).await?;
-        let prefix = super::model_context::load_for_fork(lineage, Some(base)).await?;
+        let current =
+            super::thread_rollout_resolver::resolve_current_including_archived(store, parent)
+                .await?;
+        let checkpoint = match current {
+            Some(current)
+                if codex_rollout::rollout_id_from_path(&current.path) == Some(base.thread_id) =>
+            {
+                super::model_context::scan_checkpoint(&current.path, Some(base.end_byte_offset))
+                    .await?
+            }
+            _ => None,
+        };
+        let prefix = match checkpoint {
+            Some(prefix) => prefix,
+            None => {
+                let lineage = store.resolve_rollout_lineage_for_reference(parent).await?;
+                super::model_context::load_for_fork(lineage, Some(base)).await?
+            }
+        };
         codex_rollout::next_model_id_ordinals(&prefix).0
     } else {
         0
@@ -191,26 +210,49 @@ pub(super) async fn append_items(
     store: &LocalThreadStore,
     params: AppendThreadItemsParams,
 ) -> ThreadStoreResult<()> {
-    write_and_project(
-        store,
-        params.thread_id,
-        RolloutWriteOp::AppendItems(params.items),
-    )
-    .await
+    let writer = store.live_writer_locks.lock(params.thread_id).await;
+    if segments::is_rotation_checkpoint(&params.items) {
+        // Reserve append order before transferring ownership; cancellation must not let
+        // a later history mutation overtake this snapshot.
+        let store = store.clone();
+        tokio::spawn(async move {
+            write_and_project(
+                &store,
+                params.thread_id,
+                RolloutWriteOp::AppendItems(params.items),
+                writer,
+            )
+            .await
+        })
+        .await
+        .map_err(|error| ThreadStoreError::Internal {
+            message: format!("checkpoint writer task failed: {error}"),
+        })?
+    } else {
+        write_and_project(
+            store,
+            params.thread_id,
+            RolloutWriteOp::AppendItems(params.items),
+            writer,
+        )
+        .await
+    }
 }
 
 pub(super) async fn persist_thread(
     store: &LocalThreadStore,
     thread_id: ThreadId,
 ) -> ThreadStoreResult<()> {
-    write_and_project(store, thread_id, RolloutWriteOp::Persist).await
+    let writer = store.live_writer_locks.lock(thread_id).await;
+    write_and_project(store, thread_id, RolloutWriteOp::Persist, writer).await
 }
 
 pub(super) async fn flush_thread(
     store: &LocalThreadStore,
     thread_id: ThreadId,
 ) -> ThreadStoreResult<()> {
-    write_and_project(store, thread_id, RolloutWriteOp::Flush).await
+    let writer = store.live_writer_locks.lock(thread_id).await;
+    write_and_project(store, thread_id, RolloutWriteOp::Flush, writer).await
 }
 
 pub(super) async fn shutdown_thread(
@@ -219,6 +261,7 @@ pub(super) async fn shutdown_thread(
 ) -> ThreadStoreResult<()> {
     let mut pending_metadata = store.pending_thread_metadata.lock(thread_id).await;
     let _live_writer_guard = store.live_writer_locks.lock(thread_id).await;
+    segments::reconcile_publication(store, thread_id).await?;
     let (recorder, rollout_id, history_mode) = live_writer_parts(store, thread_id).await?;
     let rollout_path = recorder.rollout_path().to_path_buf();
     if matches!(history_mode, ThreadHistoryMode::Legacy) {
@@ -274,11 +317,18 @@ pub(super) async fn discard_thread(
         .await
         .remove(&thread_id)
         .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?;
-    entry
-        .recorder
-        .discard()
-        .await
-        .map_err(thread_store_io_error)
+    discard_recorders(entry).await
+}
+
+/// Stop every owned recorder even when one actor has already failed.
+pub(super) async fn discard_recorders(entry: super::LiveRecorderEntry) -> ThreadStoreResult<()> {
+    let pending = match entry.pending_continuation {
+        // Unknown publication keeps both files for native recovery.
+        Some(pending) => pending.recorder.discard().await,
+        None => Ok(()),
+    };
+    let current = entry.recorder.discard().await;
+    pending.and(current).map_err(thread_store_io_error)
 }
 
 async fn index_attached_thread(
@@ -428,13 +478,15 @@ async fn write_and_project(
     store: &LocalThreadStore,
     thread_id: ThreadId,
     write_op: RolloutWriteOp,
+    mut cursor: tokio::sync::OwnedMutexGuard<u64>,
 ) -> ThreadStoreResult<()> {
+    segments::reconcile_publication(store, thread_id).await?;
     // Every live write should have a recorder: create/resume installs one, while
     // shutdown/discard/delete removes it. Keep the lookup defensive so late writes fail after
     // teardown.
-    let mut cursor = store.live_writer_locks.lock(thread_id).await;
     let (recorder, rollout_id, history_mode) = live_writer_parts(store, thread_id).await?;
     let sync_rollout_path = matches!(&write_op, RolloutWriteOp::Persist | RolloutWriteOp::Flush);
+    let mut checkpoint = None;
     match write_op {
         RolloutWriteOp::AppendItems(items) => {
             let mut items = into_persisted_rollout_items(items, history_mode);
@@ -442,6 +494,12 @@ async fn write_and_project(
                 return Ok(());
             }
             let next = codex_rollout::stamp_item_ordinals(*cursor, &mut items);
+            if history_mode == ThreadHistoryMode::Paginated
+                && segments::is_rotation_checkpoint(&items)
+                && segments::matches_tail(recorder.rollout_path(), &items).await?
+            {
+                return Ok(());
+            }
             recorder
                 .record_canonical_items(&items)
                 .await
@@ -449,6 +507,11 @@ async fn write_and_project(
             // Once queued, the recorder owns the batch even if flush is cancelled or retried.
             *cursor = next;
             recorder.flush().await.map_err(thread_store_io_error)?;
+            if history_mode == ThreadHistoryMode::Paginated
+                && segments::is_rotation_checkpoint(&items)
+            {
+                checkpoint = Some(items);
+            }
         }
         RolloutWriteOp::Persist => recorder.persist().await.map_err(thread_store_io_error)?,
         RolloutWriteOp::Flush => recorder.flush().await.map_err(thread_store_io_error)?,
@@ -464,6 +527,22 @@ async fn write_and_project(
         .await
         {
             warn!("failed to project durable rollout for {thread_id}: {err}");
+        }
+    }
+    if let Some(items) = checkpoint {
+        if let Err(error) = segments::rotate(store, thread_id, &recorder, rollout_id, &items).await
+        {
+            // Only a resolved original writer can safely continue inline.
+            if store
+                .live_recorders
+                .lock()
+                .await
+                .get(&thread_id)
+                .is_none_or(|entry| entry.pending_continuation.is_some())
+            {
+                return Err(error);
+            }
+            warn!("failed to rotate checkpoint for {thread_id}: {error}");
         }
     }
     if sync_rollout_path {
