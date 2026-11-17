@@ -1,0 +1,5 @@
+Extract the native rollout continuation factory
+
+Keep creation of a new physical rollout separate from revert's
+boundary selection and selected-path update. Preserve the recorder
+parameters and failure behavior for the existing revert caller.
