@@ -31,9 +31,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
-          go-version-file: go.mod
+          version: 2026.10.13
+          install_args: --locked
 
       - name: Materialize and publish immutable projection
         id: release
@@ -46,20 +47,9 @@ jobs:
           # Treat the tag and commit as one validated upstream identity. The
           # commit check below protects against a moved or incorrectly fetched
           # tag before any projection is published.
-          upstream=$(jq -er '
-            [.tag, .commit]
-            | if all(.[]; type == "string" and length > 0)
-              then @tsv
-              else error("tag and commit must be non-empty strings")
-              end
-          ' upstream.json)
+          upstream=$(python3 tools/upstream.py)
           IFS=$'\t' read -r codex_tag codex_commit <<<"${upstream}"
           codex_version=${codex_tag#rust-v}
-          pattern='^[0-9]+\.[0-9]+\.[0-9]+(-(alpha(\.[0-9]+){0,2}|beta(\.[0-9]+)?))?$'
-          if [[ "${codex_tag}" == "${codex_version}" || ! "${codex_version}" =~ ${pattern} ]]; then
-            echo "upstream.json must identify a Codex rust-v* release tag." >&2
-            exit 1
-          fi
 
           git fetch --no-tags https://github.com/openai/codex.git \
             "+refs/tags/${codex_tag}:refs/tags/${codex_tag}"
@@ -69,15 +59,16 @@ jobs:
             exit 1
           }
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_AUTHOR_NAME="github-actions[bot]"
+          export GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_COMMITTER_NAME="${GIT_AUTHOR_NAME}"
+          export GIT_COMMITTER_EMAIL="${GIT_AUTHOR_EMAIL}"
 
-          # Keep a worktree attached through version stamping so the immutable
-          # tag records the exact source tree used by every platform build.
+          # Stamp the independent projection, then fetch it into this release
+          # checkout so its authenticated origin can publish the immutable tag.
           release_worktree="${RUNNER_TEMP}/saffrodex-release"
-          go run ./cmd/layerctl projection create release \
+          mise exec -- layerctl projection create release \
             --worktree "${release_worktree}"
-          release_ref=refs/layerctl/projections/release/head
 
           # Derive the next suffix from remote tags so a fresh runner never
           # reuses an already published release number.
@@ -159,7 +150,9 @@ jobs:
           git -C "${release_worktree}" add -- \
             codex-rs/Cargo.toml codex-rs/Cargo.lock
           git -C "${release_worktree}" commit -m "saffrodex ${version}"
-          release_commit=$(git rev-parse "${release_ref}^{commit}")
+          release_commit=$(git -C "${release_worktree}" rev-parse HEAD)
+          git fetch --no-tags --update-shallow "${release_worktree}" \
+            "HEAD:refs/layerctl/release-candidate"
           [[ -z "$(
             git -C "${release_worktree}" ls-tree -r --name-only \
               "${release_commit}" -- .github/workflows

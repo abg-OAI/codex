@@ -1,3 +1,5 @@
+[vcs]
+commit-msg = '''
 Stop turn continuation after terminal archival acceptance
 
 The upstream regular-task loop and final task handoff may resume a turn
@@ -7,3 +9,12 @@ closing message, so entering the turn again duplicates that message.
 Let an accepted request proceed to the host handoff while it still owns
 the turn. Unaccepted requests and accepted steering retain normal
 continuation behavior.
+'''
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"

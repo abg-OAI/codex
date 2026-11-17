@@ -1,3 +1,5 @@
+[vcs]
+commit-msg = '''
 Allow root agents to resume durable goals
 
 Paused and blocked goals currently require an app-server caller to
@@ -9,3 +11,12 @@ Add a root-only Saffron tool backed by a goal-extension capability
 that owns conditional persistence and runtime effects. Resumption now
 preserves goal identity and accounting while rejecting stale, active,
 exhausted, or completed goals.
+'''
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"

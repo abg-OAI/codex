@@ -1,3 +1,5 @@
+[vcs]
+commit-msg = '''
 collaboration: Wake parents for actionable child results
 
 A finished MultiAgentV2 child previously queued its terminal result
@@ -25,3 +27,12 @@ of starting a successor turn.
 Keep app-server teardown ownership until an accepted shutdown finishes.
 
 Keep passive agent messages queue-only.
+'''
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"

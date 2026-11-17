@@ -1,3 +1,5 @@
+[vcs]
+commit-msg = '''
 Add independent root forks through saffron.fork_thread
 
 Root threads can start a persistent independent assignment from completed
@@ -21,3 +23,12 @@ without creating a duplicate fork.
 Deliver the initial assignment as attributed Saffron tool output using the
 parent session identity. Preserve it under the existing chronological
 compaction budget without promoting agent text to human instructions.
+'''
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"

@@ -1,3 +1,5 @@
+[vcs]
+commit-msg = '''
 Promote completed subagents into independent threads
 
 Add saffron.promote_subagent to the owning root's tool set. It makes
@@ -13,3 +15,12 @@ and reuse it on retries. Report uncertain creation or incomplete
 retirement with both thread IDs. Retirement can close some completed
 descendants before a later member refuses shutdown. Native fork APIs own
 copying; small session and agent-runtime seams own completion and teardown.
+'''
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"

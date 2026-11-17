@@ -1,29 +1,31 @@
 # Saffrodex repository
 
 This repository stores the canonical Saffrodex layer definitions and the
-tooling that projects them onto exact OpenAI Codex releases.
+release automation that projects them onto pinned OpenAI Codex releases.
 It is not itself a Codex source checkout.
 
 ## Repository model
 
-`upstream.json` identifies the exact Codex release used by the current
-projection.
+The first `git-clone` operation in `layers/0000-foundation/layer.toml`
+identifies the official Codex release tag and commit used by the projection.
 `layers/0000-foundation/` contains the non-feature changes that every
 projected Saffrodex tree needs.
 Every generated commit is defined by one `layers/NNNN-layer-slug/` directory.
 The four-digit prefix determines application order through ordinary lexical
 sorting; no separate series or order file exists.
-Each directory contains a required `COMMIT_EDITMSG`, an optional binary-safe
-`patch`, and optional complete added files under `overlay/`.
-Layers apply patch then overlay; `LAYERCTL.md` owns capture and collision rules.
+Each directory contains `layer.toml`, with a commit message and ordered
+operations referencing binary-safe patches and complete added files in overlays.
+`LAYERCTL.md` owns capture, collision, and upstream repair workflows.
 Original commit authorship is not part of a layer.
 Treat layer directories as generated artifacts:
 edit and review source in a hydrated projection,
 then use `layerctl layer add` or `layerctl layer refresh` to capture it.
+Upstream conflicts require explicit repair of the affected stored operations,
+followed by fresh replay; `projection continue` alone does not capture them.
 
-`upstream.json` and the ordered layer definitions form one coherent state.
-After advancing `upstream.json`, refresh every layer in order against the new
-upstream tree and each refreshed predecessor.
+The foundation source pin and ordered layer definitions form one coherent state.
+After advancing the pin, reconcile conflicting operations against the new
+upstream tree and each repaired predecessor.
 Cargo commands can rewrite local-package entries in `codex-rs/Cargo.lock` to
 the workspace release version. Do not capture that generated version churn in
 a layer. Local package versions already present upstream must remain unchanged,

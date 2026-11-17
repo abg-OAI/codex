@@ -1,3 +1,5 @@
+[vcs]
+commit-msg = '''
 Preserve task requests through compaction
 
 Host-delivered assignments use standalone tool-output envelopes.
@@ -20,3 +22,12 @@ Older histories can contain generated request accounts or refinement
 annotations alongside their original requests.
 Omit those retired annotations from model input and token estimates,
 without rewriting transcripts or restoring requests removed by rollback.
+'''
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"
