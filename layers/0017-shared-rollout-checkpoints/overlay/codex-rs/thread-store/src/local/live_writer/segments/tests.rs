@@ -28,7 +28,7 @@ async fn continuation_preserves_history_and_native_append() -> Result<(), Box<dy
     let message: RolloutItem = serde_json::from_value(serde_json::json!({
         "type": "response_item", "payload": {
             "type": "message", "role": "user",
-            "content": [{"type": "input_text", "text": "x".repeat(2 * 1024 * 1024)}]
+            "content": [{"type": "input_text", "text": "x".repeat(8)}]
         }
     }))?;
     store
@@ -161,7 +161,7 @@ async fn continuation_preserves_history_and_native_append() -> Result<(), Box<dy
     Ok(())
 }
 
-/// An active fork checkpoint cannot strand the interrupted turn in a sealed predecessor.
+/// An active compaction checkpoint keeps lifecycle recovery in the selected file.
 #[tokio::test]
 async fn active_turn_checkpoint_keeps_lifecycle_in_one_file()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -216,6 +216,17 @@ async fn active_turn_checkpoint_keeps_lifecycle_in_one_file()
         })
         .await?;
     assert_eq!(store.live_rollout_path(id).await?, path);
+    let context = store
+        .load_latest_model_context(LoadThreadHistoryParams {
+            thread_id: id,
+            include_archived: false,
+        })
+        .await?;
+    assert!(serde_json::to_vec(&context.items)?.len() < 64 * 1024);
+    assert!(matches!(
+        context.items.get(1),
+        Some(RolloutItem::Compacted(_))
+    ));
     let (items, _, _) = RolloutRecorder::load_rollout_items(&path).await?;
     assert!(items.iter().any(|item| matches!(item, RolloutItem::EventMsg(EventMsg::TurnStarted(event)) if event.turn_id == "active")));
     let terminal: RolloutItem = serde_json::from_value(serde_json::json!({
@@ -227,6 +238,8 @@ async fn active_turn_checkpoint_keeps_lifecycle_in_one_file()
             items: vec![terminal],
         })
         .await?;
+    // An ordinary terminal event does not capture or rotate another checkpoint.
+    assert_eq!(store.live_rollout_path(id).await?, path);
     store
         .append_items(AppendThreadItemsParams {
             thread_id: id,
@@ -265,6 +278,100 @@ async fn failed_publication_preserves_original_writer() -> Result<(), Box<dyn st
     create(&store, id).await?;
     let items: Vec<RolloutItem> = serde_json::from_value(serde_json::json!([
         {"type":"response_item", "payload":{"type":"message","role":"user",
+            "content":[{"type":"input_text","text":"small history"}]}},
+        {"type":"event_msg", "payload":{"type":"turn_complete","turn_id":"done"}}
+    ]))?;
+    store
+        .append_items(AppendThreadItemsParams {
+            thread_id: id,
+            items,
+        })
+        .await?;
+    let old = store.live_rollout_path(id).await?;
+    assert!(tokio::fs::metadata(&old).await?.len() < 64 * 1024);
+    codex_rollout::state_db::reconcile_rollout(
+        Some(&state),
+        &old,
+        "test-provider",
+        None,
+        &[],
+        Some(false),
+        None,
+    )
+    .await;
+    sqlx::query("CREATE TRIGGER reject_segment BEFORE UPDATE OF rollout_path ON threads WHEN OLD.rollout_path != NEW.rollout_path BEGIN SELECT RAISE(ABORT, 'reject publication'); END").execute(&pool).await?;
+    store
+        .append_items(AppendThreadItemsParams {
+            thread_id: id,
+            items: checkpoint(id)?,
+        })
+        .await?;
+    assert_eq!(store.live_rollout_path(id).await?, old);
+    assert_eq!(state.get_thread(id).await?.unwrap().rollout_path, old);
+    assert_eq!(rollout_files(old.parent().unwrap()).len(), 1);
+    let appended: RolloutItem = serde_json::from_value(serde_json::json!({
+        "type":"response_item", "payload":{"type":"message","role":"user",
+            "content":[{"type":"input_text","text":"after rejected publication"}]}
+    }))?;
+    store
+        .append_items(AppendThreadItemsParams {
+            thread_id: id,
+            items: vec![appended],
+        })
+        .await?;
+    let context = store
+        .load_latest_model_context(LoadThreadHistoryParams {
+            thread_id: id,
+            include_archived: false,
+        })
+        .await?;
+    assert!(matches!(
+        context.items.last(),
+        Some(RolloutItem::ResponseItem(_))
+    ));
+    store.shutdown_thread(id).await?;
+    Ok(())
+}
+
+/// A failed publication and unreadable selection can recover before the next append.
+#[tokio::test]
+async fn unresolved_publication_recovers_before_next_append()
+-> Result<(), Box<dyn std::error::Error>> {
+    exercise_unresolved_publication("BEFORE", false).await
+}
+
+#[tokio::test]
+async fn uncertain_committed_publication_recovers_before_next_append()
+-> Result<(), Box<dyn std::error::Error>> {
+    exercise_unresolved_publication("AFTER", false).await
+}
+
+#[tokio::test]
+async fn discard_closes_both_writers_after_uncertain_publication()
+-> Result<(), Box<dyn std::error::Error>> {
+    exercise_unresolved_publication("AFTER", true).await
+}
+
+async fn exercise_unresolved_publication(
+    timing: &str,
+    discard: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let home = TempDir::new()?;
+    let config = test_config(home.path());
+    let state = codex_state::StateRuntime::init(
+        config.sqlite.clone(),
+        config.default_model_provider_id.clone(),
+    )
+    .await?;
+    let pool = config
+        .sqlite
+        .open_read_write_pool(&config.sqlite.state_db_path())
+        .await?;
+    let store = LocalThreadStore::new(config, Some(state.clone()));
+    let id = ThreadId::new();
+    create(&store, id).await?;
+    let items: Vec<RolloutItem> = serde_json::from_value(serde_json::json!([
+        {"type":"response_item", "payload":{"type":"message","role":"user",
             "content":[{"type":"input_text","text":"x".repeat(2 * 1024 * 1024)}]}},
         {"type":"event_msg", "payload":{"type":"turn_complete","turn_id":"done"}}
     ]))?;
@@ -285,15 +392,80 @@ async fn failed_publication_preserves_original_writer() -> Result<(), Box<dyn st
         None,
     )
     .await;
-    sqlx::query("CREATE TRIGGER reject_segment BEFORE UPDATE OF rollout_path ON threads WHEN OLD.rollout_path != NEW.rollout_path BEGIN SELECT RAISE(ABORT, 'reject publication'); END").execute(&pool).await?;
-    store
-        .append_items(AppendThreadItemsParams {
-            thread_id: id,
-            items: checkpoint(id)?,
-        })
+    sqlx::query(if timing == "BEFORE" {
+        "CREATE TRIGGER reject_segment BEFORE UPDATE OF rollout_path ON threads WHEN OLD.rollout_path != NEW.rollout_path BEGIN UPDATE threads SET history_mode = 'unreadable' WHERE id = OLD.id; SELECT RAISE(FAIL, 'reject publication'); END"
+    } else {
+        "CREATE TRIGGER reject_segment AFTER UPDATE OF rollout_path ON threads WHEN OLD.rollout_path != NEW.rollout_path BEGIN UPDATE threads SET history_mode = 'unreadable' WHERE id = OLD.id; SELECT RAISE(FAIL, 'reject publication'); END"
+    }).execute(&pool).await?;
+    assert!(
+        store
+            .append_items(AppendThreadItemsParams {
+                thread_id: id,
+                items: checkpoint(id)?,
+            })
+            .await
+            .is_err()
+    );
+    assert!(state.get_thread(id).await.is_err());
+    let paths = rollout_files(old.parent().unwrap());
+    assert_eq!(paths.len(), 2);
+    let before = paths
+        .iter()
+        .map(std::fs::read)
+        .collect::<Result<Vec<_>, _>>()?;
+    assert!(
+        store
+            .append_items(AppendThreadItemsParams {
+                thread_id: id,
+                items: checkpoint(id)?,
+            })
+            .await
+            .is_err()
+    );
+    assert!(store.flush_thread(id).await.is_err());
+    assert!(store.shutdown_thread(id).await.is_err());
+    assert_eq!(
+        paths
+            .iter()
+            .map(std::fs::read)
+            .collect::<Result<Vec<_>, _>>()?,
+        before
+    );
+    if discard {
+        let (current, pending) = {
+            let entries = store.live_recorders.lock().await;
+            let entry = entries.get(&id).unwrap();
+            (
+                entry.recorder.clone(),
+                entry
+                    .pending_continuation
+                    .as_ref()
+                    .unwrap()
+                    .recorder
+                    .clone(),
+            )
+        };
+        store.discard_thread(id).await?;
+        assert!(current.flush().await.is_err());
+        assert!(pending.flush().await.is_err());
+        assert_eq!(
+            paths
+                .iter()
+                .map(std::fs::read)
+                .collect::<Result<Vec<_>, _>>()?,
+            before
+        );
+        return Ok(());
+    }
+    sqlx::query("DROP TRIGGER reject_segment")
+        .execute(&pool)
         .await?;
-    assert_eq!(store.live_rollout_path(id).await?, old);
-    assert_eq!(state.get_thread(id).await?.unwrap().rollout_path, old);
+    sqlx::query("UPDATE threads SET history_mode = 'paginated' WHERE id = ?")
+        .bind(id.to_string())
+        .execute(&pool)
+        .await?;
+    let selected = state.get_thread(id).await?.unwrap().rollout_path;
+    assert_eq!(selected == old, timing == "BEFORE");
     let appended: RolloutItem = serde_json::from_value(serde_json::json!({
         "type":"response_item", "payload":{"type":"message","role":"user",
             "content":[{"type":"input_text","text":"after rejected publication"}]}
@@ -304,6 +476,11 @@ async fn failed_publication_preserves_original_writer() -> Result<(), Box<dyn st
             items: vec![appended],
         })
         .await?;
+    assert_eq!(store.live_rollout_path(id).await?, selected);
+    assert_eq!(
+        rollout_files(old.parent().unwrap()).len(),
+        if timing == "BEFORE" { 1 } else { 2 }
+    );
     let context = store
         .load_latest_model_context(LoadThreadHistoryParams {
             thread_id: id,
@@ -550,4 +727,17 @@ fn create_params(store: &LocalThreadStore, thread_id: ThreadId) -> CreateThreadP
             memory_mode: ThreadMemoryMode::Enabled,
         },
     }
+}
+
+fn rollout_files(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut paths = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }

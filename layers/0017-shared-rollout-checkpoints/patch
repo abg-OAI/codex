@@ -16,7 +16,7 @@ index 67a2376933028218223bafc8a96dca10366fb974..7685b7206f41409eba6c36785ba6640c
      }
 
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 53a446cc7c8c8ac36237d4490be97b2dbc64f659..94e0c37a0f6ef56e478199e4972da10fa395c897 100644
+index 53a446cc7c8c8ac36237d4490be97b2dbc64f659..4f4f0def82ace8912f122f1427207a4caa7e9885 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -279,6 +279,7 @@ pub(crate) mod multi_agents;
@@ -27,6 +27,39 @@ index 53a446cc7c8c8ac36237d4490be97b2dbc64f659..94e0c37a0f6ef56e478199e4972da10f
  mod retained_context;
  mod review;
  mod rollout_budget;
+@@ -1903,6 +1904,18 @@ impl Session {
+                 self.state.lock().await.latest_token_usage_record =
+                     Self::last_token_usage_record_from_rollout(&rollout_items);
+
++                let settings_guard = thread_settings::acquire_persistence_lock(self).await;
++                // Copied paginated subagents already have a self-contained physical prefix.
++                // Other children capture their reconstructed context without snapshotting the parent.
++                let fork_checkpoint = if is_paginated_subagent
++                    && matches!(
++                        self.fork_persistence,
++                        ForkPersistence::Copied | ForkPersistence::CopiedDeferred
++                    ) {
++                    None
++                } else {
++                    self.fork_checkpoint_items(&rollout_items).await
++                };
+                 let thread_settings_applied =
+                     RolloutItem::EventMsg(thread_settings::applied_event(self).await);
+                 match &self.fork_persistence {
+@@ -1929,7 +1942,13 @@ impl Session {
+                         rollout_items.push(thread_settings_applied);
+                     }
+                 }
++                if let Some(checkpoint) = fork_checkpoint {
++                    // Snapshot processing may have synthesized an interrupt marker. Keep it
++                    // before replacement history, and its terminal event after the checkpoint.
++                    rollout_items.extend(checkpoint);
++                }
+                 self.persist_rollout_items(&rollout_items).await;
++                drop(settings_guard);
+                 if self.preserve_parent_tool_declarations() {
+                     let notice = DeveloperInstructions::new(
+                         "<mcp_tools>\nMCP tools are unavailable for this request.\n</mcp_tools>",
 diff --git a/codex-rs/core/src/session/persistence_repair.rs b/codex-rs/core/src/session/persistence_repair.rs
 index 7b538850cd50340298c8196975a503afd577eadd..028a5115f5cb94ec2ecf6c4bcfcd72ec224d43fe 100644
 --- a/codex-rs/core/src/session/persistence_repair.rs
@@ -61,24 +94,215 @@ index 7b538850cd50340298c8196975a503afd577eadd..028a5115f5cb94ec2ecf6c4bcfcd72ec
          items.push(RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(
              codex_protocol::protocol::ThreadSettingsAppliedEvent {
                  thread_id: Some(self.thread_id),
-diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index e215fd50b5a774d7d3c6336dbefbfb5a68129ddf..fd18cb6205ecdfd1601598fdc4e72640b12a8695 100644
---- a/codex-rs/core/src/tasks/mod.rs
-+++ b/codex-rs/core/src/tasks/mod.rs
-@@ -1088,6 +1088,13 @@ impl Session {
-             self.send_event(turn_context.as_ref(), event.clone()).await;
-         }
+diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
+index a038e1e641e63c8f7c63a6325abf2df63823ade7..6d1570171a9f72aabc0ca94df0101a3a512cd041 100644
+--- a/codex-rs/core/src/thread_manager_tests.rs
++++ b/codex-rs/core/src/thread_manager_tests.rs
+@@ -183,6 +183,204 @@ async fn startup_fixture() -> (tempfile::TempDir, Config, ThreadManager) {
+     (home, config, manager)
+ }
 
-+        if !saved_guardian_completion {
-+            // Writer ownership rechecks the persisted lifecycle boundary if a successor races us.
-+            if let Err(error) = self.checkpoint_after_turn().await {
-+                tracing::warn!(%error, "failed to checkpoint completed turn");
-+            }
-+        }
++#[tokio::test]
++async fn referenced_fork_checkpoint_preserves_context_settings_and_interrupt() {
++    assert_referenced_fork_checkpoint(false).await;
++}
 +
-         let cleared_active_turn = {
-             let mut active = self.active_turn.lock().await;
-             if let Some(active_turn) = active.as_ref()
++#[tokio::test]
++async fn referenced_fork_checkpoint_preserves_completed_summary() {
++    assert_referenced_fork_checkpoint(true).await;
++}
++
++async fn assert_referenced_fork_checkpoint(completed: bool) {
++    use codex_thread_store::ForkBoundary;
++    use codex_thread_store::LoadThreadHistoryParams;
++    use codex_thread_store::PrepareForkParams;
++
++    let home = tempdir().unwrap();
++    let mut config = test_config().await;
++    config.codex_home = home.path().abs();
++    config.cwd = config.codex_home.abs();
++    config.sqlite = codex_state::SqliteConfig::new_for_testing(config.codex_home.clone());
++    config.ephemeral = false;
++    let state_db = init_state_db(&config)
++        .await
++        .expect("disposable state database");
++    let manager = ThreadManager::with_models_provider_home_and_state_for_tests(
++        CodexAuth::from_api_key("dummy"),
++        config.model_provider.clone(),
++        config.codex_home.to_path_buf(),
++        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
++        Some(state_db),
++    );
++    let source = manager
++        .start_thread(StartThreadOptions {
++            history_mode: Some(ThreadHistoryMode::Paginated),
++            environments: Some(Vec::new()),
++            ..StartThreadOptions::new(config.clone())
++        })
++        .await
++        .unwrap();
++    let mut items: Vec<RolloutItem> = serde_json::from_value(serde_json::json!([
++        {"type":"event_msg", "payload":{"type":"turn_started", "turn_id":"source-active"}},
++        {"type":"response_item", "payload":{"type":"message", "role":"user",
++            "content":[{"type":"input_text", "text":"fork source message"}]}}
++    ]))
++    .unwrap();
++    items.push(RolloutItem::EventMsg(EventMsg::ItemCompleted(
++        codex_protocol::protocol::ItemCompletedEvent {
++            thread_id: source.thread_id,
++            turn_id: "source-active".into(),
++            item: codex_protocol::items::TurnItem::UserMessage(
++                codex_protocol::items::UserMessageItem {
++                    id: "source-user".into(),
++                    client_id: None,
++                    content: vec![codex_protocol::user_input::UserInput::Text {
++                        text: "fork source message".into(),
++                        text_elements: Vec::new(),
++                    }],
++                },
++            ),
++            content_token_count: None,
++            started_at_ms: Some(0),
++            completed_at_ms: 1,
++        },
++    )));
++    if completed {
++        items.push(
++            serde_json::from_value(serde_json::json!({
++                "type":"event_msg", "payload":{"type":"task_complete", "turn_id":"source-active"}
++            }))
++            .unwrap(),
++        );
++    }
++    source.thread.append_rollout_items(&items).await.unwrap();
++    source.thread.flush_rollout().await.unwrap();
++    let prepared = manager
++        .state
++        .thread_store
++        .prepare_fork(PrepareForkParams {
++            thread_id: source.thread_id,
++            boundary: ForkBoundary::Latest,
++        })
++        .await
++        .unwrap();
++    config.model_reasoning_effort = Some(codex_protocol::openai_models::ReasoningEffort::Low);
++    let child = manager
++        .fork_prepared_thread(
++            StartThreadOptions {
++                history_mode: Some(ThreadHistoryMode::Paginated),
++                environments: Some(Vec::new()),
++                ..StartThreadOptions::new(config)
++            },
++            prepared,
++        )
++        .await
++        .unwrap();
++    child.thread.flush_rollout().await.unwrap();
++    let context = manager
++        .state
++        .thread_store
++        .load_latest_model_context(LoadThreadHistoryParams {
++            thread_id: child.thread_id,
++            include_archived: false,
++        })
++        .await
++        .unwrap();
++    assert!(matches!(
++        context.items.get(1),
++        Some(RolloutItem::Compacted(_))
++    ));
++    if !completed {
++        assert!(
++            matches!(context.items.last(), Some(RolloutItem::EventMsg(EventMsg::TurnAborted(event)))
++            if event.reason == TurnAbortReason::Interrupted)
++        );
++    }
++    let turns = manager
++        .state
++        .thread_store
++        .list_turns(codex_thread_store::ListTurnsParams {
++            thread_id: child.thread_id,
++            include_archived: false,
++            cursor: None,
++            page_size: 10,
++            sort_direction: codex_thread_store::SortDirection::Asc,
++            items_view: codex_thread_store::StoredTurnItemsView::Summary,
++        })
++        .await
++        .unwrap();
++    let inherited_turn = turns
++        .turns
++        .iter()
++        .find(|turn| turn.turn_id == "source-active")
++        .unwrap();
++    assert_eq!(
++        inherited_turn.status,
++        if completed {
++            codex_thread_store::StoredTurnStatus::Completed
++        } else {
++            codex_thread_store::StoredTurnStatus::Interrupted
++        }
++    );
++    let inherited_item = inherited_turn
++        .items
++        .iter()
++        .find(|item| item.item_id == "source-user")
++        .expect("inherited user summary");
++    assert!(
++        std::str::from_utf8(&inherited_item.item_json)
++            .unwrap()
++            .contains("fork source message")
++    );
++    let settings = context
++        .items
++        .iter()
++        .rev()
++        .find_map(|item| match item {
++            RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event)) => {
++                Some(&event.thread_settings)
++            }
++            _ => None,
++        })
++        .unwrap();
++    assert_eq!(
++        serde_json::to_value(settings).unwrap(),
++        serde_json::to_value(child.thread.thread_settings_snapshot().await).unwrap()
++    );
++    let RolloutItem::Compacted(checkpoint) = &context.items[1] else {
++        unreachable!()
++    };
++    let model_items = checkpoint.replacement_history.as_ref().unwrap();
++    assert_eq!(
++        model_items
++            .iter()
++            .filter(|item| serde_json::to_string(&item.item)
++                .unwrap()
++                .contains("fork source message"))
++            .count(),
++        1
++    );
++    let interrupted = model_items
++        .iter()
++        .filter(|item| {
++            serde_json::to_string(&item.item)
++                .unwrap()
++                .contains("turn_aborted")
++        })
++        .count();
++    assert_eq!(interrupted, usize::from(!completed));
++    // Model-bearing startup items are before the checkpoint, never replayed after its replacement.
++    assert!(
++        !context.items[2..]
++            .iter()
++            .any(|item| matches!(item, RolloutItem::ResponseItem(_)))
++    );
++    child.thread.shutdown_and_wait().await.unwrap();
++    source.thread.shutdown_and_wait().await.unwrap();
++}
++
+ #[tokio::test]
+ #[expect(
+     clippy::await_holding_invalid_type,
 diff --git a/codex-rs/rollout/src/recorder.rs b/codex-rs/rollout/src/recorder.rs
 index 44fffde8e596b409830af28cdabefabfa60565b0..0ea45ac84a8105afd26e431c4c605ad24fed3363 100644
 --- a/codex-rs/rollout/src/recorder.rs
@@ -197,8 +421,29 @@ index a104a15ab5e82ab1035467f2a4a09c5101fff378..671bc07189fdcb86341c537bab26da58
      /// Returns the live local rollout path for legacy local-only callers.
      ///
      /// Remote stores do not expose rollout files, so they return `Ok(None)`.
+diff --git a/codex-rs/thread-store/src/local/delete_thread.rs b/codex-rs/thread-store/src/local/delete_thread.rs
+index cc2cb664f55398c373d7c330b5b199940d3d7d8c..3a8abfe86f5e79f1851286458fe7b55e82d1fb4a 100644
+--- a/codex-rs/thread-store/src/local/delete_thread.rs
++++ b/codex-rs/thread-store/src/local/delete_thread.rs
+@@ -291,14 +291,8 @@ async fn delete_thread_after_reference_check(
+     // Stop queued file work before removing files, retaining ownership until cleanup finishes.
+     let live_entry = store.live_recorders.lock().await.remove(&thread_id);
+     if let Some(entry) = live_entry {
+-        writer_guards.push(entry.writer_lock);
+-        entry
+-            .recorder
+-            .discard()
+-            .await
+-            .map_err(|err| ThreadStoreError::Internal {
+-                message: format!("failed to stop thread writer before deletion: {err}"),
+-            })?;
++        writer_guards.push(entry.writer_lock.clone());
++        super::live_writer::discard_recorders(entry).await?;
+     }
+     let found_rollout_path = !thread_rollouts.paths.is_empty();
+     for rollout_path in thread_rollouts.paths {
 diff --git a/codex-rs/thread-store/src/local/live_writer.rs b/codex-rs/thread-store/src/local/live_writer.rs
-index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..7736219d6ad2de56d48b9330b7b05aa8f4e8f40f 100644
+index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..ad0314333e7df8e1ea37b9109c52be2a5c8064f5 100644
 --- a/codex-rs/thread-store/src/local/live_writer.rs
 +++ b/codex-rs/thread-store/src/local/live_writer.rs
 @@ -21,6 +21,8 @@ use crate::ThreadStoreError;
@@ -249,7 +494,7 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..7736219d6ad2de56d48b9330b7b05aa8
 -    )
 -    .await
 +    let writer = store.live_writer_locks.lock(params.thread_id).await;
-+    if segments::is_checkpoint(&params.items) {
++    if segments::is_rotation_checkpoint(&params.items) {
 +        // Reserve append order before transferring ownership; cancellation must not let
 +        // a later history mutation overtake this snapshot.
 +        let store = store.clone();
@@ -296,12 +541,45 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..7736219d6ad2de56d48b9330b7b05aa8
  }
 
  pub(super) async fn shutdown_thread(
-@@ -428,13 +470,14 @@ async fn write_and_project(
+@@ -219,6 +261,7 @@ pub(super) async fn shutdown_thread(
+ ) -> ThreadStoreResult<()> {
+     let mut pending_metadata = store.pending_thread_metadata.lock(thread_id).await;
+     let _live_writer_guard = store.live_writer_locks.lock(thread_id).await;
++    segments::reconcile_publication(store, thread_id).await?;
+     let (recorder, rollout_id, history_mode) = live_writer_parts(store, thread_id).await?;
+     let rollout_path = recorder.rollout_path().to_path_buf();
+     if matches!(history_mode, ThreadHistoryMode::Legacy) {
+@@ -274,11 +317,18 @@ pub(super) async fn discard_thread(
+         .await
+         .remove(&thread_id)
+         .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?;
+-    entry
+-        .recorder
+-        .discard()
+-        .await
+-        .map_err(thread_store_io_error)
++    discard_recorders(entry).await
++}
++
++/// Stop every owned recorder even when one actor has already failed.
++pub(super) async fn discard_recorders(entry: super::LiveRecorderEntry) -> ThreadStoreResult<()> {
++    let pending = match entry.pending_continuation {
++        // Unknown publication keeps both files for native recovery.
++        Some(pending) => pending.recorder.discard().await,
++        None => Ok(()),
++    };
++    let current = entry.recorder.discard().await;
++    pending.and(current).map_err(thread_store_io_error)
+ }
+
+ async fn index_attached_thread(
+@@ -428,13 +478,15 @@ async fn write_and_project(
      store: &LocalThreadStore,
      thread_id: ThreadId,
      write_op: RolloutWriteOp,
 +    mut cursor: tokio::sync::OwnedMutexGuard<u64>,
  ) -> ThreadStoreResult<()> {
++    segments::reconcile_publication(store, thread_id).await?;
      // Every live write should have a recorder: create/resume installs one, while
      // shutdown/discard/delete removes it. Keep the lookup defensive so late writes fail after
      // teardown.
@@ -312,12 +590,12 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..7736219d6ad2de56d48b9330b7b05aa8
      match write_op {
          RolloutWriteOp::AppendItems(items) => {
              let mut items = into_persisted_rollout_items(items, history_mode);
-@@ -442,6 +485,12 @@ async fn write_and_project(
+@@ -442,6 +494,12 @@ async fn write_and_project(
                  return Ok(());
              }
              let next = codex_rollout::stamp_item_ordinals(*cursor, &mut items);
 +            if history_mode == ThreadHistoryMode::Paginated
-+                && segments::is_checkpoint(&items)
++                && segments::is_rotation_checkpoint(&items)
 +                && segments::matches_tail(recorder.rollout_path(), &items).await?
 +            {
 +                return Ok(());
@@ -325,26 +603,33 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..7736219d6ad2de56d48b9330b7b05aa8
              recorder
                  .record_canonical_items(&items)
                  .await
-@@ -449,6 +498,9 @@ async fn write_and_project(
+@@ -449,6 +507,11 @@ async fn write_and_project(
              // Once queued, the recorder owns the batch even if flush is cancelled or retried.
              *cursor = next;
              recorder.flush().await.map_err(thread_store_io_error)?;
-+            if history_mode == ThreadHistoryMode::Paginated && segments::is_checkpoint(&items) {
++            if history_mode == ThreadHistoryMode::Paginated
++                && segments::is_rotation_checkpoint(&items)
++            {
 +                checkpoint = Some(items);
 +            }
          }
          RolloutWriteOp::Persist => recorder.persist().await.map_err(thread_store_io_error)?,
          RolloutWriteOp::Flush => recorder.flush().await.map_err(thread_store_io_error)?,
-@@ -466,6 +518,17 @@ async fn write_and_project(
+@@ -466,6 +529,22 @@ async fn write_and_project(
              warn!("failed to project durable rollout for {thread_id}: {err}");
          }
      }
 +    if let Some(items) = checkpoint {
 +        if let Err(error) = segments::rotate(store, thread_id, &recorder, rollout_id, &items).await
 +        {
-+            // A retained writer can continue from the checkpoint in its original file.
-+            // Unresolved publication stops that writer instead of appending to a stale path.
-+            if !store.live_recorders.lock().await.contains_key(&thread_id) {
++            // Only a resolved original writer can safely continue inline.
++            if store
++                .live_recorders
++                .lock()
++                .await
++                .get(&thread_id)
++                .is_none_or(|entry| entry.pending_continuation.is_some())
++            {
 +                return Err(error);
 +            }
 +            warn!("failed to rotate checkpoint for {thread_id}: {error}");
@@ -354,19 +639,34 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..7736219d6ad2de56d48b9330b7b05aa8
          sync_materialized_rollout_path(store, thread_id, recorder.rollout_path()).await?;
      }
 diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
-index ac086941bdfd68b7abb756882984e4e1ebb2b1dc..7197bbbd18f7ee1689aa02cc383644f682f4c185 100644
+index ac086941bdfd68b7abb756882984e4e1ebb2b1dc..6f7bcbb29c6b7329c18a13b91884a73622dae3a6 100644
 --- a/codex-rs/thread-store/src/local/mod.rs
 +++ b/codex-rs/thread-store/src/local/mod.rs
-@@ -170,6 +170,8 @@ type WriterLockGuard = Arc<codex_rollout::WriterLockGuard>;
+@@ -170,6 +170,10 @@ type WriterLockGuard = Arc<codex_rollout::WriterLockGuard>;
 
  struct LiveRecorderEntry {
      recorder: RolloutRecorder,
++    // Keep both writers owned until SQLite resolves an uncertain path publication.
++    pending_continuation: Option<PendingContinuation>,
 +    // Synchronous legacy consumers follow the installed physical writer across rotations.
 +    rollout_path: tokio::sync::watch::Sender<PathBuf>,
      // Rollout projection rows are keyed by immutable rollout ID, not the stable thread ID used
      // to find this live writer.
      rollout_id: ThreadId,
-@@ -371,6 +373,19 @@ impl LocalThreadStore {
+@@ -180,6 +184,12 @@ struct LiveRecorderEntry {
+     writer_lock: WriterLockGuard,
+ }
+
++#[derive(Clone)]
++struct PendingContinuation {
++    recorder: RolloutRecorder,
++    rollout_id: ThreadId,
++}
++
+ #[derive(Default)]
+ struct LiveWriterLocks {
+     // Keep per-thread locks after a writer goes idle. Removing one while another caller is about
+@@ -371,6 +381,19 @@ impl LocalThreadStore {
          live_writer::rollout_path(self, thread_id).await
      }
 
@@ -386,10 +686,11 @@ index ac086941bdfd68b7abb756882984e4e1ebb2b1dc..7197bbbd18f7ee1689aa02cc383644f6
      /// Select only materialized rollout inputs without creating a file for untouched threads.
      pub(crate) async fn feedback_rollout_path(
          &self,
-@@ -448,6 +463,10 @@ impl LocalThreadStore {
+@@ -448,6 +471,11 @@ impl LocalThreadStore {
              }),
              Entry::Vacant(entry) => {
                  entry.insert(LiveRecorderEntry {
++                    pending_continuation: None,
 +                    rollout_path: tokio::sync::watch::channel(
 +                        recorder.rollout_path().to_path_buf(),
 +                    )
