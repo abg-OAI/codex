@@ -28,7 +28,7 @@ index ec7a7d24aa87a8b28d9380f2aa8338b541c18057..aadd9c59752cbec9014448ff255615f2
      result: &dyn ToolOutput,
  ) -> Option<PostToolUsePayload> {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index a5851263d2efc1e58a5b0422485dc59d04b999db..35b84cdbbfce9e9e3ddb2a1d1fd7d23f13fbd892 100644
+index a9adb45ef65a03521c70f8453b025e30d6cb09cc..2ca13fd73ef8ababdcd22b46f267bdde5728b744 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
 @@ -2,6 +2,7 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
@@ -39,7 +39,7 @@ index a5851263d2efc1e58a5b0422485dc59d04b999db..35b84cdbbfce9e9e3ddb2a1d1fd7d23f
  use crate::session::session::Session;
  use crate::session::turn_context::TurnContext;
  use crate::tools::code_mode::execute_spec::create_code_mode_tool;
-@@ -1311,6 +1312,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
+@@ -1317,6 +1318,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
      if features.enabled(Feature::UnifiedExec) {
          registry.add(ExecCommandHandler::new(options));
          registry.add(WriteStdinHandler);
@@ -91,7 +91,7 @@ index f9afaaa41d5349e519ca45585bcd05954655dd4d..75c70778c547fc08ee4318f31465b3fb
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 315dbee40276aa415982ec7ec00689526eceba43..343d94e16133e616a9393fc363387b922a4858e7 100644
+index 9da4ede137bfa6098ebfe62871bfdd3b857c5161..b9763c894bf4f69ca7f7a3fe087577b13f03fa74 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
 @@ -105,6 +105,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);

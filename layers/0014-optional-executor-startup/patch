@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 39696d2b20faaf0a5ea74db6dd83548ce6a72501..26010397084b1d609077f5cc40310e919a1b26df 100644
+index f549722999a86051273545f2946156b7aa0afa2e..8910929939d9c85560915c0b6cc7a3beff50c0a2 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -1586,6 +1586,7 @@ impl ThreadRequestProcessor {
+@@ -1600,6 +1600,7 @@ impl ThreadRequestProcessor {
              }
          }
 
@@ -10,7 +10,7 @@ index 39696d2b20faaf0a5ea74db6dd83548ce6a72501..26010397084b1d609077f5cc40310e91
          let environment_requests = environment_requests.unwrap_or_else(|| {
              listener_task_context
                  .thread_manager
-@@ -1608,6 +1609,10 @@ impl ThreadRequestProcessor {
+@@ -1622,6 +1623,10 @@ impl ThreadRequestProcessor {
                  .then_some(ThreadHistoryMode::Paginated)
          });
          let mut thread_extension_init = ExtensionDataInit::new();
@@ -829,7 +829,7 @@ index 326668d5114c96ff96310ad138a700962ca59b5f..65438a14ff03c9344bcc92d38e2dfe38
 
  /// Installs Saffrodex-owned model guidance that accompanies goal tools.
 diff --git a/codex-rs/core/src/mcp.rs b/codex-rs/core/src/mcp.rs
-index 8a057989dde37a599bb2070e657cce93008f1cc3..b7ee79c81030b4c10c031d71839d75f027509099 100644
+index efdbb20332c554764980fe05ae96642b77708d5a..e2e3dd3c1486ce024d79720c669da0dd29e70e7d 100644
 --- a/codex-rs/core/src/mcp.rs
 +++ b/codex-rs/core/src/mcp.rs
 @@ -79,9 +79,9 @@ impl<'a> McpEnvironmentScope<'a> {
@@ -931,7 +931,7 @@ index c096d3ae13b04bae0e5a9281889b258888f5dd12..91fa1ce377eb4fab73b0d66c8ea4667f
              environment.has_same_workspace(selection)
                  && (!inherited || matches!(environment.config, EnvironmentConfigState::Pending))
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index b6c87a2964151108eb615f7a4b33874b9976b8d7..e53d10f44bf6a344ba2c835071ec4f2869538c3c 100644
+index 471e5f9fe8822d91e6447cdf1847e7ba5dd8bc1f..dbcd00894e6e8eb50b0dec14373e2bb59ad6aa8f 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -442,6 +442,10 @@ impl SessionConfiguration {
@@ -1074,7 +1074,7 @@ index db3d472a088e07e6a16ce5e3ab1f8c5df13a46e8..22c9805a87713fb4b8d5905734e1e002
          Some(
              profile
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index cd72757c799055879cff2338f7fd37b3714e0fb1..01ef285aa8f06fc647259b92f147fda3806c6ee2 100644
+index ce2f9dec25f91afc31f736dbc4ce0ce82775ee4a..5ceb150f19dc9ea97884dd68fc4429cb410d1409 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
 @@ -30,6 +30,8 @@ use super::turn_context::TurnEnvironment;
@@ -1103,10 +1103,10 @@ index 41fb97a037c9645fb87d744bb6db0d72720d921c..a1270f6729fc1b1e32bf9118efa946c5
          );
          config.model = Some(
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index 572552f0a2901ef9b03fa5aebee3c07e8d1baf89..5f03a8becd652fd19918fe5de3fe2815143fa6e0 100644
+index 7a2bd1fd95368be21d27a92d0f0a31f429df1565..e58de81610d9bfd9b4d4163d83729b3ceeca1404 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -2653,6 +2653,10 @@ impl ThreadManagerState {
+@@ -2660,6 +2660,10 @@ impl ThreadManagerState {
                  }
              });
          thread_extension_init.insert(isolation);
