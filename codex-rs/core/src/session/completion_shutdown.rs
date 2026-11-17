@@ -7,6 +7,21 @@
 use super::session::Session;
 
 impl Session {
+    /// Certifies the latest finished turn while the caller holds the idle admission slot.
+    /// The caller must flush persistence first and keep that slot through its snapshot.
+    pub(crate) async fn checkpoint_idle_completion(&self) -> Option<String> {
+        if !matches!(
+            *self.agent_status.borrow(),
+            codex_protocol::protocol::AgentStatus::Completed(_)
+        ) {
+            return None;
+        }
+        let mut state = self.state.lock().await;
+        let turn_id = state.last_started_turn_id.clone()?;
+        state.last_completed_turn_id = Some(turn_id.clone());
+        Some(turn_id)
+    }
+
     /// Checkpoints a terminal turn without certifying a superseding task.
     #[expect(
         clippy::await_holding_invalid_type,
@@ -23,12 +38,13 @@ impl Session {
         Ok(true)
     }
 
-    /// Called only by the submission loop immediately before explicit shutdown.
+    /// Checks whether the captured completed turn still permits teardown.
+    /// The submission loop checks before shutdown; lifecycle cleanup may check after termination.
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "shutdown must inspect the active-turn reservation and completion witness together"
     )]
-    pub(super) async fn can_shutdown_after_turn(&self, turn_id: &str) -> bool {
+    pub(crate) async fn can_shutdown_after_turn(&self, turn_id: &str) -> bool {
         let active = self.active_turn.lock().await;
         if active.is_some()
             || self.is_interrupted()
@@ -46,6 +62,40 @@ impl Session {
 mod tests {
     use crate::session::tests::make_session_and_context;
     use crate::state::ActiveTurn;
+
+    /// An idle snapshot certifies only completed work and cannot certify a later turn.
+    #[tokio::test]
+    async fn idle_snapshot_requires_completed_status_and_keeps_turn_identity() {
+        use codex_protocol::protocol::AgentStatus;
+        let (session, _) = make_session_and_context().await;
+        session.record_started_turn("one", None).await;
+        session.agent_status.send_replace(AgentStatus::Running);
+        let slot = session.active_turn.lock().await;
+        assert!(session.checkpoint_idle_completion().await.is_none());
+        drop(slot);
+        session
+            .agent_status
+            .send_replace(AgentStatus::Completed(None));
+        let slot = session.active_turn.lock().await;
+        assert_eq!(
+            session.checkpoint_idle_completion().await.as_deref(),
+            Some("one")
+        );
+        drop(slot);
+        assert!(session.can_shutdown_after_turn("one").await);
+        session.record_started_turn("two", None).await;
+        session
+            .agent_status
+            .send_replace(AgentStatus::Completed(None));
+        let slot = session.active_turn.lock().await;
+        assert_eq!(
+            session.checkpoint_idle_completion().await.as_deref(),
+            Some("two")
+        );
+        drop(slot);
+        assert!(!session.can_shutdown_after_turn("one").await);
+        assert!(session.can_shutdown_after_turn("two").await);
+    }
 
     #[tokio::test]
     async fn shutdown_requires_persisted_latest_completion() {
