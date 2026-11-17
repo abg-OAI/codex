@@ -10,6 +10,8 @@ mod goal_edit;
 pub(crate) mod goal_scheduler;
 pub(crate) mod goal_supervisor;
 mod storage;
+pub(crate) mod subagent_completion;
+mod subagent_completion_tool;
 
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
@@ -30,6 +32,13 @@ pub(crate) fn register_tools(
         goal_edit::register_supervisor(registry);
         goal_supervisor::register(registry);
         return;
+    }
+
+    if subagent_completion::can_choose_delivery(
+        turn_context.multi_agent_version,
+        &turn_context.session_source,
+    ) {
+        subagent_completion_tool::register(registry);
     }
 
     goal_edit::register_root_if_available(session, turn_context, registry);
