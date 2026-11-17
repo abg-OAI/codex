@@ -1,0 +1,10 @@
+Checkpoint completed turns and share immutable rollout segments
+
+Capture current native restart state after large completed turns without
+summarizing model context. Probe complete checkpoints before expanding
+ancestry for startup and latest forks; retain native historical fallback.
+
+Rotate terminal prefixes into native history_base references with distinct
+physical rollout IDs. Preserve logical metadata, append ownership and
+publication recovery without changing Codex schemas or wire records.
+Reuse identical checkpoints and retain full transcript reference sharing.
