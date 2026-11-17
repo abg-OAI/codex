@@ -14,8 +14,8 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadGoalUpdatedEvent;
 use codex_protocol::protocol::WarningEvent;
 
-use super::actions::protocol_goal;
 use super::is_helper_source;
+use crate::saffron::goal_edit::protocol_goal;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 

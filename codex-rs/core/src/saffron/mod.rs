@@ -6,6 +6,7 @@
 //! only the integration points that upstream registration needs.
 
 pub(crate) mod await_exec;
+mod goal_edit;
 pub(crate) mod goal_scheduler;
 pub(crate) mod goal_supervisor;
 mod storage;
@@ -16,7 +17,8 @@ use crate::tools::registry::ToolRegistry;
 
 /// Registers the Saffron tools authorized for the current model step.
 ///
-/// Supervisor tools require both the unforgeable hidden-agent marker
+/// Root goal editing follows the goal feature and durable-state lifecycle.
+/// Supervisor tools instead require both the unforgeable hidden-agent marker
 /// and the Saffron helper role before they become model-visible.
 pub(crate) fn register_tools(
     session: &Session,
@@ -25,6 +27,10 @@ pub(crate) fn register_tools(
 ) {
     let is_supervisor = goal_supervisor::is_helper_session(session, &turn_context.session_source);
     if is_supervisor {
+        goal_edit::register_supervisor(registry);
         goal_supervisor::register(registry);
+        return;
     }
+
+    goal_edit::register_root_if_available(session, turn_context, registry);
 }
