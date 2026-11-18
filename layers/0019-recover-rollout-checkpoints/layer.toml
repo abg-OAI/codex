@@ -1,0 +1,14 @@
+[vcs]
+commit-msg = """
+Recover interrupted writes during rollout rotation
+
+Replay the missing bytes of a checkpoint under the writer lock. Stage native continuations in a single write attempt and sync them before publishing the selected path.
+"""
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"
