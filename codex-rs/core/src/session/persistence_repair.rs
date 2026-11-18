@@ -267,7 +267,7 @@ impl Session {
             // batch cannot hide a response whose UI item was not saved.
             presentation_items.append(&mut recovered);
             recovered = presentation_items;
-            recovered.extend(self.persistence_repair_checkpoint(&state, observation_clock_floor_ms));
+            recovered.extend(self.restart_checkpoint_items(&state, observation_clock_floor_ms));
             live_thread.append_items(&recovered).await?;
             live_thread.flush().await?;
 
@@ -311,7 +311,8 @@ impl Session {
         Ok(())
     }
 
-    fn persistence_repair_checkpoint(
+    /// Captures current state using native checkpoint records, including explicit tool clears.
+    pub(super) fn restart_checkpoint_items(
         &self,
         state: &SessionState,
         observation_clock_floor_ms: Option<i64>,
@@ -351,6 +352,10 @@ impl Session {
         if let Some(turn_context) = state.reference_context_item() {
             items.push(RolloutItem::TurnContext(turn_context));
         }
+        let (info, rate_limits) = state.token_info_and_rate_limits();
+        items.push(RolloutItem::EventMsg(EventMsg::TokenCount(
+            TokenCountEvent { info, rate_limits },
+        )));
         items.push(RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(
             codex_protocol::protocol::ThreadSettingsAppliedEvent {
                 thread_id: Some(self.thread_id),

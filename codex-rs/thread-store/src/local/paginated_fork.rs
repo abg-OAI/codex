@@ -27,25 +27,40 @@ pub(super) async fn prepare(
     // Keep the source reserved until persistence and lineage materialization finish, even if the
     // caller cancels fork preparation.
     let lineage_store = store.clone();
-    let (lineage, source_reservation) = tokio::spawn(async move {
+    let source_reservation = tokio::spawn(async move {
         match live_writer::persist_thread(&lineage_store, thread_id).await {
             Ok(()) | Err(ThreadStoreError::ThreadNotFound { .. }) => {}
             Err(err) => return Err(err),
         }
-        let lineage = lineage_store
-            .resolve_rollout_lineage_for_reference(thread_id)
-            .await?;
-        Ok::<_, ThreadStoreError>((lineage, source_reservation))
+        Ok::<_, ThreadStoreError>(source_reservation)
     })
     .await
     .map_err(|err| ThreadStoreError::Internal {
         message: format!("failed to resolve fork lineage: {err}"),
     })??;
     if store.state_db.is_none() {
+        store
+            .resolve_rollout_lineage_for_reference(thread_id)
+            .await?;
         return Err(ThreadStoreError::Unsupported {
             operation: "prepare_fork",
         });
     }
+    if matches!(boundary, ForkBoundary::Latest)
+        && let Some((history_base, items, preview)) = latest_checkpoint(store, thread_id).await?
+    {
+        let mut fork = PreparedFork::with_source_reservation(
+            thread_id,
+            Some(history_base),
+            Arc::new(items),
+            source_reservation,
+        );
+        fork.preview_before_compaction = Some(preview);
+        return Ok(fork);
+    }
+    let lineage = store
+        .resolve_rollout_lineage_for_reference(thread_id)
+        .await?;
     let (history_base, model_context, preview_before_compaction) = lineage
         .read_with_fallback(store, |lineage| {
             read_fork_history(store, thread_id, boundary, lineage)
@@ -59,6 +74,79 @@ pub(super) async fn prepare(
     );
     fork.preview_before_compaction = preview_before_compaction;
     Ok(fork)
+}
+
+/// Reads a complete latest checkpoint without resolving the referenced transcript.
+/// Historical cutoffs and missing metadata retain ordinary lineage reconstruction.
+async fn latest_checkpoint(
+    store: &LocalThreadStore,
+    thread_id: ThreadId,
+) -> ThreadStoreResult<Option<(HistoryPosition, Vec<RolloutItem>, String)>> {
+    let _writer = store.live_writer_locks.lock(thread_id).await;
+    let Some(source) = super::thread_rollout_resolver::resolve_current(store, thread_id).await?
+    else {
+        return Ok(None);
+    };
+    if super::rollout_lineage::managed_rollout_path(store, &source.path)
+        .await
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let mut meta = codex_rollout::read_session_meta_line(&source.path)
+        .await
+        .map_err(|error| ThreadStoreError::Internal {
+            message: error.to_string(),
+        })?;
+    if meta.meta.history_mode != codex_protocol::protocol::ThreadHistoryMode::Paginated {
+        return Ok(None);
+    }
+    let Some(mut items) = model_context::scan_current_checkpoint(&source.path).await? else {
+        return Ok(None);
+    };
+    let Some(state_db) = store.state_db().await else {
+        return Ok(None);
+    };
+    let Some(preview) = state_db
+        .get_thread(thread_id)
+        .await
+        .map_err(|error| ThreadStoreError::Internal {
+            message: error.to_string(),
+        })?
+        .and_then(|metadata| metadata.first_user_message)
+    else {
+        return Ok(None);
+    };
+    meta.meta.multi_agent_version = meta.meta.multi_agent_version.or_else(|| {
+        items
+            .iter()
+            .rev()
+            .find_map(codex_rollout::resume_multi_agent_version)
+    });
+    if meta.meta.multi_agent_version.is_none() {
+        return Ok(None);
+    }
+    super::thread_history_materialization::materialize_to_sqlite(
+        store,
+        source.rollout_id,
+        &source.path,
+    )
+    .await?;
+    let Some(projection) =
+        super::thread_history::projection_state(store, source.rollout_id).await?
+    else {
+        return Ok(None);
+    };
+    items.insert(0, RolloutItem::SessionMeta(Box::new(meta)));
+    Ok(Some((
+        HistoryPosition {
+            thread_id: source.rollout_id,
+            end_ordinal_exclusive: projection.next_ordinal,
+            end_byte_offset: projection.next_byte_offset,
+        },
+        items,
+        preview,
+    )))
 }
 
 async fn read_fork_history(

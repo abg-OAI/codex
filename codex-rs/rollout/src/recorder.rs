@@ -99,6 +99,8 @@ pub enum RolloutRecorderParams {
         /// `rollout-<timestamp>-<conversation_id>_<rollout_id>.jsonl`, because revert keeps the
         /// thread ID stable while creating a new immutable rollout file.
         rollout_id_override: Option<RolloutId>,
+        /// Original logical creation time when continuing an existing thread in a new file.
+        session_timestamp: Option<String>,
         forked_from_id: Option<ThreadId>,
         attached_thread: bool,
         forked_from_ordinal_exclusive: Option<u64>,
@@ -221,6 +223,7 @@ impl RolloutRecorderParams {
             session_id: conversation_id.into(),
             conversation_id,
             rollout_id_override: None,
+            session_timestamp: None,
             forked_from_id,
             attached_thread: false,
             forked_from_ordinal_exclusive: None,
@@ -281,6 +284,18 @@ impl RolloutRecorderParams {
         } = &mut self
         {
             *rollout_id_override = Some(rollout_id);
+        }
+        self
+    }
+
+    /// Preserve logical creation time when only the physical rollout changes.
+    /// The filename still uses the new file's creation time.
+    pub fn with_session_timestamp(mut self, timestamp: String) -> Self {
+        if let Self::Create {
+            session_timestamp, ..
+        } = &mut self
+        {
+            *session_timestamp = Some(timestamp);
         }
         self
     }
@@ -947,6 +962,7 @@ impl RolloutRecorder {
                 session_id,
                 conversation_id,
                 rollout_id_override,
+                session_timestamp,
                 forked_from_id,
                 attached_thread,
                 forked_from_ordinal_exclusive,
@@ -988,7 +1004,7 @@ impl RolloutRecorder {
                     forked_from_ordinal_exclusive: forked_from_ordinal_exclusive
                         .filter(|_| forked_from_id.is_some()),
                     parent_thread_id,
-                    timestamp,
+                    timestamp: session_timestamp.unwrap_or(timestamp),
                     cwd: cwd.clone(),
                     runtime_workspace_roots,
                     originator,
