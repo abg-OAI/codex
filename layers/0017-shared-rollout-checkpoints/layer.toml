@@ -22,8 +22,6 @@ Compaction seals the projected prefix even during an active turn. The
 successor keeps the thread identity and creation time and references
 the older file. Turn summaries span the visible segments. Daemon
 recovery checks the saved turn through same-thread references.
-Compaction keeps its checkpoint inline once the native history chain
-reaches 900 files, leaving room for stock Codex to page every turn.
 
 The live writer owns both files until publication is resolved.
 Later writes reconcile an uncertain result before choosing a recorder;

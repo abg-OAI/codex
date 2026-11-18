@@ -1,0 +1,10 @@
+[vcs]
+commit-msg = """
+Page turns across deep rollout ancestry
+
+Bind visited ancestry ranges as data to keep SQLite expression depth independent of the number of segments. Hydrate all turns from a single stream of item pages on full resume.
+"""
+
+[[operation]]
+[operation.patch]
+file = "patch"
