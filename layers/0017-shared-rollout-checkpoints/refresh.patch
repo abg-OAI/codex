@@ -1,0 +1,620 @@
+diff --git a/codex-rs/app-server/src/request_processors/daemon_continuation.rs b/codex-rs/app-server/src/request_processors/daemon_continuation.rs
+index d4ce37eba7da853bc462facde3766c550de3490b..74bca7696b38594ec550a61c1fc12763bbefd6f7 100644
+--- a/codex-rs/app-server/src/request_processors/daemon_continuation.rs
++++ b/codex-rs/app-server/src/request_processors/daemon_continuation.rs
+@@ -30,47 +30,21 @@ impl ThreadRequestProcessor {
+         let Some(path) = thread.rollout_path() else {
+             return;
+         };
+-        let history = match codex_rollout::RolloutRecorder::load_rollout_items(&path).await {
+-            Ok((history, _, _)) => history,
++        let previous_context = match codex_rollout::unfinished_turn_context(
++            self.config.codex_home.as_path(),
++            path,
++            thread_id,
++            &saved.turn_id,
++        )
++        .await
++        {
++            Ok(Some(context)) => context,
++            Ok(None) => return,
+             Err(err) => {
+                 tracing::warn!(%thread_id, %err, "failed to read interrupted turn history");
+                 return;
+             }
+         };
+-        // The snapshot has complete recorded input, but the old process may have
+-        // completed or replaced its turn during the shutdown grace period.
+-        let Some(start) = history
+-            .iter()
+-            .rposition(|item| matches!(item, RolloutItem::EventMsg(EventMsg::TurnStarted(_))))
+-        else {
+-            return;
+-        };
+-        if !matches!(&history[start], RolloutItem::EventMsg(EventMsg::TurnStarted(event))
+-            if event.turn_id == saved.turn_id)
+-            || history[start..].iter().any(|item| match item {
+-                RolloutItem::EventMsg(EventMsg::TurnComplete(event)) => {
+-                    event.turn_id == saved.turn_id
+-                }
+-                RolloutItem::EventMsg(EventMsg::TurnAborted(event)) => event
+-                    .turn_id
+-                    .as_ref()
+-                    .is_none_or(|turn_id| turn_id == &saved.turn_id),
+-                _ => false,
+-            })
+-        {
+-            return;
+-        }
+-        let previous_context = history.iter().rev().find_map(|item| match item {
+-            RolloutItem::TurnContext(context)
+-                if context.turn_id.as_ref() == Some(&saved.turn_id) =>
+-            {
+-                Some(context)
+-            }
+-            _ => None,
+-        });
+-        let Some(previous_context) = previous_context else {
+-            return;
+-        };
+         let config = thread.config_snapshot().await;
+         let [environment] = config.environment_selections() else {
+             return;
+diff --git a/codex-rs/rollout/src/lib.rs b/codex-rs/rollout/src/lib.rs
+index f1723371071dbf611efc7b4d5478ff8a521aa055..d950c467e99d6cc24c7ca50eb83e3d1c39aa94fe 100644
+--- a/codex-rs/rollout/src/lib.rs
++++ b/codex-rs/rollout/src/lib.rs
+@@ -21,6 +21,8 @@ mod rollout_file_name;
+ mod rollout_reference_index;
+ pub(crate) mod search;
+ mod seekable_reader;
++mod unfinished_turn;
++pub use unfinished_turn::unfinished_turn_context;
+ pub(crate) mod session_index;
+ mod sqlite_metrics;
+ pub mod state_db;
+diff --git a/codex-rs/rollout/src/unfinished_turn.rs b/codex-rs/rollout/src/unfinished_turn.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..1f7f19b0a022d8025de8c6dba7c9df1022fb4211
+--- /dev/null
++++ b/codex-rs/rollout/src/unfinished_turn.rs
+@@ -0,0 +1,103 @@
++//! Daemon recovery checks the saved turn against the newest lifecycle events.
++//! Only same-thread continuations contribute evidence about that turn.
++
++use std::collections::HashSet;
++use std::io;
++use std::ops::ControlFlow;
++use std::path::Path;
++use std::path::PathBuf;
++
++use codex_protocol::ThreadId;
++use codex_protocol::protocol::EventMsg;
++use codex_protocol::protocol::TurnContextItem;
++
++use crate::ReverseJsonlScanner;
++use crate::RolloutItem;
++use crate::ScanOutcome;
++
++/// Returns the last recorded context if the saved turn is still the newest
++/// unfinished turn. Each referenced file is read only through its frozen end.
++pub async fn unfinished_turn_context(
++    codex_home: &Path,
++    mut path: PathBuf,
++    thread_id: ThreadId,
++    turn_id: &str,
++) -> io::Result<Option<TurnContextItem>> {
++    let mut seen = HashSet::new();
++    let mut end = None;
++    let mut context = None;
++    let mut found_start = false;
++    loop {
++        let meta = crate::read_session_meta_line(&path).await?.meta;
++        if meta.id != thread_id {
++            return Ok(None);
++        }
++        let target = turn_id.to_owned();
++        let (stop, cancelled) = tokio::sync::oneshot::channel::<()>();
++        let scanned = tokio::task::spawn_blocking(move || {
++            let file = crate::open_rollout_seekable_reader(&path, || stop.is_closed())?;
++            let mut scanner = match end {
++                Some(offset) => ReverseJsonlScanner::new_at(file, offset)?,
++                None => ReverseJsonlScanner::new(file)?,
++            };
++            while let Some(record) = scanner.scan_next_rollout_line()? {
++                if stop.is_closed() {
++                    return Err(io::Error::other("turn recovery cancelled"));
++                }
++                let ScanOutcome::Parsed(line) = record else {
++                    continue;
++                };
++                match line.item {
++                    RolloutItem::TurnContext(item)
++                        if context.is_none()
++                            && item.turn_id.as_deref() == Some(target.as_str()) =>
++                    {
++                        context = Some(item);
++                        if found_start {
++                            return Ok(ControlFlow::Break(context));
++                        }
++                    }
++                    RolloutItem::EventMsg(EventMsg::TurnStarted(event)) if !found_start => {
++                        if event.turn_id != target {
++                            return Ok(ControlFlow::Break(None));
++                        }
++                        if context.is_some() {
++                            return Ok(ControlFlow::Break(context));
++                        }
++                        found_start = true;
++                    }
++                    RolloutItem::EventMsg(EventMsg::TurnComplete(event))
++                        if !found_start && event.turn_id == target =>
++                    {
++                        return Ok(ControlFlow::Break(None));
++                    }
++                    RolloutItem::EventMsg(EventMsg::TurnAborted(event))
++                        if !found_start
++                            && event.turn_id.as_ref().is_none_or(|id| *id == target) =>
++                    {
++                        return Ok(ControlFlow::Break(None));
++                    }
++                    _ => {}
++                }
++            }
++            Ok(ControlFlow::Continue((found_start, context)))
++        })
++        .await
++        .map_err(io::Error::other)??;
++        drop(cancelled);
++        (found_start, context) = match scanned {
++            ControlFlow::Break(result) => return Ok(result),
++            ControlFlow::Continue(state) => state,
++        };
++        let Some(base) = meta.history_base else {
++            return Ok(None);
++        };
++        if !seen.insert(base.thread_id) {
++            return Err(io::Error::other("cycle in interrupted turn history"));
++        }
++        path = crate::find_rollout_path_by_rollout_id(codex_home, base.thread_id)
++            .await?
++            .ok_or_else(|| io::Error::other("missing interrupted turn history"))?;
++        end = Some(base.end_byte_offset);
++    }
++}
+diff --git a/codex-rs/thread-store/src/local/live_writer/segments.rs b/codex-rs/thread-store/src/local/live_writer/segments.rs
+index 129b23186e374be3d09a2f2401ed6e09a1563124..42418e9b09b2c27aeb6e122013ccbe7151ee33fa 100644
+--- a/codex-rs/thread-store/src/local/live_writer/segments.rs
++++ b/codex-rs/thread-store/src/local/live_writer/segments.rs
+@@ -1,8 +1,8 @@
+-//! Seals terminal paginated prefixes at checkpoint operations behind native references.
++//! Seals paginated prefixes at checkpoint operations behind native references.
+ //!
+ //! Capture follows fork initialization and native compaction, not ordinary turn
+-//! completion. Active compaction checkpoints stay inline: vanilla recovery reads
+-//! lifecycle records from the selected file. Native revert owns rollback sealing.
++//! completion. A compaction can split one turn across two rollout segments.
++//! Native revert owns rollback sealing.
+ //!
+ //! A new physical rollout gets its own projection cursor. The old rollout is never
+ //! truncated or rewritten. The existing SQLite selected-path update is the commit
+@@ -31,7 +31,7 @@ pub(super) fn is_rotation_checkpoint(items: &[RolloutItem]) -> bool {
+         )
+ }
+
+-/// Reuses an identical terminal checkpoint when its producer retries the same snapshot.
++/// Reuses an identical trailing checkpoint when its producer retries the same snapshot.
+ /// The comparison includes all companions and durable ordinals; any intervening item prevents reuse.
+ pub(super) async fn matches_tail(
+     path: &std::path::Path,
+@@ -57,7 +57,7 @@ pub(super) async fn matches_tail(
+     Ok(encode(&previous)? == encode(items)?)
+ }
+
+-/// Rotates an eligible operation checkpoint once the persisted turn is terminal.
++/// Rotates at an operation checkpoint after projection catches up to its flushed prefix.
+ ///
+ /// The batch has already been flushed to the old file. A failure before the path swap
+ /// leaves that file authoritative; a failure after it cannot lose the batch.
+@@ -82,7 +82,7 @@ pub(super) async fn rotate(
+     else {
+         return Ok(());
+     };
+-    if projection.next_byte_offset != file_bytes || !terminal_turn(source_path).await? {
++    if projection.next_byte_offset != file_bytes {
+         return Ok(());
+     }
+     let meta = codex_rollout::read_session_meta_line(source_path)
+@@ -249,44 +249,5 @@ async fn install_continuation(
+     Ok(())
+ }
+
+-/// Only a persisted terminal turn permits sealing. Active snapshots supplied by
+-/// other persistence callers stay inline for vanilla daemon recovery.
+-async fn terminal_turn(path: &std::path::Path) -> ThreadStoreResult<bool> {
+-    let path = path.to_owned();
+-    tokio::task::spawn_blocking(move || {
+-        let file = std::fs::File::open(path)?;
+-        let mut scanner = codex_rollout::ReverseJsonlScanner::new(file)?;
+-        let mut completed = std::collections::HashSet::new();
+-        while let Some(outcome) = scanner.scan_next_rollout_line()? {
+-            let codex_rollout::ScanOutcome::Parsed(line) = outcome else {
+-                continue;
+-            };
+-            match line.item {
+-                RolloutItem::EventMsg(EventMsg::TurnComplete(event)) => {
+-                    completed.insert(event.turn_id);
+-                }
+-                RolloutItem::EventMsg(EventMsg::TurnAborted(event)) => {
+-                    let Some(turn_id) = event.turn_id else {
+-                        return Ok(false);
+-                    };
+-                    completed.insert(turn_id);
+-                }
+-                RolloutItem::EventMsg(EventMsg::TurnStarted(event)) => {
+-                    // A predecessor's stop hook may complete after this turn started.
+-                    return Ok(completed.contains(&event.turn_id));
+-                }
+-                RolloutItem::SessionMeta(_) => return Ok(!completed.is_empty()),
+-                _ => {}
+-            }
+-        }
+-        Ok::<_, std::io::Error>(false)
+-    })
+-    .await
+-    .map_err(|error| ThreadStoreError::Internal {
+-        message: format!("failed to join terminal turn scan: {error}"),
+-    })?
+-    .map_err(thread_store_io_error)
+-}
+-
+ #[cfg(test)]
+ mod tests;
+diff --git a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
+index 52ea4cbf6d4f2ee35f138b76138d93e24417d106..0f4649fb88d0eee562a60c117c07d2c3c437b279 100644
+--- a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
++++ b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
+@@ -238,10 +238,10 @@ fn compatibility_turn(thread_id: ThreadId, label: &str) -> serde_json::Result<Ve
+     ]))
+ }
+
+-/// An active compaction checkpoint keeps lifecycle recovery in the selected file.
++/// Compaction seals the prefix immediately and the same turn finishes in its continuation.
+ #[tokio::test]
+-async fn active_turn_checkpoint_keeps_lifecycle_in_one_file()
+--> Result<(), Box<dyn std::error::Error>> {
++async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dyn std::error::Error>>
++{
+     let home = TempDir::new()?;
+     let config = test_config(home.path());
+     let state = codex_state::StateRuntime::init(
+@@ -252,17 +252,21 @@ async fn active_turn_checkpoint_keeps_lifecycle_in_one_file()
+     let store = LocalThreadStore::new(config, Some(state.clone()));
+     let id = ThreadId::new();
+     create(&store, id).await?;
+-    let start: RolloutItem = serde_json::from_value(serde_json::json!({
+-        "type":"event_msg", "payload":{"type":"turn_started","turn_id":"active"}
+-    }))?;
+-    let message: RolloutItem = serde_json::from_value(serde_json::json!({
+-        "type":"response_item", "payload":{"type":"message","role":"user",
+-            "content":[{"type":"input_text","text":"x".repeat(2 * 1024 * 1024)}]}
++    let mut prefix = compatibility_turn(id, "before")?;
++    let completion = prefix.split_off(4);
++    let answer = prefix.split_off(3);
++    let recovery_context: RolloutItem = serde_json::from_value(serde_json::json!({
++        "type": "turn_context", "payload": {
++            "turn_id": "before", "cwd": home.path(), "approval_policy":"never",
++            "permission_profile":codex_protocol::models::PermissionProfile::read_only(),
++            "model":"original-model"
++        }
+     }))?;
++    prefix.push(recovery_context);
+     store
+         .append_items(AppendThreadItemsParams {
+             thread_id: id,
+-            items: vec![start, message],
++            items: prefix,
+         })
+         .await?;
+     let path = store.live_rollout_path(id).await?;
+@@ -277,22 +281,16 @@ async fn active_turn_checkpoint_keeps_lifecycle_in_one_file()
+     )
+     .await;
+     let path_subscription = store.live_rollout_path_subscription(id).await?;
+-    let late_completion: RolloutItem = serde_json::from_value(serde_json::json!({
+-        "type":"event_msg", "payload":{"type":"turn_complete","turn_id":"previous"}
+-    }))?;
+-    store
+-        .append_items(AppendThreadItemsParams {
+-            thread_id: id,
+-            items: vec![late_completion],
+-        })
+-        .await?;
+     store
+         .append_items(AppendThreadItemsParams {
+             thread_id: id,
+             items: checkpoint(id)?,
+         })
+         .await?;
+-    assert_eq!(store.live_rollout_path(id).await?, path);
++    let next = store.live_rollout_path(id).await?;
++    assert_ne!(next, path);
++    assert_eq!(*path_subscription.borrow(), next);
++    let sealed_len = tokio::fs::metadata(&path).await?.len();
+     let context = store
+         .load_latest_model_context(LoadThreadHistoryParams {
+             thread_id: id,
+@@ -305,33 +303,51 @@ async fn active_turn_checkpoint_keeps_lifecycle_in_one_file()
+         Some(RolloutItem::Compacted(_))
+     ));
+     let (items, _, _) = RolloutRecorder::load_rollout_items(&path).await?;
+-    assert!(items.iter().any(|item| matches!(item, RolloutItem::EventMsg(EventMsg::TurnStarted(event)) if event.turn_id == "active")));
+-    let terminal: RolloutItem = serde_json::from_value(serde_json::json!({
+-        "type":"event_msg", "payload":{"type":"turn_complete","turn_id":"active"}
+-    }))?;
++    assert!(items.iter().any(|item| matches!(item, RolloutItem::EventMsg(EventMsg::TurnStarted(event)) if event.turn_id == "before")));
+     store
+         .append_items(AppendThreadItemsParams {
+             thread_id: id,
+-            items: vec![terminal],
++            items: answer,
+         })
+         .await?;
+-    // An ordinary terminal event does not capture or rotate another checkpoint.
+-    assert_eq!(store.live_rollout_path(id).await?, path);
+     store
+         .append_items(AppendThreadItemsParams {
+             thread_id: id,
+             items: checkpoint(id)?,
+         })
+         .await?;
+-    let next = store.live_rollout_path(id).await?;
+-    assert_ne!(next, path);
+-    assert_eq!(*path_subscription.borrow(), next);
++    let last = store.live_rollout_path(id).await?;
++    assert_ne!(last, next);
++    let recovered = codex_rollout::unfinished_turn_context(home.path(), last.clone(), id, "before")
++        .await?
++        .expect("the saved turn is still open in the sealed prefix");
++    assert_eq!(recovered.model, "original-model");
++    store
++        .append_items(AppendThreadItemsParams {
++            thread_id: id,
++            items: completion,
++        })
++        .await?;
++    assert_eq!(store.live_rollout_path(id).await?, last);
++    assert!(
++        codex_rollout::unfinished_turn_context(home.path(), last, id, "before")
++            .await?
++            .is_none()
++    );
++    assert_eq!(tokio::fs::metadata(&path).await?.len(), sealed_len);
+     let (items, _, _) = RolloutRecorder::load_rollout_items(&next).await?;
+     assert!(
+         !items
+             .iter()
+             .any(|item| matches!(item, RolloutItem::EventMsg(EventMsg::TurnStarted(_))))
+     );
++    store
++        .append_items(AppendThreadItemsParams {
++            thread_id: id,
++            items: compatibility_turn(id, "after")?,
++        })
++        .await?;
++    assert_native_turn_pages(&store, id).await?;
+     store.shutdown_thread(id).await?;
+     Ok(())
+ }
+@@ -703,7 +719,7 @@ async fn write_vanilla_compatibility_fixture() -> Result<(), Box<dyn std::error:
+     let id = ThreadId::new();
+     create(&store, id).await?;
+     for turn in 0..3 {
+-        let items: Vec<RolloutItem> = serde_json::from_value(serde_json::json!([
++        let mut items: Vec<RolloutItem> = serde_json::from_value(serde_json::json!([
+             {"type":"event_msg", "payload":{"type":"turn_started","turn_id":format!("turn-{turn}")}},
+             {"type":"response_item", "payload":{"type":"message","role":"user",
+                 "content":[{"type":"input_text","text":format!("message-{turn}: {}", "x".repeat(2 * 1024 * 1024))}]}},
+@@ -715,6 +731,7 @@ async fn write_vanilla_compatibility_fixture() -> Result<(), Box<dyn std::error:
+                     "content":[{"type":"Text", "text":format!("display-answer-{turn}")}]}}},
+             {"type":"event_msg", "payload":{"type":"turn_complete","turn_id":format!("turn-{turn}")}}
+         ]))?;
++        let completion = items.split_off(3);
+         store
+             .append_items(AppendThreadItemsParams {
+                 thread_id: id,
+@@ -732,10 +749,27 @@ async fn write_vanilla_compatibility_fixture() -> Result<(), Box<dyn std::error:
+             None,
+         )
+         .await;
++        let mut snapshot = checkpoint(id)?;
++        let RolloutItem::Compacted(compacted) = &mut snapshot[0] else {
++            panic!("expected compaction");
++        };
++        let retained: codex_protocol::models::ResponseItem =
++            serde_json::from_value(serde_json::json!({
++                "type":"message", "role":"user",
++                "content":[{"type":"input_text","text":format!("retained model context {turn}")}]
++            }))?;
++        compacted.replacement_history = Some(vec![retained.into()]);
+         store
+             .append_items(AppendThreadItemsParams {
+                 thread_id: id,
+-                items: checkpoint(id)?,
++                items: snapshot,
++            })
++            .await?;
++        assert_ne!(store.live_rollout_path(id).await?, path);
++        store
++            .append_items(AppendThreadItemsParams {
++                thread_id: id,
++                items: completion,
+             })
+             .await?;
+     }
+diff --git a/codex-rs/thread-store/src/local/thread_history.rs b/codex-rs/thread-store/src/local/thread_history.rs
+index cff15327b04b89c8c05be32d021d02f61b0e9c22..ecb51907241136d48912add4acc83847ec8c827b 100644
+--- a/codex-rs/thread-store/src/local/thread_history.rs
++++ b/codex-rs/thread-store/src/local/thread_history.rs
+@@ -16,6 +16,7 @@ mod realtime;
+ mod realtime_stream;
+ mod search;
+ mod segment_paging;
++mod split_turn_summary;
+ mod turn_lookup;
+
+ pub(super) use read::list_items;
+diff --git a/codex-rs/thread-store/src/local/thread_history/read.rs b/codex-rs/thread-store/src/local/thread_history/read.rs
+index acec4fcbdcd6c002086c06f8f35d12d7e9ccc638..0c689dd8d4e85383043be30b46763309cf29d482 100644
+--- a/codex-rs/thread-store/src/local/thread_history/read.rs
++++ b/codex-rs/thread-store/src/local/thread_history/read.rs
+@@ -61,6 +61,7 @@ pub(super) struct StoredTurnRow {
+     pub first_user_item_id: Option<String>,
+     pub final_agent_item_id: Option<String>,
+     pub summary_items: Vec<StoredThreadItem>,
++    terminal_without_start: bool,
+ }
+
+ #[derive(sqlx_macros::FromRow)]
+@@ -127,6 +128,9 @@ pub(in crate::local) async fn list_turns(
+     for turn in page.rows {
+         let items = match params.items_view {
+             StoredTurnItemsView::NotLoaded => Vec::new(),
++            StoredTurnItemsView::Summary if turn.terminal_without_start => {
++                super::split_turn_summary::load(pool, &mut lineage, &turn).await?
++            }
+             StoredTurnItemsView::Summary
+                 if matches!(turn.status, StoredTurnStatus::Interrupted)
+                     && turn.first_user_item_id.is_none()
+@@ -334,6 +338,8 @@ pub(super) fn stored_turn_row(row: sqlx::sqlite::SqliteRow) -> ThreadStoreResult
+         duration_ms: row.try_get("duration_ms")?,
+         first_user_item_id: row.try_get("first_user_item_id")?,
+         final_agent_item_id: row.try_get("final_agent_item_id")?,
++        terminal_without_start: row.try_get::<Option<i64>, _>("rollout_end_ordinal")?
++            == Some(row.try_get("rollout_ordinal")?),
+         summary_items: Vec::new(),
+     })
+ }
+@@ -425,7 +431,9 @@ pub(super) fn stored_thread_item_row(
+     })
+ }
+
+-fn stored_thread_item(row: sqlx::sqlite::SqliteRow) -> ThreadStoreResult<StoredThreadItem> {
++pub(super) fn stored_thread_item(
++    row: sqlx::sqlite::SqliteRow,
++) -> ThreadStoreResult<StoredThreadItem> {
+     let updated_at_ordinal = stored_updated_at_ordinal(row.try_get("updated_at_ordinal")?)?;
+     Ok(StoredThreadItem {
+         turn_id: row.try_get("turn_id")?,
+diff --git a/codex-rs/thread-store/src/local/thread_history/segment_paging.rs b/codex-rs/thread-store/src/local/thread_history/segment_paging.rs
+index a84ab09afc32a465e7c3570811f7c55da1177365..92ba61ea6ca12398cc01342f9e670223c9fdc239 100644
+--- a/codex-rs/thread-store/src/local/thread_history/segment_paging.rs
++++ b/codex-rs/thread-store/src/local/thread_history/segment_paging.rs
+@@ -109,6 +109,7 @@ pub(super) async fn page_turn_rows(
+             r#"SELECT
+     turn_id,
+     root_turn_id,
++    rollout_end_ordinal,
+     rollout_ordinal,
+     status,
+     error_json,
+diff --git a/codex-rs/thread-store/src/local/thread_history/split_turn_summary.rs b/codex-rs/thread-store/src/local/thread_history/split_turn_summary.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..4e9c8956cb3ad1e82a52f8dc640639ce35e8e079
+--- /dev/null
++++ b/codex-rs/thread-store/src/local/thread_history/split_turn_summary.rs
+@@ -0,0 +1,94 @@
++//! A turn can start in one checkpoint segment, receive items in others, and
++//! finish in the newest. Its terminal projection has only local summary IDs.
++
++use super::super::rollout_lineage::LineageWalk;
++use super::read::StoredTurnRow;
++use super::read::stored_thread_item;
++use super::sqlite_integer;
++use crate::StoredThreadItem;
++use crate::ThreadStoreResult;
++use sqlx::Row;
++
++pub(super) async fn load(
++    pool: &sqlx::SqlitePool,
++    lineage: &mut LineageWalk<'_>,
++    turn: &StoredTurnRow,
++) -> ThreadStoreResult<Vec<StoredThreadItem>> {
++    let mut user = None;
++    let mut final_answer = None;
++    let mut unphased_answer = None;
++    let mut depth = 0;
++    while let Some((segment, _)) = lineage.at_depth(depth).await? {
++        depth += 1;
++        let start = sqlite_integer(segment.start_ordinal(), "rollout ordinal")?;
++        if start > turn.position.rollout_ordinal {
++            continue;
++        }
++        let end = segment
++            .end_ordinal()
++            .map(|n| sqlite_integer(n, "rollout ordinal"))
++            .transpose()?;
++        let physical_id = segment.rollout_id().to_string();
++        // Select at most three messages per segment. The native summary prefers
++        // an explicit final answer over a later message without a phase.
++        let rows = sqlx::query(
++            r#"
++WITH messages AS (
++    SELECT *, CASE WHEN item_type = '' THEN json_extract(item_json, '$.type') ELSE item_type END AS kind
++    FROM thread_items
++    WHERE thread_id = ?1 AND turn_id = ?2
++      AND rollout_ordinal >= ?3 AND (?4 IS NULL OR rollout_ordinal < ?4)
++      AND (item_type IN ('userMessage', 'agentMessage', ''))
++), first_user AS (
++    SELECT *, 'first_user' AS slot FROM messages
++    WHERE kind = 'userMessage' ORDER BY rollout_ordinal LIMIT 1
++), final_answer AS (
++    SELECT *, 'final_answer' AS slot FROM messages
++    WHERE kind = 'agentMessage' AND json_extract(item_json, '$.phase') = 'final_answer'
++    ORDER BY rollout_ordinal DESC LIMIT 1
++), unphased AS (
++    SELECT *, 'unphased' AS slot FROM messages
++    WHERE kind = 'agentMessage' AND json_extract(item_json, '$.phase') IS NULL
++    ORDER BY rollout_ordinal DESC LIMIT 1
++)
++SELECT * FROM first_user UNION ALL SELECT * FROM final_answer UNION ALL SELECT * FROM unphased
++"#,
++        )
++        .bind(&physical_id)
++        .bind(&turn.turn_id)
++        .bind(start)
++        .bind(end)
++        .fetch_all(pool)
++        .await?;
++        for row in rows {
++            match row.try_get::<&str, _>("slot")? {
++                "first_user" => user = Some(stored_thread_item(row)?),
++                "final_answer" if final_answer.is_none() => {
++                    final_answer = Some(stored_thread_item(row)?)
++                }
++                "unphased" if unphased_answer.is_none() => {
++                    unphased_answer = Some(stored_thread_item(row)?)
++                }
++                _ => {}
++            }
++        }
++        let has_start: bool = sqlx::query_scalar(
++            "SELECT EXISTS(SELECT 1 FROM thread_turns WHERE thread_id = ?1 AND turn_id = ?2
++             AND rollout_ordinal >= ?3 AND (?4 IS NULL OR rollout_ordinal < ?4)
++             AND (rollout_end_ordinal IS NULL OR rollout_end_ordinal != rollout_ordinal))",
++        )
++        .bind(physical_id)
++        .bind(&turn.turn_id)
++        .bind(start)
++        .bind(end)
++        .fetch_one(pool)
++        .await?;
++        if has_start {
++            break;
++        }
++    }
++    Ok(user
++        .into_iter()
++        .chain(final_answer.or(unphased_answer))
++        .collect())
++}
