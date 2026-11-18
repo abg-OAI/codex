@@ -450,7 +450,7 @@ index f1b10840d1e516a063749c59d7ba60880b496722..adbcdcb039d427d59d3af74b2804dc8f
 +        .expect("hidden helpers should not consume agent capacity");
 +}
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..5cd4a4b9755e8252bd27efb88b6b4b8b8b336d94 100644
+index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f138c8525 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -26,6 +26,7 @@ use codex_protocol::protocol::EnvironmentConfigState;
@@ -478,7 +478,7 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..5cd4a4b9755e8252bd27efb88b6b4b8b
 +    pub(crate) async fn spawn_hidden_agent_with_metadata(
 +        &self,
 +        config: Config,
-+        initial_input: Vec<UserInput>,
++        initial_input: Vec<ResolvedUserInput>,
 +        session_source: SessionSource,
 +        options: SpawnAgentOptions,
 +    ) -> CodexResult<LiveAgent> {
