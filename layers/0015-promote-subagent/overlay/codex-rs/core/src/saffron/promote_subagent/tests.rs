@@ -17,6 +17,7 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::user_input::UserInput;
+use codex_user_input::ResolvedUserInput;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
@@ -97,7 +98,7 @@ impl Fixture {
         let child = control
             .spawn_agent_with_metadata(
                 config,
-                vec![UserInput::Text {
+                vec![ResolvedUserInput::Text {
                     text: "original-child-assignment".into(),
                     text_elements: Vec::new(),
                 }],
@@ -388,7 +389,7 @@ fn unfinished_descendant_keeps_the_original_tree() -> anyhow::Result<()> {
         let descendant = control
             .spawn_agent_with_metadata(
                 fixture.child.session.get_config().await.as_ref().clone(),
-                vec![UserInput::Text {
+                vec![ResolvedUserInput::Text {
                     text: "unfinished-descendant".into(),
                     text_elements: Vec::new(),
                 }],
@@ -485,7 +486,7 @@ fn ready_retry_preserves_newer_completed_work_and_the_existing_copy() -> anyhow:
         local_control(&fixture.root.session)
             .send_input(
                 fixture.child_id,
-                vec![UserInput::Text {
+                vec![ResolvedUserInput::Text {
                     text: "new-work-after-copy".into(),
                     text_elements: Vec::new(),
                 }],

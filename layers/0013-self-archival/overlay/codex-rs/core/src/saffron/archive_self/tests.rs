@@ -193,7 +193,7 @@ async fn accepted_steer_while_completion_waits_reopens_sampling() {
     use crate::session::TurnInput;
     use crate::tasks::SessionTask;
     use crate::tasks::completion_test_support::CompletingTask;
-    use codex_protocol::user_input::UserInput;
+    use codex_user_input::ResolvedUserInput;
     use tokio::sync::Notify;
 
     let (session, turn, _receiver) = fixture().await;
@@ -229,7 +229,7 @@ async fn accepted_steer_while_completion_waits_reopens_sampling() {
         .extend_pending_input_for_turn_state(
             turn_state.as_ref(),
             vec![TurnInput::UserInput {
-                content: vec![UserInput::Text {
+                content: vec![ResolvedUserInput::Text {
                     text: "Keep working instead.".into(),
                     text_elements: Vec::new(),
                 }],
