@@ -1,0 +1,1905 @@
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index f2dca1e00d194162041b1fbe6d542f4db6c6512e..67d795e7935f2a2e8faa7339708cdcdc20ec1309 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -5560,14 +5560,6 @@ impl ThreadRequestProcessor {
+                 /*include_history*/ false,
+             )
+             .await?;
+-        if !ephemeral
+-            && source_thread.history_mode == ThreadHistoryMode::Legacy
+-            && self.thread_store.as_any().is::<LocalThreadStore>()
+-        {
+-            return Err(invalid_request(
+-                "Migrate this legacy thread with `codex migrate-rollouts` before creating a persistent local fork",
+-            ));
+-        }
+         let loaded_parent = self
+             .thread_manager
+             .get_thread(source_thread.thread_id)
+@@ -5648,6 +5640,14 @@ impl ThreadRequestProcessor {
+                 "`deferGoalContinuation` cannot be combined with `ephemeral`",
+             ));
+         }
++        if !ephemeral
++            && source_thread.history_mode == ThreadHistoryMode::Legacy
++            && self.thread_store.as_any().is::<LocalThreadStore>()
++        {
++            return Err(invalid_request(
++                "Migrate this legacy thread with `codex migrate-rollouts` before creating a persistent local fork",
++            ));
++        }
+         if paginated_source && ephemeral && include_turns {
+             return Err(invalid_request(
+                 "ephemeral paginated thread/fork requires `excludeTurns: true`",
+diff --git a/codex-rs/app-server/tests/suite/v2/git_attribution.rs b/codex-rs/app-server/tests/suite/v2/git_attribution.rs
+index 73456974e990145531b6bf2343bd17c90861cd6c..bbd315f83d57ac7f321ed8aa9509f9fd03ac96f2 100644
+--- a/codex-rs/app-server/tests/suite/v2/git_attribution.rs
++++ b/codex-rs/app-server/tests/suite/v2/git_attribution.rs
+@@ -294,7 +294,7 @@ async fn git_attribution_follows_authenticated_workspace_policy() -> Result<()>
+                 "chatgpt_base_url".to_string(),
+                 json!(format!("{}/backend-api", settings_server.uri())),
+             )])),
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++            history_mode: Some(ThreadHistoryMode::Paginated),
+             ..Default::default()
+         })
+         .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/guardian_v2_history_tests.rs b/codex-rs/app-server/tests/suite/v2/guardian_v2_history_tests.rs
+index 0381e8486e45dc7c7bce048f5cc202dfd713b847..3c053e2fa4d27be6864a2c5e38954f4960b0c0f4 100644
+--- a/codex-rs/app-server/tests/suite/v2/guardian_v2_history_tests.rs
++++ b/codex-rs/app-server/tests/suite/v2/guardian_v2_history_tests.rs
+@@ -305,7 +305,7 @@ async fn guardians_retain_evidence_after_compaction_and_resume(
+         .start_thread(ThreadStartParams {
+             approval_policy: Some(AskForApproval::OnRequest),
+             approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++            history_mode: Some(ThreadHistoryMode::Paginated),
+             ..Default::default()
+         })
+         .await?
+diff --git a/codex-rs/app-server/tests/suite/v2/projects.rs b/codex-rs/app-server/tests/suite/v2/projects.rs
+index 4bf1f0a348c382a0c78dd28b29a1a31a38ea1df2..90ddf1c91c87398ae4c4179af8ab14ebbb029981 100644
+--- a/codex-rs/app-server/tests/suite/v2/projects.rs
++++ b/codex-rs/app-server/tests/suite/v2/projects.rs
+@@ -1079,7 +1079,7 @@ async fn assigned_forks_inherit_projects_for_persistent_and_ephemeral_children()
+     let started = server
+         .start_thread(ThreadStartParams {
+             project_id: Some(project.project.id.clone()),
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++            history_mode: Some(ThreadHistoryMode::Paginated),
+             ..Default::default()
+         })
+         .await?;
+@@ -1099,6 +1099,7 @@ async fn assigned_forks_inherit_projects_for_persistent_and_ephemeral_children()
+     let fork_id = server
+         .send_thread_fork_request(ThreadForkParams {
+             thread_id: started.thread.id.clone(),
++            exclude_turns: true,
+             ..Default::default()
+         })
+         .await?;
+@@ -1114,6 +1115,7 @@ async fn assigned_forks_inherit_projects_for_persistent_and_ephemeral_children()
+     let ephemeral_id = server
+         .send_thread_fork_request(ThreadForkParams {
+             thread_id: started.thread.id,
++            exclude_turns: true,
+             ephemeral: true,
+             ..Default::default()
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_fork.rs b/codex-rs/app-server/tests/suite/v2/thread_fork.rs
+index df2ce231e8973c568218a7ef6bfa9c9e7b7a6c0d..e48c68fdefc50fb6aa824d96e75f1b89add8760b 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_fork.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_fork.rs
+@@ -217,6 +217,34 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
+         &RolloutItem::SessionMeta(Box::new(session_meta)),
+     )
+     .await?;
++    for item in [
++        EventMsg::TurnStarted(TurnStartedEvent {
++            turn_attribution: None,
++            turn_id: "saved-turn".into(),
++            root_turn_id: None,
++            trace_id: None,
++            started_at: None,
++            model_context_window: None,
++            collaboration_mode_kind: Default::default(),
++        }),
++        EventMsg::ItemCompleted(ItemCompletedEvent {
++            thread_id: ThreadId::from_string(&conversation_id)?,
++            turn_id: "saved-turn".into(),
++            item: CoreTurnItem::UserMessage(UserMessageItem {
++                id: "saved-message".into(),
++                client_id: None,
++                content: vec![codex_protocol::user_input::UserInput::Text {
++                    text: preview.into(),
++                    text_elements: Vec::new(),
++                }],
++            }),
++            started_at_ms: None,
++            completed_at_ms: 0,
++            content_token_count: None,
++        }),
++    ] {
++        append_rollout_item_to_path(&original_path, &RolloutItem::EventMsg(item)).await?;
++    }
+     let original_contents = std::fs::read_to_string(&original_path)?;
+
+     let mut mcp = TestAppServer::builder()
+@@ -369,7 +397,7 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
+ }
+
+ #[tokio::test]
+-async fn thread_fork_preserves_persisted_approvals_reviewer() -> Result<()> {
++async fn ephemeral_fork_of_saved_legacy_thread_preserves_approvals_reviewer() -> Result<()> {
+     assert_thread_fork_preserves_persisted_approvals_reviewer(ThreadHistoryMode::Legacy).await
+ }
+
+@@ -395,16 +423,17 @@ async fn thread_fork_preserves_persisted_permission_profile_and_honors_overrides
+                 .without_managed_config()
+                 .build_initialized()
+                 .await?;
+-            let start_id = mcp
+-                .send_thread_start_request_with_auto_env(ThreadStartParams {
+-                    history_mode: Some(history_mode),
++            let thread = load_fork_parent(
++                &mut mcp,
++                codex_home.path(),
++                history_mode,
++                ThreadStartParams {
+                     approval_policy: Some(AskForApproval::OnRequest),
+-                    permissions: Some("dev".to_string()),
++                    permissions: Some("dev".into()),
+                     ..Default::default()
+-                })
+-                .await?;
+-            let ThreadStartResponse { thread, .. } =
+-                timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(start_id)).await??;
++                },
++            )
++            .await?;
+             timeout(
+                 DEFAULT_READ_TIMEOUT,
+                 mcp.start_turn_and_wait_for_completion(TurnStartParams {
+@@ -427,6 +456,7 @@ async fn thread_fork_preserves_persisted_permission_profile_and_honors_overrides
+             .await?;
+         let fork_id = mcp
+             .send_thread_fork_request(ThreadForkParams {
++                ephemeral: history_mode == ThreadHistoryMode::Legacy,
+                 thread_id: source_thread_id.clone(),
+                 ..Default::default()
+             })
+@@ -449,6 +479,7 @@ async fn thread_fork_preserves_persisted_permission_profile_and_honors_overrides
+
+         let fork_id = mcp
+             .send_thread_fork_request(ThreadForkParams {
++                ephemeral: history_mode == ThreadHistoryMode::Legacy,
+                 thread_id: source_thread_id.clone(),
+                 approval_policy: Some(AskForApproval::Never),
+                 sandbox: Some(SandboxMode::DangerFullAccess),
+@@ -467,6 +498,7 @@ async fn thread_fork_preserves_persisted_permission_profile_and_honors_overrides
+
+         let fork_id = mcp
+             .send_thread_fork_request(ThreadForkParams {
++                ephemeral: history_mode == ThreadHistoryMode::Legacy,
+                 thread_id: source_thread_id,
+                 permissions: Some(":workspace".to_string()),
+                 ..Default::default()
+@@ -487,6 +519,61 @@ async fn thread_fork_preserves_persisted_permission_profile_and_honors_overrides
+     Ok(())
+ }
+
++async fn load_fork_parent(
++    server: &mut TestAppServer,
++    home: &std::path::Path,
++    mode: ThreadHistoryMode,
++    options: ThreadStartParams,
++) -> Result<codex_app_server_protocol::Thread> {
++    if mode == ThreadHistoryMode::Paginated {
++        return Ok(server
++            .start_thread(ThreadStartParams {
++                history_mode: Some(mode),
++                ..options
++            })
++            .await?
++            .thread);
++    }
++
++    let date = "2025-01-05T12-00-00";
++    let saved = create_fake_rollout(
++        home,
++        date,
++        "2025-01-05T12:00:00Z",
++        "Earlier user message",
++        Some("mock_provider"),
++        None,
++    )?;
++    if let Some(tools) = options.dynamic_tools {
++        let path = rollout_path(home, date, &saved);
++        let contents = std::fs::read_to_string(&path)?;
++        let (header, items) = contents
++            .split_once('\n')
++            .expect("fixture has a session header");
++        let mut header: Value = serde_json::from_str(header)?;
++        header["payload"]["dynamic_tools"] = serde_json::to_value(tools)?;
++        std::fs::write(
++            path,
++            format!("{}\n{items}", serde_json::to_string(&header)?),
++        )?;
++    }
++    let response: ThreadResumeResponse = server
++        .request(|request_id| ClientRequest::ThreadResume {
++            request_id,
++            params: ThreadResumeParams {
++                thread_id: saved,
++                permissions: options.permissions,
++                approval_policy: options.approval_policy,
++                config: options.config,
++                base_instructions: options.base_instructions,
++                developer_instructions: options.developer_instructions,
++                ..Default::default()
++            },
++        })
++        .await?;
++    Ok(response.thread)
++}
++
+ async fn assert_thread_fork_preserves_persisted_approvals_reviewer(
+     history_mode: ThreadHistoryMode,
+ ) -> Result<()> {
+@@ -500,19 +587,16 @@ async fn assert_thread_fork_preserves_persisted_approvals_reviewer(
+             .build_initialized()
+             .await?;
+
+-        let start_id = mcp
+-            .send_thread_start_request_with_auto_env(ThreadStartParams {
+-                history_mode: Some(history_mode),
+-                permissions: Some(":workspace".to_string()),
++        let thread = load_fork_parent(
++            &mut mcp,
++            codex_home.path(),
++            history_mode,
++            ThreadStartParams {
++                permissions: Some(":workspace".into()),
+                 ..Default::default()
+-            })
+-            .await?;
+-        let start_resp: JSONRPCResponse = timeout(
+-            DEFAULT_READ_TIMEOUT,
+-            mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
++            },
+         )
+-        .await??;
+-        let ThreadStartResponse { thread, .. } = to_response(start_resp)?;
++        .await?;
+
+         let turn_id = mcp
+             .send_turn_start_request(TurnStartParams {
+@@ -603,6 +687,7 @@ async fn assert_thread_fork_preserves_persisted_approvals_reviewer(
+     let fork_id = mcp
+         .send_thread_fork_request(ThreadForkParams {
+             thread_id: source_thread_id.clone(),
++            ephemeral: history_mode == ThreadHistoryMode::Legacy,
+             last_turn_id: Some(source_turn_id.clone()),
+             ..Default::default()
+         })
+@@ -653,20 +738,8 @@ async fn assert_thread_fork_preserves_persisted_approvals_reviewer(
+     Ok(())
+ }
+
+-#[tokio::test]
+-async fn thread_fork_at_last_turn_id_keeps_only_terminal_prefix() -> Result<()> {
+-    assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(ThreadHistoryMode::Legacy).await
+-}
+-
+ #[tokio::test]
+ async fn paginated_thread_fork_at_named_boundaries_keeps_only_terminal_prefix() -> Result<()> {
+-    assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(ThreadHistoryMode::Paginated)
+-        .await
+-}
+-
+-async fn assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(
+-    history_mode: ThreadHistoryMode,
+-) -> Result<()> {
+     let server = create_mock_responses_server_repeating_assistant("Done").await;
+     let codex_home = TempDir::new()?;
+     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+@@ -678,7 +751,7 @@ async fn assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(
+
+     let start_id = mcp
+         .send_thread_start_request_with_auto_env(ThreadStartParams {
+-            history_mode: Some(history_mode),
++            history_mode: Some(ThreadHistoryMode::Paginated),
+             ..Default::default()
+         })
+         .await?;
+@@ -869,9 +942,6 @@ async fn assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(
+             .all(|turn| turn.status == TurnStatus::Completed)
+     );
+     assert_eq!(forked_thread.forked_from_id, Some(source_thread_id.clone()));
+-    if history_mode == ThreadHistoryMode::Legacy {
+-        assert_eq!(forked_thread.preview, "first");
+-    }
+     assert_eq!(
+         std::fs::read_to_string(source_path.as_path())?,
+         original_contents,
+@@ -880,70 +950,64 @@ async fn assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(
+
+     let forked_path = forked_thread.path.clone().expect("forked thread path");
+     let forked_contents = std::fs::read_to_string(forked_path.as_path())?;
+-    if history_mode == ThreadHistoryMode::Paginated {
+-        assert!(
+-            read_session_meta_line(forked_path.as_path())
+-                .await?
+-                .meta
+-                .history_base
+-                .is_some()
+-        );
+-        assert!(!forked_contents.contains(turn_ids[1].as_str()));
+-    } else {
+-        assert!(forked_contents.contains(turn_ids[1].as_str()));
+-    }
++    assert!(
++        read_session_meta_line(forked_path.as_path())
++            .await?
++            .meta
++            .history_base
++            .is_some()
++    );
++    assert!(!forked_contents.contains(turn_ids[1].as_str()));
+     assert!(!forked_contents.contains(turn_ids[2].as_str()));
+
+-    if history_mode == ThreadHistoryMode::Paginated {
+-        let before_fork_id = mcp
+-            .send_thread_fork_request(ThreadForkParams {
+-                thread_id: source_thread_id,
+-                before_turn_id: Some(turn_ids[2].clone()),
+-                ..Default::default()
+-            })
+-            .await?;
+-        let ThreadForkResponse {
+-            thread: before_fork,
+-            ..
+-        } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(before_fork_id)).await??;
+-        assert_eq!(
+-            before_fork
+-                .turns
+-                .iter()
+-                .map(|turn| turn.id.clone())
+-                .collect::<Vec<_>>(),
+-            turn_ids[..2]
+-        );
++    let before_fork_id = mcp
++        .send_thread_fork_request(ThreadForkParams {
++            thread_id: source_thread_id,
++            before_turn_id: Some(turn_ids[2].clone()),
++            ..Default::default()
++        })
++        .await?;
++    let ThreadForkResponse {
++        thread: before_fork,
++        ..
++    } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(before_fork_id)).await??;
++    assert_eq!(
++        before_fork
++            .turns
++            .iter()
++            .map(|turn| turn.id.clone())
++            .collect::<Vec<_>>(),
++        turn_ids[..2]
++    );
+
+-        let completed = timeout(
+-            DEFAULT_READ_TIMEOUT,
+-            mcp.start_turn_and_wait_for_completion(TurnStartParams {
++    let completed = timeout(
++        DEFAULT_READ_TIMEOUT,
++        mcp.start_turn_and_wait_for_completion(TurnStartParams {
++            thread_id: forked_thread.id.clone(),
++            input: vec![UserInput::Text {
++                text: "private child prompt".to_string(),
++                text_elements: Vec::new(),
++            }],
++            ..Default::default()
++        }),
++    )
++    .await??;
++    let ThreadForkResponse {
++        thread: ephemeral_fork,
++        ..
++    } = mcp
++        .request(|request_id| ClientRequest::ThreadFork {
++            request_id,
++            params: ThreadForkParams {
+                 thread_id: forked_thread.id.clone(),
+-                input: vec![UserInput::Text {
+-                    text: "private child prompt".to_string(),
+-                    text_elements: Vec::new(),
+-                }],
++                before_turn_id: Some(completed.turn.id),
++                ephemeral: true,
++                exclude_turns: true,
+                 ..Default::default()
+-            }),
+-        )
+-        .await??;
+-        let ThreadForkResponse {
+-            thread: ephemeral_fork,
+-            ..
+-        } = mcp
+-            .request(|request_id| ClientRequest::ThreadFork {
+-                request_id,
+-                params: ThreadForkParams {
+-                    thread_id: forked_thread.id.clone(),
+-                    before_turn_id: Some(completed.turn.id),
+-                    ephemeral: true,
+-                    exclude_turns: true,
+-                    ..Default::default()
+-                },
+-            })
+-            .await?;
+-        assert_eq!(ephemeral_fork.preview, "first");
+-    }
++            },
++        })
++        .await?;
++    assert_eq!(ephemeral_fork.preview, "first");
+
+     // Resuming a fork must not copy its parent's attachments again after an explicit removal.
+     mcp.shutdown_gracefully().await?;
+@@ -972,33 +1036,31 @@ async fn assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(
+         .await?;
+     assert!(after_resume.data.is_empty());
+
+-    if history_mode == ThreadHistoryMode::Paginated {
+-        assert_eq!(reopened.thread.preview, "first");
+-        // The source is closed. Place the next fork boundary immediately after a compaction
+-        // whose replacement history no longer contains the opening user message.
+-        for item in [
+-            RolloutItem::Compacted(serde_json::from_value(json!({
+-                "message": "summary", "replacement_history": [], "window_number": 1
+-            }))?),
+-            RolloutItem::EventMsg(EventMsg::TurnStarted(serde_json::from_value(json!({
+-                "turn_id": "after-compaction"
+-            }))?)),
+-        ] {
+-            append_rollout_item_to_path(&source_path, &item).await?;
+-        }
+-        let fork: ThreadForkResponse = resumed
+-            .request(|request_id| ClientRequest::ThreadFork {
+-                request_id,
+-                params: ThreadForkParams {
+-                    thread_id: source_thread.id,
+-                    before_turn_id: Some("after-compaction".to_string()),
+-                    exclude_turns: true,
+-                    ..Default::default()
+-                },
+-            })
+-            .await?;
+-        assert_eq!(fork.thread.preview, "first");
++    assert_eq!(reopened.thread.preview, "first");
++    // The source is closed. Place the next fork boundary immediately after a compaction
++    // whose replacement history no longer contains the opening user message.
++    for item in [
++        RolloutItem::Compacted(serde_json::from_value(json!({
++            "message": "summary", "replacement_history": [], "window_number": 1
++        }))?),
++        RolloutItem::EventMsg(EventMsg::TurnStarted(serde_json::from_value(json!({
++            "turn_id": "after-compaction"
++        }))?)),
++    ] {
++        append_rollout_item_to_path(&source_path, &item).await?;
+     }
++    let fork: ThreadForkResponse = resumed
++        .request(|request_id| ClientRequest::ThreadFork {
++            request_id,
++            params: ThreadForkParams {
++                thread_id: source_thread.id,
++                before_turn_id: Some("after-compaction".to_string()),
++                exclude_turns: true,
++                ..Default::default()
++            },
++        })
++        .await?;
++    assert_eq!(fork.thread.preview, "first");
+
+     Ok(())
+ }
+@@ -1254,7 +1316,7 @@ async fn thread_fork_inherits_explicit_source_name_from_session_index() -> Resul
+     let codex_home = TempDir::new()?;
+     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+
+-    let conversation_id = create_fake_rollout(
++    let conversation_id = create_fake_paginated_rollout(
+         codex_home.path(),
+         "2025-01-05T12-00-00",
+         "2025-01-05T12:00:00Z",
+@@ -1324,6 +1386,7 @@ async fn thread_fork_can_load_source_by_path() -> Result<()> {
+
+     let fork_id = mcp
+         .send_thread_fork_request(ThreadForkParams {
++            ephemeral: true,
+             thread_id: "not-a-valid-thread-id".to_string(),
+             path: Some(original_path),
+             ..Default::default()
+@@ -1402,6 +1465,7 @@ async fn thread_fork_can_cut_before_unfinished_stored_turn() -> Result<()> {
+
+     let fork_id = mcp
+         .send_thread_fork_request(ThreadForkParams {
++            ephemeral: true,
+             thread_id: conversation_id,
+             before_turn_id: Some(unfinished_turn_id.to_string()),
+             ..Default::default()
+@@ -1439,6 +1503,7 @@ async fn thread_fork_emits_restored_token_usage_before_next_turn() -> Result<()>
+
+     let fork_id = mcp
+         .send_thread_fork_request(ThreadForkParams {
++            ephemeral: true,
+             thread_id: conversation_id,
+             thread_source: Some(ThreadSource::User),
+             ..Default::default()
+@@ -1492,6 +1557,7 @@ async fn thread_fork_can_exclude_turns_and_skip_restored_token_usage() -> Result
+
+     let fork_id = mcp
+         .send_thread_fork_request(ThreadForkParams {
++            ephemeral: true,
+             thread_id: conversation_id.clone(),
+             exclude_turns: true,
+             ..Default::default()
+@@ -1527,7 +1593,7 @@ async fn thread_fork_tracks_thread_initialized_analytics() -> Result<()> {
+         .write(codex_home.path())?;
+     mount_analytics_capture(&server, codex_home.path()).await?;
+
+-    let conversation_id = create_fake_rollout(
++    let conversation_id = create_fake_paginated_rollout(
+         codex_home.path(),
+         "2025-01-05T12-00-00",
+         "2025-01-05T12:00:00Z",
+@@ -1574,10 +1640,8 @@ async fn thread_fork_tracks_thread_initialized_analytics() -> Result<()> {
+     Ok(())
+ }
+
+-#[test_case(ThreadHistoryMode::Legacy; "legacy")]
+-#[test_case(ThreadHistoryMode::Paginated; "paginated")]
+ #[tokio::test]
+-async fn thread_fork_rejects_unmaterialized_thread(history_mode: ThreadHistoryMode) -> Result<()> {
++async fn thread_fork_rejects_unmaterialized_thread() -> Result<()> {
+     let server = create_mock_responses_server_repeating_assistant("Done").await;
+     let codex_home = TempDir::new()?;
+     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+@@ -1590,7 +1654,7 @@ async fn thread_fork_rejects_unmaterialized_thread(history_mode: ThreadHistoryMo
+     let start_id = mcp
+         .send_thread_start_request_with_auto_env(ThreadStartParams {
+             model: Some("mock-model".to_string()),
+-            history_mode: Some(history_mode),
++            history_mode: Some(ThreadHistoryMode::Paginated),
+             ..Default::default()
+         })
+         .await?;
+@@ -2401,7 +2465,7 @@ async fn thread_fork_with_empty_path_uses_thread_id() -> Result<()> {
+     let codex_home = TempDir::new()?;
+     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+
+-    let conversation_id = create_fake_rollout(
++    let conversation_id = create_fake_paginated_rollout(
+         codex_home.path(),
+         "2025-01-05T12-00-00",
+         "2025-01-05T12:00:00Z",
+@@ -2471,7 +2535,7 @@ async fn thread_fork_surfaces_cloud_config_bundle_load_errors() -> Result<()> {
+         AuthCredentialsStoreMode::File,
+     )?;
+
+-    let conversation_id = create_fake_rollout(
++    let conversation_id = create_fake_paginated_rollout(
+         codex_home.path(),
+         "2025-01-05T12-00-00",
+         "2025-01-05T12:00:00Z",
+@@ -2926,9 +2990,11 @@ async fn inheriting_fork_preserves_parent_config(history_mode: ThreadHistoryMode
+         .find(|model| model.show_in_picker && !model.service_tiers.is_empty())
+         .expect("a bundled model supports service tiers");
+     let tier = &model.service_tiers[0].id;
+-    let parent = mcp
+-        .start_thread(ThreadStartParams {
+-            history_mode: Some(history_mode),
++    let parent = load_fork_parent(
++        &mut mcp,
++        codex_home.path(),
++        history_mode,
++        ThreadStartParams {
+             base_instructions: Some("Retain these base instructions.".into()),
+             developer_instructions: Some("Retain this system policy context.".into()),
+             dynamic_tools: Some(vec![DynamicToolSpec::Function(DynamicToolFunctionSpec {
+@@ -2938,10 +3004,11 @@ async fn inheriting_fork_preserves_parent_config(history_mode: ThreadHistoryMode
+                 defer_loading: false,
+             })]),
+             ..Default::default()
+-        })
+-        .await?;
++        },
++    )
++    .await?;
+     mcp.start_turn_and_wait_for_completion(TurnStartParams {
+-        thread_id: parent.thread.id.clone(),
++        thread_id: parent.id.clone(),
+         input: vec![UserInput::Text {
+             text: "Initial turn".into(),
+             text_elements: vec![],
+@@ -2969,7 +3036,7 @@ async fn inheriting_fork_preserves_parent_config(history_mode: ThreadHistoryMode
+     ] {
+         let request_id = mcp
+             .send_thread_fork_request(ThreadForkParams {
+-                thread_id: parent.thread.id.clone(),
++                thread_id: parent.id.clone(),
+                 experimental_prediction_mode: true,
+                 ephemeral: true,
+                 config: Some([("thread_unload_delay_secs".into(), delay)].into()),
+@@ -2986,7 +3053,7 @@ async fn inheriting_fork_preserves_parent_config(history_mode: ThreadHistoryMode
+
+     let fork_id = mcp
+         .send_thread_fork_request(ThreadForkParams {
+-            thread_id: parent.thread.id.clone(),
++            thread_id: parent.id.clone(),
+             experimental_prediction_mode: true,
+             ephemeral: true,
+             exclude_turns: true,
+@@ -3011,7 +3078,7 @@ async fn inheriting_fork_preserves_parent_config(history_mode: ThreadHistoryMode
+         ),
+     );
+     assert!(child.thread.path.is_none());
+-    for id in [&child.thread.id, &parent.thread.id] {
++    for id in [&child.thread.id, &parent.id] {
+         mcp.start_turn_and_wait_for_completion(TurnStartParams {
+             thread_id: id.clone(),
+             input: vec![UserInput::Text {
+@@ -3140,16 +3207,19 @@ async fn fork_option_disables_mcp_servers(
+         .with_codex_home(codex_home.path())
+         .build_initialized()
+         .await?;
+-    let parent = app
+-        .start_thread(ThreadStartParams {
+-            history_mode: Some(history_mode),
++    let parent = load_fork_parent(
++        &mut app,
++        codex_home.path(),
++        history_mode,
++        ThreadStartParams {
+             // Only the parent catalog advertises the capability used by the prediction fork.
+             config: Some([("model_catalog_json".into(), json!(catalog))].into()),
+             ..Default::default()
+-        })
+-        .await?;
++        },
++    )
++    .await?;
+     app.start_turn_and_wait_for_completion(TurnStartParams {
+-        thread_id: parent.thread.id.clone(),
++        thread_id: parent.id.clone(),
+         input: vec![UserInput::Text {
+             text: "Initial turn".into(),
+             text_elements: vec![],
+@@ -3161,7 +3231,7 @@ async fn fork_option_disables_mcp_servers(
+         .request(|request_id| ClientRequest::ThreadFork {
+             request_id,
+             params: ThreadForkParams {
+-                thread_id: parent.thread.id.clone(),
++                thread_id: parent.id.clone(),
+                 experimental_prediction_mode: true,
+                 experimental_disable_prediction_mcp: disable_mcp,
+                 ephemeral: true,
+@@ -3194,7 +3264,7 @@ async fn fork_option_disables_mcp_servers(
+         .await?;
+     for (thread_id, text) in [
+         (&child.thread.id, "Predict the next message."),
+-        (&parent.thread.id, "Continue"),
++        (&parent.id, "Continue"),
+     ] {
+         app.start_turn_and_wait_for_completion(TurnStartParams {
+             thread_id: thread_id.clone(),
+@@ -3246,7 +3316,6 @@ async fn fork_option_disables_mcp_servers(
+     Ok(())
+ }
+
+-#[test_case(ThreadHistoryMode::Legacy, false; "fresh persistent legacy")]
+ #[test_case(ThreadHistoryMode::Legacy, true; "ephemeral legacy")]
+ #[test_case(ThreadHistoryMode::Paginated, false; "fresh persistent paginated")]
+ #[test_case(ThreadHistoryMode::Paginated, true; "ephemeral paginated")]
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs b/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs
+index 11197159eb1b2c8755c30c63e1f22674d43d21c2..c2743b5fc4aeb69484484d3fbc42742c82d60093 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs
+@@ -721,7 +721,7 @@ async fn thread_metadata_update_sanitizes_git_origin_before_persisting() -> Resu
+     let start_id = mcp
+         .send_thread_start_request_with_auto_env(ThreadStartParams {
+             model: Some("mock-model".to_string()),
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++            history_mode: Some(ThreadHistoryMode::Paginated),
+             ..Default::default()
+         })
+         .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_read.rs b/codex-rs/app-server/tests/suite/v2/thread_read.rs
+index 1063788a66b01335460827744243a3fe11955fb5..fbfc9455df731ad271436cde47352248bcedaeea 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_read.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_read.rs
+@@ -1793,7 +1793,7 @@ async fn thread_read_include_turns_rejects_unmaterialized_loaded_thread() -> Res
+     let start_id = mcp
+         .send_thread_start_request_with_auto_env(ThreadStartParams {
+             model: Some("mock-model".to_string()),
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++            history_mode: Some(ThreadHistoryMode::Paginated),
+             ..Default::default()
+         })
+         .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_resume.rs b/codex-rs/app-server/tests/suite/v2/thread_resume.rs
+index cd090af5fd538aaf5e1a0c931f85bd9d403709e8..b0ea2a0067c2ed9789c1ec20a8ff218bd99ee51e 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_resume.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_resume.rs
+@@ -403,13 +403,38 @@ async fn assert_thread_resume_rejects_writer_owned_by_another_process(
+         .with_codex_home(codex_home.path())
+         .build_initialized()
+         .await?;
+-    let ThreadStartResponse { thread, .. } = primary
+-        .start_thread(ThreadStartParams {
+-            model: Some("gpt-5.4".to_string()),
+-            history_mode: Some(history_mode),
+-            ..Default::default()
+-        })
+-        .await?;
++    let thread = match history_mode {
++        ThreadHistoryMode::Legacy => {
++            let saved = create_fake_rollout(
++                codex_home.path(),
++                "2025-01-03T10-00-00",
++                "2025-01-03T10:00:00Z",
++                "saved conversation",
++                Some("mock_provider"),
++                None,
++            )?;
++            let request = primary
++                .send_thread_resume_request(ThreadResumeParams {
++                    thread_id: saved,
++                    model: Some("gpt-5.4".to_string()),
++                    ..Default::default()
++                })
++                .await?;
++            let resumed: ThreadResumeResponse =
++                timeout(DEFAULT_READ_TIMEOUT, primary.read_response(request)).await??;
++            resumed.thread
++        }
++        ThreadHistoryMode::Paginated => {
++            primary
++                .start_thread(ThreadStartParams {
++                    model: Some("gpt-5.4".to_string()),
++                    history_mode: Some(history_mode),
++                    ..Default::default()
++                })
++                .await?
++                .thread
++        }
++    };
+     timeout(
+         DEFAULT_READ_TIMEOUT,
+         primary.start_turn_and_wait_for_completion(TurnStartParams {
+@@ -1495,7 +1520,7 @@ async fn thread_resume_preserves_goal_first_and_fork_approvals_reviewer() -> Res
+             .send_thread_start_request_with_auto_env(ThreadStartParams {
+                 model: Some("gpt-5.2-codex".to_string()),
+                 approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
+-                history_mode: Some(ThreadHistoryMode::Legacy),
++                history_mode: Some(ThreadHistoryMode::Paginated),
+                 ..Default::default()
+             })
+             .await?;
+@@ -1632,7 +1657,7 @@ async fn thread_resume_preserves_acknowledged_model_effort_and_approvals_reviewe
+         let start_id = mcp
+             .send_thread_start_request_with_auto_env(ThreadStartParams {
+                 model: Some("gpt-5.4".to_string()),
+-                history_mode: Some(ThreadHistoryMode::Legacy),
++                history_mode: Some(ThreadHistoryMode::Paginated),
+                 approval_policy: Some(AskForApproval::Never),
+                 approvals_reviewer: Some(ApprovalsReviewer::User),
+                 permissions: Some(":workspace".to_string()),
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs b/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs
+index 561b890d18d5f7a641d576f4b2dec72273a3dabc..4ba2fd6c2d81b2ed1e9538e3483eeb891d1e902b 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs
+@@ -2,6 +2,7 @@ use anyhow::Result;
+ use app_test_support::MockResponsesConfig;
+ use app_test_support::TestAppServer;
+ use app_test_support::create_escalated_command_execution_sse_response;
++use app_test_support::create_fake_rollout;
+ use app_test_support::create_final_assistant_message_sse_response;
+ use app_test_support::create_mock_responses_server_sequence;
+ use app_test_support::format_with_current_shell_display;
+@@ -19,10 +20,11 @@ use codex_app_server_protocol::ServerRequest;
+ use codex_app_server_protocol::SortDirection;
+ use codex_app_server_protocol::ThreadForkParams;
+ use codex_app_server_protocol::ThreadForkResponse;
+-use codex_app_server_protocol::ThreadHistoryMode;
+ use codex_app_server_protocol::ThreadItemPayload;
+ use codex_app_server_protocol::ThreadReadParams;
+ use codex_app_server_protocol::ThreadReadResponse;
++use codex_app_server_protocol::ThreadResumeParams;
++use codex_app_server_protocol::ThreadResumeResponse;
+ use codex_app_server_protocol::ThreadShellCommandParams;
+ use codex_app_server_protocol::ThreadShellCommandResponse;
+ use codex_app_server_protocol::ThreadStartParams;
+@@ -63,15 +65,8 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
+         .without_auto_env()
+         .build_initialized()
+         .await?;
+-    let ThreadStartResponse { thread, .. } = mcp
+-        .request(|request_id| ClientRequest::ThreadStart {
+-            request_id,
+-            params: ThreadStartParams {
+-                history_mode: Some(ThreadHistoryMode::Legacy),
+-                ..Default::default()
+-            },
+-        })
+-        .await?;
++    let thread = resume_saved_shell_thread(&mut mcp, &codex_home).await?;
++    assert_eq!(thread.turns.len(), 1);
+     let (shell_command, expected_output) = current_shell_output_command("hello from bang")?;
+
+     let _: ThreadShellCommandResponse = mcp
+@@ -135,8 +130,8 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
+             },
+         })
+         .await?;
+-    assert_eq!(thread.turns.len(), 1);
+-    assert_no_command_executions(&thread.turns[0].items, "thread/read");
++    assert_eq!(thread.turns.len(), 2);
++    assert_no_command_executions(&thread.turns[1].items, "thread/read");
+
+     let ThreadTurnsListResponse { data, .. } = mcp
+         .request(|request_id| ClientRequest::ThreadTurnsList {
+@@ -150,20 +145,21 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
+             },
+         })
+         .await?;
+-    assert_eq!(data.len(), 1);
+-    assert_no_command_executions(&data[0].items, "thread/turns/list");
++    assert_eq!(data.len(), 2);
++    assert_no_command_executions(&data[1].items, "thread/turns/list");
+
+     let ThreadForkResponse { thread, .. } = mcp
+         .request(|request_id| ClientRequest::ThreadFork {
+             request_id,
+             params: ThreadForkParams {
+                 thread_id: thread.id,
++                ephemeral: true,
+                 ..Default::default()
+             },
+         })
+         .await?;
+-    assert_eq!(thread.turns.len(), 1);
+-    assert_no_command_executions(&thread.turns[0].items, "thread/fork");
++    assert_eq!(thread.turns.len(), 2);
++    assert_no_command_executions(&thread.turns[1].items, "thread/fork");
+
+     Ok(())
+ }
+@@ -245,15 +241,8 @@ async fn check_thread_shell_command_in_active_turn(timeout_ms: Option<i64>) -> R
+         .without_auto_env()
+         .build_initialized()
+         .await?;
+-    let ThreadStartResponse { thread, .. } = mcp
+-        .request(|request_id| ClientRequest::ThreadStart {
+-            request_id,
+-            params: ThreadStartParams {
+-                history_mode: Some(ThreadHistoryMode::Legacy),
+-                ..Default::default()
+-            },
+-        })
+-        .await?;
++    let thread = resume_saved_shell_thread(&mut mcp, &codex_home).await?;
++    assert_eq!(thread.turns.len(), 1);
+     let (shell_command, expected_output) = if timeout_ms.is_some() {
+         current_shell_slow_command()?
+     } else {
+@@ -356,9 +345,9 @@ async fn check_thread_shell_command_in_active_turn(timeout_ms: Option<i64>) -> R
+             },
+         })
+         .await?;
+-    assert_eq!(active_thread.turns.len(), 1);
+-    assert_eq!(active_thread.turns[0].id, turn.id);
+-    assert_eq!(active_thread.turns[0].status, TurnStatus::InProgress);
++    assert_eq!(active_thread.turns.len(), 2);
++    assert_eq!(active_thread.turns[1].id, turn.id);
++    assert_eq!(active_thread.turns[1].status, TurnStatus::InProgress);
+     assert!(
+         mcp.pending_notification_methods()
+             .iter()
+@@ -388,8 +377,8 @@ async fn check_thread_shell_command_in_active_turn(timeout_ms: Option<i64>) -> R
+             },
+         })
+         .await?;
+-    assert_eq!(thread.turns.len(), 1);
+-    assert_no_command_executions(&thread.turns[0].items, "thread/read");
++    assert_eq!(thread.turns.len(), 2);
++    assert_no_command_executions(&thread.turns[1].items, "thread/read");
+     assert!(
+         mcp.pending_notification_methods()
+             .iter()
+@@ -534,6 +523,30 @@ async fn thread_shell_command_rejects_invalid_timeouts_before_execution() -> Res
+     Ok(())
+ }
+
++async fn resume_saved_shell_thread(
++    mcp: &mut TestAppServer,
++    codex_home: &std::path::Path,
++) -> Result<codex_app_server_protocol::Thread> {
++    let saved = create_fake_rollout(
++        codex_home,
++        "2025-01-05T12-00-00",
++        "2025-01-05T12:00:00Z",
++        "Earlier user message",
++        Some("mock_provider"),
++        None,
++    )?;
++    let response: ThreadResumeResponse = mcp
++        .request(|request_id| ClientRequest::ThreadResume {
++            request_id,
++            params: ThreadResumeParams {
++                thread_id: saved,
++                ..Default::default()
++            },
++        })
++        .await?;
++    Ok(response.thread)
++}
++
+ fn current_shell_slow_command() -> Result<(String, String)> {
+     let (command, expected_output) = current_shell_output_command("shell-timeout-ready")?;
+     let suffix = match default_user_shell().name() {
+diff --git a/codex-rs/app-server/tests/suite/v2/turn_start.rs b/codex-rs/app-server/tests/suite/v2/turn_start.rs
+index 5419761db51f659a22408c4f1927e5897a416459..a61d7fc2c4a9ebf274037b137ae1487c8f1ff2e9 100644
+--- a/codex-rs/app-server/tests/suite/v2/turn_start.rs
++++ b/codex-rs/app-server/tests/suite/v2/turn_start.rs
+@@ -440,7 +440,7 @@ async fn tool_call_metadata_stays_out_of_raw_response_item_notifications(
+         .start_thread(ThreadStartParams {
+             model: Some("mock-model".to_string()),
+             experimental_raw_events: true,
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++            history_mode: Some(ThreadHistoryMode::Paginated),
+             ..Default::default()
+         })
+         .await?;
+diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
+index 6ed45fd30dec3061eda14ac6fe473a18f25a12aa..ca02780939a2f1fe0d46d2981c75154bf876c25f 100644
+--- a/codex-rs/core/src/agent/control_tests.rs
++++ b/codex-rs/core/src/agent/control_tests.rs
+@@ -2073,19 +2073,19 @@ async fn cold_resume_with_thread_instructions_preserves_lazy_v2_child_inheritanc
+     let _ = config.features.enable(Feature::Sqlite);
+     let admitted_country = RequestCountry::from_iso_code("DE").unwrap();
+     let harness = AgentControlHarness::new_with_config(home, config).await;
+-    let parent = harness
+-        .manager
+-        .start_thread(StartThreadOptions {
++    let parent = crate::test_support::start_saved_legacy_thread(
++        &harness.manager,
++        StartThreadOptions {
+             request_country: admitted_country.clone(),
+-            history_mode: Some(ThreadHistoryMode::Legacy),
+             thread_instructions_provider: Some(Arc::new(TestThreadInstructionsProvider {
+                 text: "initial thread instructions".into(),
+                 shared,
+             })),
+             ..StartThreadOptions::new(harness.config.clone())
+-        })
+-        .await
+-        .expect("start parent with thread instructions");
++        },
++    )
++    .await
++    .expect("start parent with thread instructions");
+     let parent_thread_id = parent.thread_id;
+     let control = &parent
+         .thread
+@@ -3383,7 +3383,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
+     let new_thread = harness
+         .manager
+         .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++            history_mode: Some(ThreadHistoryMode::Paginated),
+             ..StartThreadOptions::new(parent_config.clone())
+         })
+         .await
+@@ -3573,7 +3573,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
+     assert_ne!(child_thread_id, parent_thread_id);
+     assert_eq!(
+         child_thread.config_snapshot().await.history_mode,
+-        ThreadHistoryMode::Legacy
++        ThreadHistoryMode::Paginated
+     );
+     let history = child_thread.session.clone_history().await;
+     let history_items = history.raw_items().cloned().collect::<Vec<_>>();
+@@ -4568,14 +4568,14 @@ async fn resume_and_cold_fork_restore_mcp_attribution_in_constructed_requests(
+     record_invalid_source: bool,
+ ) {
+     let harness = AgentControlHarness::new().await;
+-    let source = harness
+-        .manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let source = crate::test_support::start_saved_legacy_thread(
++        &harness.manager,
++        StartThreadOptions {
+             ..StartThreadOptions::new(harness.config.clone())
+-        })
+-        .await
+-        .expect("start legacy source");
++        },
++    )
++    .await
++    .expect("start legacy source");
+     let source_thread_id = source.thread_id;
+     let source_thread = source.thread;
+     let turn_context = source_thread.session.new_default_turn().await;
+@@ -4640,7 +4640,10 @@ async fn resume_and_cold_fork_restore_mcp_attribution_in_constructed_requests(
+         .manager
+         .fork_legacy_thread(
+             ForkSnapshot::Interrupted,
+-            StartThreadOptions::new(harness.config.clone()),
++            StartThreadOptions::new(crate::config::Config {
++                ephemeral: true,
++                ..harness.config.clone()
++            }),
+             rollout_path.clone(),
+         )
+         .await
+diff --git a/codex-rs/core/src/saffron/fork_thread.rs b/codex-rs/core/src/saffron/fork_thread.rs
+index c4a05e3a04114199ebd3f989ec7fceaef5041bb9..f9a2e0ba10137d745a74b158669cd3487b43f48b 100644
+--- a/codex-rs/core/src/saffron/fork_thread.rs
++++ b/codex-rs/core/src/saffron/fork_thread.rs
+@@ -192,6 +192,17 @@ impl Handler {
+         if turn.session_source.is_non_root_agent() {
+             return Err(invalid("only root threads may create independent forks"));
+         }
++        if turn.history_mode == ThreadHistoryMode::Legacy
++            && session
++                .services
++                .thread_store
++                .as_any()
++                .is::<codex_thread_store::LocalThreadStore>()
++        {
++            return Err(invalid(
++                "Independent local forks require a paginated source thread",
++            ));
++        }
+         let manager = self
+             .host
+             .manager
+diff --git a/codex-rs/core/src/saffron/fork_thread/tests.rs b/codex-rs/core/src/saffron/fork_thread/tests.rs
+index cf7f945ede8aae18f88d63bc3dc06fdfbd4f14da..005979d1c8e5931e0360e972e3ef1b28da1c8400 100644
+--- a/codex-rs/core/src/saffron/fork_thread/tests.rs
++++ b/codex-rs/core/src/saffron/fork_thread/tests.rs
+@@ -139,11 +139,10 @@ async fn blank_section_is_rejected_before_creation() {
+     assert!(error.to_string().contains("section must not be empty"));
+ }
+
+-/// Both persistence formats must exclude the unfinished turn and keep root identity.
++/// A persistent fork excludes the unfinished turn and keeps root identity.
+ #[test_case::test_case(ThreadHistoryMode::Legacy, false, None; "legacy")]
+ #[test_case::test_case(ThreadHistoryMode::Paginated, false, None; "paginated")]
+-#[test_case::test_case(ThreadHistoryMode::Legacy, true, None; "failed_placement")]
+-#[test_case::test_case(ThreadHistoryMode::Legacy, false, Some(ReasoningEffort::Low); "legacy_effort_override")]
++#[test_case::test_case(ThreadHistoryMode::Paginated, true, None; "failed_placement")]
+ #[test_case::test_case(ThreadHistoryMode::Paginated, false, Some(ReasoningEffort::Low); "paginated_effort_override")]
+ fn fork_runs_from_completed_history_without_a_goal(
+     history_mode: ThreadHistoryMode,
+@@ -198,12 +197,12 @@ fn fork_runs_from_completed_history_without_a_goal(
+             None,
+             None,
+         ));
+-        let source = manager
+-            .start_thread(StartThreadOptions {
+-                history_mode: Some(history_mode),
+-                ..StartThreadOptions::new(config)
+-            })
+-            .await?;
++        let options = StartThreadOptions::new(config);
++        let source = if history_mode == ThreadHistoryMode::Legacy {
++            crate::test_support::start_saved_legacy_thread(&manager, options).await?
++        } else {
++            manager.start_thread(options).await?
++        };
+         source
+             .thread
+             .append_rollout_items(&[
+@@ -241,6 +240,24 @@ fn fork_runs_from_completed_history_without_a_goal(
+             arguments["reasoning_effort"] = json!(effort);
+         }
+         let invocation = tool_invocation(&source, turn, arguments);
++        if history_mode == ThreadHistoryMode::Legacy {
++            let handler = Handler {
++                host: Arc::new(ForkHost {
++                    manager: Arc::downgrade(&manager),
++                }),
++            };
++            let Err(error) = handler.handle_call(invocation).await else {
++                panic!("accepted legacy source")
++            };
++            assert!(error.to_string().contains("paginated source"));
++            assert!(matches!(
++                created.try_recv(),
++                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
++            ));
++            assert!(source.thread.is_running());
++            source.thread.shutdown_and_wait().await?;
++            return Ok(());
++        }
+         assert!(invocation.session.dynamic_tools().await.is_empty());
+         let inherited_effort = invocation
+             .step_context
+@@ -424,7 +441,7 @@ fn rejected_start_returns_the_created_thread() -> anyhow::Result<()> {
+         let mut config = turn.config.as_ref().clone();
+         config.ephemeral = false;
+         turn.config = Arc::new(config.clone());
+-        turn.history_mode = ThreadHistoryMode::Legacy;
++        turn.history_mode = ThreadHistoryMode::Paginated;
+         turn.sub_id = "unfinished".to_string();
+         let gate = Arc::new(Admission(AtomicBool::new(false)));
+         let mut extensions = ExtensionRegistryBuilder::default();
+@@ -452,7 +469,7 @@ fn rejected_start_returns_the_created_thread() -> anyhow::Result<()> {
+         ));
+         let source = manager
+             .start_thread(StartThreadOptions {
+-                history_mode: Some(ThreadHistoryMode::Legacy),
++                history_mode: Some(ThreadHistoryMode::Paginated),
+                 ..StartThreadOptions::new(config)
+             })
+             .await?;
+diff --git a/codex-rs/core/src/saffron/promote_subagent.rs b/codex-rs/core/src/saffron/promote_subagent.rs
+index 613157a15902045a45c1678209e7013ce868872f..c98961c864b1db1f48095ba39ba6ddf9fd41d330 100644
+--- a/codex-rs/core/src/saffron/promote_subagent.rs
++++ b/codex-rs/core/src/saffron/promote_subagent.rs
+@@ -201,6 +201,19 @@ async fn promote(
+                     )
+                 })?,
+         );
++        if id == source_id
++            && thread
++                .session
++                .services
++                .thread_store
++                .as_any()
++                .is::<codex_thread_store::LocalThreadStore>()
++        {
++            anyhow::ensure!(
++                thread.config_snapshot().await.history_mode == ThreadHistoryMode::Paginated,
++                "Promoting a local subagent requires a paginated source thread"
++            );
++        }
+         threads.push(thread);
+     }
+     let mut admission = Vec::new();
+diff --git a/codex-rs/core/src/saffron/promote_subagent/tests.rs b/codex-rs/core/src/saffron/promote_subagent/tests.rs
+index ef8a37c7768b161696da303f1a3ab2c6c6ebf1ee..d8d513c051c2818e924f506307be6a58fbfd41b8 100644
+--- a/codex-rs/core/src/saffron/promote_subagent/tests.rs
++++ b/codex-rs/core/src/saffron/promote_subagent/tests.rs
+@@ -1,9 +1,8 @@
+-//! Native creation and persistence are exercised in both supported history modes.
++//! Promotion exercises native paginated history and durable retry receipts.
+
+ use super::*;
+ use crate::CodexAppsToolsCache;
+ use crate::ThreadStoreBuilder;
+-use crate::agent::types::SpawnAgentForkMode;
+ use crate::agent::types::SpawnAgentOptions;
+ use crate::build_startup_models;
+ use crate::init_state_db;
+@@ -45,7 +44,7 @@ struct Fixture {
+
+ impl Fixture {
+     /// Runs a child to completion using the requested native history format.
+-    async fn completed(mode: ThreadHistoryMode) -> anyhow::Result<Self> {
++    async fn completed() -> anyhow::Result<Self> {
+         let server = MockServer::start().await;
+         mount_sse_once(
+             &server,
+@@ -90,7 +89,7 @@ impl Fixture {
+         ));
+         let root = manager
+             .start_thread(StartThreadOptions {
+-                history_mode: Some(mode),
++                history_mode: Some(ThreadHistoryMode::Paginated),
+                 ..StartThreadOptions::new(config.clone())
+             })
+             .await?;
+@@ -111,10 +110,6 @@ impl Fixture {
+                 }),
+                 SpawnAgentOptions {
+                     parent_thread_id: Some(root.thread_id),
+-                    fork_mode: (mode == ThreadHistoryMode::Legacy)
+-                        .then_some(SpawnAgentForkMode::FullHistory),
+-                    fork_parent_spawn_call_id: (mode == ThreadHistoryMode::Legacy)
+-                        .then(|| "promotion-fixture-spawn".into()),
+                     ..Default::default()
+                 },
+             )
+@@ -156,15 +151,12 @@ impl Fixture {
+ }
+
+ /// A promoted copy keeps all conversation items and settings and outlives its former parent.
+-#[test_case::test_case(ThreadHistoryMode::Legacy; "legacy")]
+-#[test_case::test_case(ThreadHistoryMode::Paginated; "paginated")]
+-fn promotion_preserves_completed_history_settings_and_independence(
+-    mode: ThreadHistoryMode,
+-) -> anyhow::Result<()> {
++#[test]
++fn promotion_preserves_completed_history_settings_and_independence() -> anyhow::Result<()> {
+     run_test_with_large_stack("promotion", move || async move {
+-        let fixture = Fixture::completed(mode).await?;
++        let fixture = Fixture::completed().await?;
+         let before = fixture.child.config_snapshot().await;
+-        assert_eq!(before.history_mode, mode);
++        assert_eq!(before.history_mode, ThreadHistoryMode::Paginated);
+         let original_messages = saved_conversation(&fixture.child).await?;
+         let output = fixture.promote().await?;
+         assert_eq!(output["status"], "promoted");
+@@ -233,20 +225,51 @@ fn promotion_preserves_completed_history_settings_and_independence(
+     })
+ }
+
+-/// Reads every saved conversation item through the history format's supported API.
++/// A saved legacy child stays loaded and acquires no promotion receipt.
++#[test]
++fn legacy_source_rejected_before_destination_reservation() -> anyhow::Result<()> {
++    run_test_with_large_stack("legacy promotion", || async {
++        let fixture = Fixture::completed().await?;
++        let config = fixture.root.session.get_config().await.as_ref().clone();
++        let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++            parent_thread_id: fixture.root.session.thread_id(),
++            depth: 1,
++            agent_path: Some(AgentPath::root().join("legacy-worker").unwrap()),
++            agent_nickname: None,
++            agent_role: None,
++        });
++        let saved = crate::test_support::start_saved_legacy_thread(
++            &fixture.manager,
++            StartThreadOptions {
++                session_source: Some(source.clone()),
++                ..StartThreadOptions::new(config.clone())
++            },
++        )
++        .await?;
++        let id = saved.thread_id;
++        saved.thread.shutdown_and_wait().await?;
++        fixture.manager.remove_thread(&id).await;
++        let control = local_control(&fixture.root.session);
++        control
++            .resume_agent_from_rollout(config.clone(), id, source)
++            .await?;
++        let result = promote(
++            fixture.manager.clone(),
++            fixture.root.session.clone(),
++            SessionSource::Exec,
++            id,
++        )
++        .await;
++        assert!(result.unwrap_err().to_string().contains("paginated source"));
++        let store = SaffronStore::open(config.sqlite_config()).await?;
++        assert!(store.promotion(id).await?.is_none());
++        assert!(control.get_live_thread(id).await?.is_running());
++        Ok(())
++    })
++}
++
++/// Reads every saved display item through the paginated history API.
+ async fn saved_conversation(thread: &CodexThread) -> anyhow::Result<Vec<serde_json::Value>> {
+-    if thread.config_snapshot().await.history_mode == ThreadHistoryMode::Legacy {
+-        return thread
+-            .read_thread(true, true)
+-            .await?
+-            .history
+-            .unwrap()
+-            .items
+-            .iter()
+-            .filter(|item| matches!(item, codex_history::RolloutItem::ResponseItem(_)))
+-            .map(|item| serde_json::to_value(item).map_err(Into::into))
+-            .collect();
+-    }
+     let mut cursor = None;
+     let mut items = Vec::new();
+     loop {
+@@ -322,7 +345,7 @@ async fn promotion_receipt_survives_reopen_and_has_one_reservation_winner() -> a
+ #[test]
+ fn promotion_refuses_unfinished_work_before_reserving_destination() -> anyhow::Result<()> {
+     run_test_with_large_stack("promotion refusal", || async {
+-        let fixture = Fixture::completed(ThreadHistoryMode::Legacy).await?;
++        let fixture = Fixture::completed().await?;
+         let slot = fixture.child.session.active_turn.lock().await;
+         let error = fixture.promote().await.unwrap_err();
+         assert!(error.to_string().contains("accepting work"), "{error:#}");
+@@ -341,7 +364,7 @@ fn promotion_refuses_unfinished_work_before_reserving_destination() -> anyhow::R
+ fn retry_of_uncertain_creation_returns_reserved_identity_without_retirement() -> anyhow::Result<()>
+ {
+     run_test_with_large_stack("promotion recovery", || async {
+-        let fixture = Fixture::completed(ThreadHistoryMode::Legacy).await?;
++        let fixture = Fixture::completed().await?;
+         let store =
+             SaffronStore::open(fixture.root.session.get_config().await.sqlite_config()).await?;
+         let receipt = Promotion {
+@@ -373,7 +396,7 @@ fn retry_of_uncertain_creation_returns_reserved_identity_without_retirement() ->
+ #[test]
+ fn unfinished_descendant_keeps_the_original_tree() -> anyhow::Result<()> {
+     run_test_with_large_stack("promotion descendant refusal", || async {
+-        let fixture = Fixture::completed(ThreadHistoryMode::Legacy).await?;
++        let fixture = Fixture::completed().await?;
+         wiremock::Mock::given(wiremock::matchers::method("POST"))
+             .and(wiremock::matchers::path("/responses"))
+             .respond_with(
+@@ -440,7 +463,7 @@ fn unfinished_descendant_keeps_the_original_tree() -> anyhow::Result<()> {
+ #[test]
+ fn ready_retry_preserves_newer_completed_work_and_the_existing_copy() -> anyhow::Result<()> {
+     run_test_with_large_stack("promotion changed original", || async {
+-        let fixture = Fixture::completed(ThreadHistoryMode::Legacy).await?;
++        let fixture = Fixture::completed().await?;
+         let store =
+             SaffronStore::open(fixture.root.session.get_config().await.sqlite_config()).await?;
+         let slot = fixture.child.session.active_turn.lock().await;
+diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
+index 610491ef616b624613dc59028ad30d3937c4adeb..bfeab11eff59a35fc6c1d39de8e2d67616a2f371 100644
+--- a/codex-rs/core/src/session/tests.rs
++++ b/codex-rs/core/src/session/tests.rs
+@@ -4143,21 +4143,23 @@ async fn session_configured_reports_permission_profile_for_external_sandbox() ->
+         network: NetworkSandboxPolicy::Restricted,
+     };
+     let expected_permission_profile = permission_profile.clone();
+-    let mut builder = test_codex().with_config(move |config| {
+-        config.workspace_roots_explicit = false;
+-        config
+-            .permissions
+-            .can_set_permission_profile(&permission_profile)
+-            .expect("set permission profile");
+-        config
+-            .permissions
+-            .set_workspace_roots(vec![config.cwd.clone()]);
+-        config
+-            .permissions
+-            .set_permission_profile(permission_profile)
+-            .expect("set permission profile");
+-        config.workspace_roots = config.permissions.workspace_roots().to_vec();
+-    });
++    let mut builder = test_codex()
++        .with_history_mode(None)
++        .with_config(move |config| {
++            config.workspace_roots_explicit = false;
++            config
++                .permissions
++                .can_set_permission_profile(&permission_profile)
++                .expect("set permission profile");
++            config
++                .permissions
++                .set_workspace_roots(vec![config.cwd.clone()]);
++            config
++                .permissions
++                .set_permission_profile(permission_profile)
++                .expect("set permission profile");
++            config.workspace_roots = config.permissions.workspace_roots().to_vec();
++        });
+
+     let test = builder.build(&server).await?;
+
+@@ -4182,18 +4184,12 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
+     )
+     .await;
+
+-    let mut builder = test_codex().with_config(|config| {
++    let mut builder = test_codex().with_history_mode(None).with_config(|config| {
+         config.update_plan_enabled = true;
+         config.permissions.approval_policy =
+             codex_config::Constrained::allow_any(AskForApproval::OnRequest);
+     });
+     let initial = builder.build(&server).await?;
+-    let rollout_path = initial
+-        .session_configured
+-        .rollout_path
+-        .clone()
+-        .expect("rollout path");
+-
+     initial
+         .codex
+         .start_or_steer_turn(ExternalTurnInputRequest::user_input(vec![
+@@ -4216,12 +4212,18 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
+     let mut fork_config = initial.config.clone();
+     fork_config.permissions.approval_policy =
+         codex_config::Constrained::allow_any(AskForApproval::UnlessTrusted);
++    let prepared = initial
++        .thread_store
++        .prepare_fork(codex_thread_store::PrepareForkParams {
++            thread_id: initial.session_configured.thread_id,
++            boundary: codex_thread_store::ForkBoundary::Latest,
++        })
++        .await?;
+     let forked = initial
+         .thread_manager
+-        .fork_legacy_thread(
+-            usize::MAX,
++        .fork_prepared_thread(
+             core_test_support::test_codex::StartThreadOptions::new(fork_config.clone()),
+-            rollout_path,
++            prepared,
+         )
+         .await?;
+
+diff --git a/codex-rs/core/src/test_support.rs b/codex-rs/core/src/test_support.rs
+index b122aba784dfc683f3827784d9300abb05e87bca..7171bde91c116646a4177084febfb6cc748cdff7 100644
+--- a/codex-rs/core/src/test_support.rs
++++ b/codex-rs/core/src/test_support.rs
+@@ -41,6 +41,54 @@ use crate::responses_metadata::subagent_metadata_kind;
+ use crate::thread_manager;
+ use crate::unified_exec;
+
++/// Opens a legacy rollout written before paginated admission became the local default.
++pub async fn start_saved_legacy_thread(
++    manager: &ThreadManager,
++    mut options: crate::StartThreadOptions,
++) -> anyhow::Result<crate::NewThread> {
++    use codex_history::{RolloutItem, RolloutLine};
++    use codex_protocol::protocol::{SessionMeta, SessionMetaLine};
++    use std::io::Write;
++
++    let id = manager.reserve_thread_id();
++    let timestamp = "2025-01-05T12:00:00.000Z";
++    let directory = options.config.codex_home.join("sessions/2025/01/05");
++    std::fs::create_dir_all(&directory)?;
++    let path = directory.join(format!("rollout-2025-01-05T12-00-00-{id}.jsonl"));
++    let source = options.session_source.clone().unwrap_or(SessionSource::Exec);
++    let meta = SessionMeta {
++        id,
++        session_id: source.parent_thread_id().unwrap_or(id).into(),
++        parent_thread_id: source.parent_thread_id(),
++        agent_path: source.get_agent_path().map(|path| path.to_string()),
++        timestamp: timestamp.into(),
++        cwd: options.config.cwd.to_path_buf(),
++        source,
++        thread_source: options.thread_source.clone(),
++        model_provider: Some(options.config.model_provider_id.clone()),
++        ..SessionMeta::default()
++    };
++    {
++        let header = RolloutItem::SessionMeta(Box::new(SessionMetaLine { meta, git: None }));
++        let mut file = std::fs::File::create_new(&path)?;
++        for item in std::iter::once(header)
++            .chain(options.initial_history.get_rollout_items().iter().cloned())
++        {
++            serde_json::to_writer(
++                &mut file,
++                &RolloutLine {
++                    timestamp: timestamp.into(),
++                    ordinal: None,
++                    item,
++                },
++            )?;
++            file.write_all(b"\n")?;
++        }
++    }
++    options.initial_history = crate::rollout::RolloutRecorder::get_rollout_history(&path).await?;
++    Ok(manager.start_thread(options).await?)
++}
++
+ /// Supply fixed model metadata to tests without implementing a provider.
+ pub fn fixed_model_catalog(
+     manager: SharedModelsManager,
+diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
+index 66073930e6fececd7266cdc40ea9c8ecc55da55b..a369bc63ea44b43f0e886728b5474e3901ac7cba 100644
+--- a/codex-rs/core/src/thread_manager_tests.rs
++++ b/codex-rs/core/src/thread_manager_tests.rs
+@@ -699,13 +699,14 @@ async fn resumed_analytics_validates_openai_destination(
+         .expect("unshared thread manager state")
+         .analytics_events_client = Some(startup_analytics);
+
+-    let original = manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let original = crate::test_support::start_saved_legacy_thread(
++        &manager,
++        StartThreadOptions {
+             ..StartThreadOptions::new(config.clone())
+-        })
+-        .await
+-        .expect("start original thread");
++        },
++    )
++    .await
++    .expect("start original thread");
+     original.thread.ensure_rollout_materialized().await;
+     original.thread.flush_rollout().await.unwrap();
+     original.thread.shutdown_and_wait().await.unwrap();
+@@ -978,10 +979,7 @@ async fn thread_id_generator_applies_to_roots_children_and_forks() {
+     )
+     .with_thread_id_generator(move || generated_ids[next_id.fetch_add(1, Ordering::Relaxed)]);
+     let root = manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
+-            ..StartThreadOptions::new(config.clone())
+-        })
++        .start_thread(StartThreadOptions::new(config.clone()))
+         .await
+         .expect("start root thread");
+     let child = root
+@@ -1010,8 +1008,18 @@ async fn thread_id_generator_applies_to_roots_children_and_forks() {
+         )
+         .await
+         .expect("spawn actual child agent");
++    root.thread.ensure_rollout_materialized().await;
++    root.thread.flush_rollout().await.unwrap();
++    let prepared = manager
++        .thread_store()
++        .prepare_fork(codex_thread_store::PrepareForkParams {
++            thread_id: root.thread_id,
++            boundary: codex_thread_store::ForkBoundary::Latest,
++        })
++        .await
++        .expect("prepare fork");
+     let fork = manager
+-        .spawn_legacy_subagent(root.thread_id, StartThreadOptions::new(config))
++        .fork_prepared_thread(StartThreadOptions::new(config), prepared)
+         .await
+         .expect("fork root thread");
+
+@@ -1044,13 +1052,14 @@ async fn thread_id_generator_does_not_replace_resumed_thread_id() {
+         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+     )
+     .with_thread_id_generator(move || original_thread_id);
+-    let original = original_manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let original = crate::test_support::start_saved_legacy_thread(
++        &original_manager,
++        StartThreadOptions {
+             ..StartThreadOptions::new(config.clone())
+-        })
+-        .await
+-        .expect("start source thread");
++        },
++    )
++    .await
++    .expect("start source thread");
+     original.thread.ensure_rollout_materialized().await;
+     original
+         .thread
+@@ -1110,13 +1119,14 @@ async fn child_session_inherits_resumed_parent_auth(host_child: bool) {
+         config.codex_home.to_path_buf(),
+         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+     );
+-    let original = manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let original = crate::test_support::start_saved_legacy_thread(
++        &manager,
++        StartThreadOptions {
+             ..StartThreadOptions::new(config.clone())
+-        })
+-        .await
+-        .expect("start original thread");
++        },
++    )
++    .await
++    .expect("start original thread");
+     original.thread.ensure_rollout_materialized().await;
+     original
+         .thread
+@@ -2805,6 +2815,7 @@ async fn selected_capability_roots_round_trip_through_fork() {
+             initial_history: InitialHistory::Forked(vec![RolloutItem::SessionMeta(Box::new(
+                 SessionMetaLine {
+                     meta: SessionMeta {
++                        history_mode: ThreadHistoryMode::Paginated,
+                         selected_capability_roots: selected_roots.clone(),
+                         ..SessionMeta::default()
+                     },
+@@ -2900,6 +2911,7 @@ async fn selected_capability_roots_respect_startup_precedence_and_isolation() {
+                 initial_history: InitialHistory::Forked(vec![RolloutItem::SessionMeta(Box::new(
+                     SessionMetaLine {
+                         meta: SessionMeta {
++                            history_mode: ThreadHistoryMode::Paginated,
+                             selected_capability_roots: vec![root("saved")],
+                             ..SessionMeta::default()
+                         },
+@@ -2981,9 +2993,9 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
+     let default_cwd = config.cwd.clone();
+     let mut source_config = config.clone();
+     source_config.cwd = selected_cwd.clone();
+-    let source = manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let source = crate::test_support::start_saved_legacy_thread(
++        &manager,
++        StartThreadOptions {
+             environments: Some(
+                 environments
+                     .clone()
+@@ -2992,9 +3004,10 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
+                     .collect(),
+             ),
+             ..StartThreadOptions::new(source_config)
+-        })
+-        .await
+-        .expect("start source thread");
++        },
++    )
++    .await
++    .expect("start source thread");
+     source.thread.ensure_rollout_materialized().await;
+     source
+         .thread
+@@ -3060,7 +3073,10 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
+     let forked = manager
+         .fork_legacy_thread(
+             ForkSnapshot::Interrupted,
+-            crate::StartThreadOptions::new(config),
++            crate::StartThreadOptions::new(crate::config::Config {
++                ephemeral: true,
++                ..config
++            }),
+             rollout_path,
+         )
+         .await
+@@ -3179,13 +3195,14 @@ async fn resume_active_thread_from_rollout_returns_running_thread() {
+         /*external_time_provider*/ None,
+     );
+
+-    let source = manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let source = crate::test_support::start_saved_legacy_thread(
++        &manager,
++        StartThreadOptions {
+             ..StartThreadOptions::new(config.clone())
+-        })
+-        .await
+-        .expect("start source thread");
++        },
++    )
++    .await
++    .expect("start source thread");
+     source.thread.ensure_rollout_materialized().await;
+     source
+         .thread
+@@ -3248,13 +3265,14 @@ async fn resume_stopped_thread_from_rollout_spawns_new_thread() {
+         /*external_time_provider*/ None,
+     );
+
+-    let source = manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let source = crate::test_support::start_saved_legacy_thread(
++        &manager,
++        StartThreadOptions {
+             ..StartThreadOptions::new(config.clone())
+-        })
+-        .await
+-        .expect("start source thread");
++        },
++    )
++    .await
++    .expect("start source thread");
+     source.thread.ensure_rollout_materialized().await;
+     source
+         .thread
+@@ -3324,15 +3342,16 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
+         /*external_time_provider*/ None,
+     );
+
+-    let source = manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let source = crate::test_support::start_saved_legacy_thread(
++        &manager,
++        StartThreadOptions {
+             thread_source: Some(ThreadSource::User),
+             environments: Some(Vec::new()),
+             ..StartThreadOptions::new(config.clone())
+-        })
+-        .await
+-        .expect("start source thread");
++        },
++    )
++    .await
++    .expect("start source thread");
+     source.thread.ensure_rollout_materialized().await;
+     source
+         .thread
+@@ -3517,7 +3536,10 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
+     let forked = manager
+         .fork_legacy_thread(
+             ForkSnapshot::Interrupted,
+-            crate::StartThreadOptions::new(config),
++            crate::StartThreadOptions::new(crate::config::Config {
++                ephemeral: true,
++                ..config
++            }),
+             rollout_path,
+         )
+         .await
+@@ -4155,17 +4177,18 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
+         /*external_time_provider*/ None,
+     );
+
+-    let source = manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let source = crate::test_support::start_saved_legacy_thread(
++        &manager,
++        StartThreadOptions {
+             initial_history: InitialHistory::Forked(vec![
+                 RolloutItem::ResponseItem(user_msg("hello").into()),
+                 RolloutItem::ResponseItem(assistant_msg("partial").into()),
+             ]),
+             ..StartThreadOptions::new(config.clone())
+-        })
+-        .await
+-        .expect("create source thread from completed history");
++        },
++    )
++    .await
++    .expect("create source thread from completed history");
+     let source_path = source
+         .thread
+         .rollout_path()
+@@ -4178,21 +4201,11 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
+     let expected_turn_id = source_snapshot_state.active_turn_id.clone();
+     assert_eq!(expected_turn_id, None);
+
+-    let forked = manager
+-        .fork_legacy_thread(
+-            ForkSnapshot::Interrupted,
+-            crate::StartThreadOptions::new(config.clone()),
+-            source_path,
+-        )
+-        .await
+-        .expect("fork interrupted snapshot");
+-    let forked_path = forked
+-        .thread
+-        .rollout_path()
+-        .expect("forked rollout path should exist");
+-    let history = RolloutRecorder::get_rollout_history(&forked_path)
+-        .await
+-        .expect("read forked rollout history");
++    let history = fork_history_from_snapshot(
++        ForkSnapshot::Interrupted,
++        source_history,
++        InterruptedTurnHistoryMarker::ContextualUser,
++    );
+     assert!(!snapshot_turn_state(&history).ends_mid_turn);
+     let rollout_items: Vec<_> = history
+         .get_rollout_items()
+@@ -4270,9 +4283,9 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
+         /*external_time_provider*/ None,
+     );
+
+-    let source = manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let source = crate::test_support::start_saved_legacy_thread(
++        &manager,
++        StartThreadOptions {
+             initial_history: InitialHistory::Forked(vec![
+                 RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                     turn_attribution: None,
+@@ -4287,9 +4300,10 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
+                 RolloutItem::ResponseItem(assistant_msg("partial").into()),
+             ]),
+             ..StartThreadOptions::new(config.clone())
+-        })
+-        .await
+-        .expect("create source thread from explicit partial history");
++        },
++    )
++    .await
++    .expect("create source thread from explicit partial history");
+     let source_path = source
+         .thread
+         .rollout_path()
+@@ -4309,21 +4323,11 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
+         },
+     );
+
+-    let forked = manager
+-        .fork_legacy_thread(
+-            ForkSnapshot::Interrupted,
+-            crate::StartThreadOptions::new(config.clone()),
+-            source_path,
+-        )
+-        .await
+-        .expect("fork interrupted snapshot");
+-    let forked_path = forked
+-        .thread
+-        .rollout_path()
+-        .expect("forked rollout path should exist");
+-    let history = RolloutRecorder::get_rollout_history(&forked_path)
+-        .await
+-        .expect("read forked rollout history");
++    let history = fork_history_from_snapshot(
++        ForkSnapshot::Interrupted,
++        source_history,
++        InterruptedTurnHistoryMarker::ContextualUser,
++    );
+     let rollout_items: Vec<_> = history
+         .get_rollout_items()
+         .iter()
+@@ -4378,42 +4382,34 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
+         /*external_time_provider*/ None,
+     );
+
+-    let source = manager
+-        .start_thread(StartThreadOptions {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let source = crate::test_support::start_saved_legacy_thread(
++        &manager,
++        StartThreadOptions {
+             initial_history: InitialHistory::Forked(vec![
+                 RolloutItem::ResponseItem(user_msg("hello").into()),
+                 RolloutItem::ResponseItem(assistant_msg("partial").into()),
+             ]),
+             ..StartThreadOptions::new(config.clone())
+-        })
+-        .await
+-        .expect("create source thread from partial history");
++        },
++    )
++    .await
++    .expect("create source thread from partial history");
+     let source_path = source
+         .thread
+         .rollout_path()
+         .expect("source rollout path should exist");
++    source.thread.shutdown_and_wait().await.unwrap();
++    manager.remove_thread(&source.thread_id).await;
+     let source_history = RolloutRecorder::get_rollout_history(&source_path)
+         .await
+         .expect("read source rollout history");
+     assert!(snapshot_turn_state(&source_history).ends_mid_turn);
+-    manager.remove_thread(&source.thread_id).await;
+
+-    let forked = manager
+-        .fork_legacy_thread(
+-            ForkSnapshot::Interrupted,
+-            crate::StartThreadOptions::new(config.clone()),
+-            source_path,
+-        )
+-        .await
+-        .expect("fork interrupted snapshot");
+-    let forked_path = forked
+-        .thread
+-        .rollout_path()
+-        .expect("forked rollout path should exist");
+-    let history = RolloutRecorder::get_rollout_history(&forked_path)
+-        .await
+-        .expect("read forked rollout history");
++    let history = fork_history_from_snapshot(
++        ForkSnapshot::Interrupted,
++        source_history,
++        InterruptedTurnHistoryMarker::ContextualUser,
++    );
+     assert!(!snapshot_turn_state(&history).ends_mid_turn);
+
+     let forked_rollout_items: Vec<_> = history
+@@ -4437,22 +4433,11 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
+         1,
+     );
+
+-    manager.remove_thread(&forked.thread_id).await;
+-    let reforked = manager
+-        .fork_legacy_thread(
+-            ForkSnapshot::Interrupted,
+-            crate::StartThreadOptions::new(config.clone()),
+-            forked_path,
+-        )
+-        .await
+-        .expect("re-fork interrupted snapshot");
+-    let reforked_path = reforked
+-        .thread
+-        .rollout_path()
+-        .expect("re-forked rollout path should exist");
+-    let reforked_history = RolloutRecorder::get_rollout_history(&reforked_path)
+-        .await
+-        .expect("read re-forked rollout history");
++    let reforked_history = fork_history_from_snapshot(
++        ForkSnapshot::Interrupted,
++        history,
++        InterruptedTurnHistoryMarker::ContextualUser,
++    );
+     let reforked_rollout_items: Vec<_> = reforked_history
+         .get_rollout_items()
+         .iter()

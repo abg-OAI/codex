@@ -1,0 +1,90 @@
+diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
+index ca02780939a2f1fe0d46d2981c75154bf876c25f..4cccedb59fd2c41e0ce7bb4f12f6cb26f4a59a42 100644
+--- a/codex-rs/core/src/agent/control_tests.rs
++++ b/codex-rs/core/src/agent/control_tests.rs
+@@ -31,7 +31,6 @@ use crate::context::world_state::IncrementalToolsUpdate;
+ use crate::init_state_db;
+ use crate::responses_metadata::CodexResponsesRequestKind;
+ use crate::session::SessionSettingsUpdate;
+-use crate::session::session::Session;
+ use crate::session::step_context::StepContext;
+ use crate::session::step_settings::StepSettingsUpdate;
+ use crate::session::tests::update_selected_settings_for_test;
+@@ -4571,6 +4570,15 @@ async fn resume_and_cold_fork_restore_mcp_attribution_in_constructed_requests(
+     let source = crate::test_support::start_saved_legacy_thread(
+         &harness.manager,
+         StartThreadOptions {
++            initial_history: codex_history::InitialHistory::Forked(vec![
++                codex_history::RolloutItem::ResponseItem(codex_history::ResponseItemEnvelope {
++                    item: user_message("saved conversation"),
++                    metadata: Some(codex_history::CodexHarnessMetadata {
++                        mcp_attribution: Some(McpAttribution::default()),
++                        ..Default::default()
++                    }),
++                }),
++            ]),
+             ..StartThreadOptions::new(harness.config.clone())
+         },
+     )
+diff --git a/codex-rs/core/src/saffron/fork_thread/tests.rs b/codex-rs/core/src/saffron/fork_thread/tests.rs
+index 005979d1c8e5931e0360e972e3ef1b28da1c8400..c0df1d514c3f7d980326b1965b0a49a0ce4e921c 100644
+--- a/codex-rs/core/src/saffron/fork_thread/tests.rs
++++ b/codex-rs/core/src/saffron/fork_thread/tests.rs
+@@ -447,6 +447,7 @@ fn rejected_start_returns_the_created_thread() -> anyhow::Result<()> {
+         let mut extensions = ExtensionRegistryBuilder::default();
+         extensions.turn_start_admission(gate);
+         let auth = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
++        let state = init_state_db(&config).await.expect("test state database");
+         let manager = Arc::new(ThreadManager::new(
+             &config,
+             build_startup_models(
+@@ -462,7 +463,7 @@ fn rejected_start_returns_the_created_thread() -> anyhow::Result<()> {
+             Arc::new(crate::test_support::EmptyUserInstructionsProvider),
+             None,
+             crate::passthrough_image_store(),
+-            ThreadStoreBuilder::from_config(&config, None).build(),
++            ThreadStoreBuilder::from_config(&config, Some(state)).build(),
+             None,
+             None,
+             None,
+diff --git a/codex-rs/core/src/saffron/promote_subagent/tests.rs b/codex-rs/core/src/saffron/promote_subagent/tests.rs
+index d8d513c051c2818e924f506307be6a58fbfd41b8..632189135c231a1498a46f46019a7a4dfc9d69a2 100644
+--- a/codex-rs/core/src/saffron/promote_subagent/tests.rs
++++ b/codex-rs/core/src/saffron/promote_subagent/tests.rs
+@@ -234,7 +234,7 @@ fn legacy_source_rejected_before_destination_reservation() -> anyhow::Result<()>
+         let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+             parent_thread_id: fixture.root.session.thread_id(),
+             depth: 1,
+-            agent_path: Some(AgentPath::root().join("legacy-worker").unwrap()),
++            agent_path: Some(AgentPath::root().join("legacy_worker").unwrap()),
+             agent_nickname: None,
+             agent_role: None,
+         });
+@@ -528,8 +528,7 @@ fn ready_retry_preserves_newer_completed_work_and_the_existing_copy() -> anyhow:
+         assert!(fixture.child.is_running());
+         let copied = fixture.manager.get_thread(receipt.destination_id).await?;
+         assert!(copied.is_running());
+-        let copied_history =
+-            serde_json::to_string(&copied.read_thread(true, true).await?.history.unwrap().items)?;
++        let copied_history = serde_json::to_string(&saved_conversation(&copied).await?);
+         assert!(!copied_history.contains("new-work-after-copy"));
+         let retry = fixture.promote().await?;
+         assert_eq!(retry["thread_id"], result["thread_id"]);
+diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
+index a369bc63ea44b43f0e886728b5474e3901ac7cba..3e08f315296bf5a6a7d1aecf045021336e09b371 100644
+--- a/codex-rs/core/src/thread_manager_tests.rs
++++ b/codex-rs/core/src/thread_manager_tests.rs
+@@ -971,11 +971,12 @@ async fn thread_id_generator_applies_to_roots_children_and_forks() {
+         ThreadId::from_u128(/*value*/ 0x018f_0000_0000_7000_8000_0000_0000_0003),
+     ];
+     let next_id = std::sync::atomic::AtomicUsize::new(0);
+-    let manager = ThreadManager::with_models_provider_and_home_for_tests(
++    let manager = ThreadManager::with_models_provider_home_and_state_for_tests(
+         CodexAuth::from_api_key("dummy"),
+         config.model_provider.clone(),
+         config.codex_home.to_path_buf(),
+         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
++        init_state_db(&config).await,
+     )
+     .with_thread_id_generator(move || generated_ids[next_id.fetch_add(1, Ordering::Relaxed)]);
+     let root = manager

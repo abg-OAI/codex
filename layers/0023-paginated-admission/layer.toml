@@ -1,0 +1,31 @@
+[vcs]
+commit-msg = """
+Exercise compaction and restart against persisted thread formats
+
+Load the saved model context for paginated restarts. Use a saved local
+rollout for legacy fixtures and retain the cold-resume assertions.
+"""
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"
+
+[[operation]]
+[operation.patch]
+file = "refresh.patch"
+
+[[operation]]
+[operation.patch]
+file = "refresh-1.patch"
+
+[[operation]]
+[operation.patch]
+file = "refresh-2.patch"
+
+[[operation]]
+[operation.patch]
+file = "refresh-3.patch"
