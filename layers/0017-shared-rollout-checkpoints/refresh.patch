@@ -183,7 +183,7 @@ index 0000000000000000000000000000000000000000..1f7f19b0a022d8025de8c6dba7c9df10
 +    }
 +}
 diff --git a/codex-rs/thread-store/src/local/live_writer/segments.rs b/codex-rs/thread-store/src/local/live_writer/segments.rs
-index 129b23186e374be3d09a2f2401ed6e09a1563124..42418e9b09b2c27aeb6e122013ccbe7151ee33fa 100644
+index 129b23186e374be3d09a2f2401ed6e09a1563124..6756db509f62b8ae28249f22d468784f906d3bff 100644
 --- a/codex-rs/thread-store/src/local/live_writer/segments.rs
 +++ b/codex-rs/thread-store/src/local/live_writer/segments.rs
 @@ -1,8 +1,8 @@
@@ -198,7 +198,19 @@ index 129b23186e374be3d09a2f2401ed6e09a1563124..42418e9b09b2c27aeb6e122013ccbe71
  //!
  //! A new physical rollout gets its own projection cursor. The old rollout is never
  //! truncated or rewritten. The existing SQLite selected-path update is the commit
-@@ -31,7 +31,7 @@ pub(super) fn is_rotation_checkpoint(items: &[RolloutItem]) -> bool {
+@@ -16,6 +16,11 @@ use super::*;
+ use codex_protocol::protocol::EventMsg;
+ use codex_protocol::protocol::HistoryPosition;
+
++// Stock Codex emits one SQL expression per newer physical file when paging old
++// turns. Stay below SQLite's 1000-level expression limit, leaving headroom for
++// native forks and reverts that can add their own references.
++const MAX_CHECKPOINT_SEGMENTS: usize = 900;
++
+ /// Recognizes batches eligible for physical rotation, including persisted settings.
+ /// Native model-context reads stop at replacement history with a window number;
+ /// they do not require these additional write-batch companions.
+@@ -31,7 +36,7 @@ pub(super) fn is_rotation_checkpoint(items: &[RolloutItem]) -> bool {
          )
  }
 
@@ -207,7 +219,7 @@ index 129b23186e374be3d09a2f2401ed6e09a1563124..42418e9b09b2c27aeb6e122013ccbe71
  /// The comparison includes all companions and durable ordinals; any intervening item prevents reuse.
  pub(super) async fn matches_tail(
      path: &std::path::Path,
-@@ -57,7 +57,7 @@ pub(super) async fn matches_tail(
+@@ -57,7 +62,7 @@ pub(super) async fn matches_tail(
      Ok(encode(&previous)? == encode(items)?)
  }
 
@@ -216,16 +228,87 @@ index 129b23186e374be3d09a2f2401ed6e09a1563124..42418e9b09b2c27aeb6e122013ccbe71
  ///
  /// The batch has already been flushed to the old file. A failure before the path swap
  /// leaves that file authoritative; a failure after it cannot lose the batch.
-@@ -82,7 +82,7 @@ pub(super) async fn rotate(
+@@ -69,6 +74,13 @@ pub(super) async fn rotate(
+     rollout_id: ThreadId,
+     items: &[RolloutItem],
+ ) -> ThreadStoreResult<()> {
++    let (cached_count, writer_lock) = {
++        let entries = store.live_recorders.lock().await;
++        let entry = entries
++            .get(&thread_id)
++            .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?;
++        (entry.checkpoint_segment_count, entry.writer_lock.clone())
++    };
+     let Some(state_db) = store.state_db().await else {
+         return Ok(());
+     };
+@@ -82,7 +94,39 @@ pub(super) async fn rotate(
      else {
          return Ok(());
      };
 -    if projection.next_byte_offset != file_bytes || !terminal_turn(source_path).await? {
 +    if projection.next_byte_offset != file_bytes {
++        return Ok(());
++    }
++    let count = match cached_count {
++        Some(count) => count,
++        None => {
++            let count = match super::super::rollout_lineage::checkpoint_segment_count(
++                store,
++                thread_id,
++                source_path,
++                MAX_CHECKPOINT_SEGMENTS,
++            )
++            .await
++            {
++                Ok(count) => count,
++                Err(error) => {
++                    warn!(
++                        "keeping checkpoint inline for {thread_id}: couldn't count rollout segments: {error}"
++                    );
++                    return Ok(());
++                }
++            };
++            store
++                .live_recorders
++                .lock()
++                .await
++                .get_mut(&thread_id)
++                .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?
++                .checkpoint_segment_count = Some(count);
++            count
++        }
++    };
++    if count >= MAX_CHECKPOINT_SEGMENTS {
          return Ok(());
      }
      let meta = codex_rollout::read_session_meta_line(source_path)
-@@ -249,44 +249,5 @@ async fn install_continuation(
+@@ -90,14 +134,6 @@ pub(super) async fn rotate(
+         .map_err(thread_store_io_error)?
+         .meta;
+     let fork_cutoff = codex_rollout::forked_from_ordinal_exclusive(&meta, Some(source_path));
+-    let writer_lock = store
+-        .live_recorders
+-        .lock()
+-        .await
+-        .get(&thread_id)
+-        .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?
+-        .writer_lock
+-        .clone();
+     let session_timestamp = meta.timestamp.clone();
+     let next_id = ThreadId::new();
+     let next = super::super::rollout_continuation::create(
+@@ -237,6 +273,9 @@ async fn install_continuation(
+             return Ok(());
+         };
+         entry.rollout_id = pending.rollout_id;
++        if let Some(count) = &mut entry.checkpoint_segment_count {
++            *count += 1;
++        }
+         entry
+             .rollout_path
+             .send_replace(pending.recorder.rollout_path().to_path_buf());
+@@ -249,44 +288,5 @@ async fn install_continuation(
      Ok(())
  }
 
@@ -271,7 +354,7 @@ index 129b23186e374be3d09a2f2401ed6e09a1563124..42418e9b09b2c27aeb6e122013ccbe71
  #[cfg(test)]
  mod tests;
 diff --git a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
-index 52ea4cbf6d4f2ee35f138b76138d93e24417d106..0f4649fb88d0eee562a60c117c07d2c3c437b279 100644
+index 52ea4cbf6d4f2ee35f138b76138d93e24417d106..751c5cbe65ae01cd25df68528191de766f1702bf 100644
 --- a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
 +++ b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
 @@ -238,10 +238,10 @@ fn compatibility_turn(thread_id: ThreadId, label: &str) -> serde_json::Result<Ve
@@ -344,7 +427,7 @@ index 52ea4cbf6d4f2ee35f138b76138d93e24417d106..0f4649fb88d0eee562a60c117c07d2c3
      let context = store
          .load_latest_model_context(LoadThreadHistoryParams {
              thread_id: id,
-@@ -305,33 +303,51 @@ async fn active_turn_checkpoint_keeps_lifecycle_in_one_file()
+@@ -305,33 +303,129 @@ async fn active_turn_checkpoint_keeps_lifecycle_in_one_file()
          Some(RolloutItem::Compacted(_))
      ));
      let (items, _, _) = RolloutRecorder::load_rollout_items(&path).await?;
@@ -403,10 +486,88 @@ index 52ea4cbf6d4f2ee35f138b76138d93e24417d106..0f4649fb88d0eee562a60c117c07d2c3
 +        })
 +        .await?;
 +    assert_native_turn_pages(&store, id).await?;
++    store.shutdown_thread(id).await?;
++    Ok(())
++}
++
++/// A checkpoint at the limit stays readable in the active file.
++#[tokio::test]
++async fn compaction_stays_inline_at_the_vanilla_paging_limit()
++-> Result<(), Box<dyn std::error::Error>> {
++    let home = TempDir::new()?;
++    let config = test_config(home.path());
++    let state = codex_state::StateRuntime::init(
++        config.sqlite.clone(),
++        config.default_model_provider_id.clone(),
++    )
++    .await?;
++    let store = LocalThreadStore::new(config, Some(state.clone()));
++    let id = ThreadId::new();
++    create(&store, id).await?;
++    store
++        .append_items(AppendThreadItemsParams {
++            thread_id: id,
++            items: compatibility_turn(id, "before")?,
++        })
++        .await?;
++    let path = store.live_rollout_path(id).await?;
++    codex_rollout::state_db::reconcile_rollout(
++        Some(&state),
++        &path,
++        "test-provider",
++        None,
++        &[],
++        Some(false),
++        None,
++    )
++    .await;
++    // Exercise the last available rotation without creating hundreds of test files.
++    store
++        .live_recorders
++        .lock()
++        .await
++        .get_mut(&id)
++        .unwrap()
++        .checkpoint_segment_count = Some(MAX_CHECKPOINT_SEGMENTS - 1);
++    store
++        .append_items(AppendThreadItemsParams {
++            thread_id: id,
++            items: checkpoint(id)?,
++        })
++        .await?;
++    let next = store.live_rollout_path(id).await?;
++    assert_ne!(path, next);
++    assert_eq!(
++        crate::local::rollout_lineage::checkpoint_segment_count(&store, id, &next, 10).await?,
++        2
++    );
++    assert_eq!(
++        crate::local::rollout_lineage::checkpoint_segment_count(&store, id, &next, 1).await?,
++        1
++    );
++    let mut latest = checkpoint(id)?;
++    let RolloutItem::Compacted(item) = &mut latest[0] else {
++        unreachable!()
++    };
++    item.window_number = Some(2);
++    store
++        .append_items(AppendThreadItemsParams {
++            thread_id: id,
++            items: latest,
++        })
++        .await?;
++    assert_eq!(store.live_rollout_path(id).await?, next);
++    let (items, _, errors) = RolloutRecorder::load_rollout_items(&next).await?;
++    assert_eq!(errors, 0);
++    assert!(
++        items.iter().any(
++            |item| matches!(item, RolloutItem::Compacted(item) if item.window_number == Some(2))
++        )
++    );
      store.shutdown_thread(id).await?;
      Ok(())
  }
-@@ -703,7 +719,7 @@ async fn write_vanilla_compatibility_fixture() -> Result<(), Box<dyn std::error:
+@@ -703,7 +797,7 @@ async fn write_vanilla_compatibility_fixture() -> Result<(), Box<dyn std::error:
      let id = ThreadId::new();
      create(&store, id).await?;
      for turn in 0..3 {
@@ -415,7 +576,7 @@ index 52ea4cbf6d4f2ee35f138b76138d93e24417d106..0f4649fb88d0eee562a60c117c07d2c3
              {"type":"event_msg", "payload":{"type":"turn_started","turn_id":format!("turn-{turn}")}},
              {"type":"response_item", "payload":{"type":"message","role":"user",
                  "content":[{"type":"input_text","text":format!("message-{turn}: {}", "x".repeat(2 * 1024 * 1024))}]}},
-@@ -715,6 +731,7 @@ async fn write_vanilla_compatibility_fixture() -> Result<(), Box<dyn std::error:
+@@ -715,6 +809,7 @@ async fn write_vanilla_compatibility_fixture() -> Result<(), Box<dyn std::error:
                      "content":[{"type":"Text", "text":format!("display-answer-{turn}")}]}}},
              {"type":"event_msg", "payload":{"type":"turn_complete","turn_id":format!("turn-{turn}")}}
          ]))?;
@@ -423,7 +584,7 @@ index 52ea4cbf6d4f2ee35f138b76138d93e24417d106..0f4649fb88d0eee562a60c117c07d2c3
          store
              .append_items(AppendThreadItemsParams {
                  thread_id: id,
-@@ -732,10 +749,27 @@ async fn write_vanilla_compatibility_fixture() -> Result<(), Box<dyn std::error:
+@@ -732,10 +827,27 @@ async fn write_vanilla_compatibility_fixture() -> Result<(), Box<dyn std::error:
              None,
          )
          .await;
@@ -452,6 +613,59 @@ index 52ea4cbf6d4f2ee35f138b76138d93e24417d106..0f4649fb88d0eee562a60c117c07d2c3
              })
              .await?;
      }
+diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
+index 6ba79663254d42150c751b7f3834b3d78733fedc..4180bd754c0b2ef576d793750f8f9cb5d8929525 100644
+--- a/codex-rs/thread-store/src/local/mod.rs
++++ b/codex-rs/thread-store/src/local/mod.rs
+@@ -172,6 +172,9 @@ struct LiveRecorderEntry {
+     recorder: RolloutRecorder,
+     // Keep both writers owned until SQLite resolves an uncertain path publication.
+     pending_continuation: Option<PendingContinuation>,
++    // Known physical file count, capped at the compaction rotation limit. A reopened
++    // writer counts its inherited files on the first eligible checkpoint.
++    checkpoint_segment_count: Option<usize>,
+     // Synchronous legacy consumers follow the installed physical writer across rotations.
+     rollout_path: tokio::sync::watch::Sender<PathBuf>,
+     // Rollout projection rows are keyed by immutable rollout ID, not the stable thread ID used
+@@ -472,6 +475,7 @@ impl LocalThreadStore {
+             Entry::Vacant(entry) => {
+                 entry.insert(LiveRecorderEntry {
+                     pending_continuation: None,
++                    checkpoint_segment_count: None,
+                     rollout_path: tokio::sync::watch::channel(
+                         recorder.rollout_path().to_path_buf(),
+                     )
+diff --git a/codex-rs/thread-store/src/local/rollout_lineage.rs b/codex-rs/thread-store/src/local/rollout_lineage.rs
+index c917b5b659755592dd1d73286975ee65cde9b08e..9a798bb6833829bcd8164b6590756279477c0363 100644
+--- a/codex-rs/thread-store/src/local/rollout_lineage.rs
++++ b/codex-rs/thread-store/src/local/rollout_lineage.rs
+@@ -82,6 +82,26 @@ impl LocalThreadStore {
+     }
+ }
+
++/// Counts physical files, including inherited fork history, stopping at the rotation limit.
++pub(super) async fn checkpoint_segment_count(
++    store: &LocalThreadStore,
++    thread_id: ThreadId,
++    selected_path: &Path,
++    limit: usize,
++) -> ThreadStoreResult<usize> {
++    let mut walk = LineageWalk::new(
++        store,
++        thread_id,
++        LineageResolutionMode::HistoryPage,
++        Some(selected_path.to_owned()),
++        None,
++    );
++    if walk.at_depth(limit - 1).await?.is_some() {
++        return Ok(limit);
++    }
++    Ok(walk.resolve_all().await?.len())
++}
++
+ /// A mid-turn fork starts with its header, settings, optional model guidance, and parent abort.
+ /// Stop before the first child event; a real child interruption follows its own turn start.
+ async fn attached_history_start(path: &Path, start: u64) -> std::io::Result<u64> {
 diff --git a/codex-rs/thread-store/src/local/thread_history.rs b/codex-rs/thread-store/src/local/thread_history.rs
 index cff15327b04b89c8c05be32d021d02f61b0e9c22..ecb51907241136d48912add4acc83847ec8c827b 100644
 --- a/codex-rs/thread-store/src/local/thread_history.rs
