@@ -42,10 +42,10 @@ index 4a6e7daae2c2e024d13efc19626ee8ca3c16313a..b27e522c722e9465c605c8aba4edbcff
                          auth_manager: auth_manager.clone(),
                          state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 00ac2990d6b826c9350ff1253d6cf0be049ad777..443fa5c486d2a50e9908ccfe027f99220eec11a6 100644
+index 05a23c2b42c07f44a9d302623f5092b36c27cfee..8cc73d50b05ac8b5a74564b41b7b005c327aa26e 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
-@@ -177,6 +177,7 @@ pub(crate) struct MessageProcessor {
+@@ -180,6 +180,7 @@ pub(crate) struct MessageProcessor {
      pub(super) remote_control_processor: RemoteControlRequestProcessor,
      search_processor: SearchRequestProcessor,
      saffron_goal_scheduler: Option<SaffronGoalSchedulerHandle>,
@@ -53,7 +53,7 @@ index 00ac2990d6b826c9350ff1253d6cf0be049ad777..443fa5c486d2a50e9908ccfe027f9922
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -369,6 +370,7 @@ impl MessageProcessor {
+@@ -372,6 +373,7 @@ impl MessageProcessor {
              app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
          let mut queue_service = None;
          let sample_responses = Arc::new(crate::thread_sample::SampleResponseRegistry::default());
@@ -61,7 +61,7 @@ index 00ac2990d6b826c9350ff1253d6cf0be049ad777..443fa5c486d2a50e9908ccfe027f9922
          let thread_manager = Arc::new_cyclic(|thread_manager| {
              queue_service = queue_store.map(|queue| {
                  Arc::new(QueuedItemService::new(
-@@ -393,6 +395,7 @@ impl MessageProcessor {
+@@ -396,6 +398,7 @@ impl MessageProcessor {
                      config.as_ref(),
                      ThreadExtensionDependencies {
                          sample_responses: Arc::clone(&sample_responses),
@@ -69,7 +69,7 @@ index 00ac2990d6b826c9350ff1253d6cf0be049ad777..443fa5c486d2a50e9908ccfe027f9922
                          event_sink: Arc::clone(&extension_event_sink),
                          auth_manager: auth_manager.clone(),
                          state_db: state_db.clone(),
-@@ -576,6 +579,8 @@ impl MessageProcessor {
+@@ -579,6 +582,8 @@ impl MessageProcessor {
              config_warnings.clone(),
              sample_responses,
          );
@@ -78,7 +78,7 @@ index 00ac2990d6b826c9350ff1253d6cf0be049ad777..443fa5c486d2a50e9908ccfe027f9922
          let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
              && config.features.enabled(codex_features::Feature::Goals)
          {
-@@ -687,6 +692,7 @@ impl MessageProcessor {
+@@ -690,6 +695,7 @@ impl MessageProcessor {
              remote_control_processor,
              search_processor,
              saffron_goal_scheduler,
@@ -86,7 +86,7 @@ index 00ac2990d6b826c9350ff1253d6cf0be049ad777..443fa5c486d2a50e9908ccfe027f9922
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -697,6 +703,7 @@ impl MessageProcessor {
+@@ -700,6 +706,7 @@ impl MessageProcessor {
      }
 
      pub(crate) fn clear_runtime_references(&self) {
@@ -94,7 +94,7 @@ index 00ac2990d6b826c9350ff1253d6cf0be049ad777..443fa5c486d2a50e9908ccfe027f9922
          self.account_processor.clear_external_auth();
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
-@@ -934,6 +941,7 @@ impl MessageProcessor {
+@@ -937,6 +944,7 @@ impl MessageProcessor {
      }
 
      pub(crate) async fn drain_background_tasks(&self) {
@@ -103,10 +103,10 @@ index 00ac2990d6b826c9350ff1253d6cf0be049ad777..443fa5c486d2a50e9908ccfe027f9922
          if let Some(worker) = &self.turn_cost_worker {
              worker.shutdown();
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index fd3885af57b0cb7d1c2440765772951327756913..f549722999a86051273545f2946156b7aa0afa2e 100644
+index ed0984643ecbe7f9c52377e501fd45938961ca25..5307904e71302c44bfdf041d416fbf2b27042b00 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -7088,6 +7088,7 @@ fn build_thread_from_loaded_snapshot(
+@@ -7200,6 +7200,7 @@ fn build_thread_from_loaded_snapshot(
      )
  }
 
@@ -115,7 +115,7 @@ index fd3885af57b0cb7d1c2440765772951327756913..f549722999a86051273545f2946156b7
 
  #[cfg(test)]
 diff --git a/codex-rs/app-server/tests/suite/v2/mod.rs b/codex-rs/app-server/tests/suite/v2/mod.rs
-index 10abe7dd6ce02886f0dcb601608fe0d6e92ec974..8cd2d0ecfa1abda992a660e76124d6f5d501c0b1 100644
+index dae1bb253ec63ed04c6a0bc5f825753dba8fa8cb..f42fab01d7e0f53e678f447a609e3afcfc8581ac 100644
 --- a/codex-rs/app-server/tests/suite/v2/mod.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mod.rs
 @@ -142,6 +142,7 @@ mod review;
@@ -127,10 +127,10 @@ index 10abe7dd6ce02886f0dcb601608fe0d6e92ec974..8cd2d0ecfa1abda992a660e76124d6f5
  mod saffron_goal_supervisor;
  mod saffron_goal_supervisor_history;
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 35cbd5b894f6c930d7ab85d07d72d8ecd2363a5e..e97a47bea3d09493d41fc4f3bb7c1764c91fdbba 100644
+index 8604c5bd893d5b17438a24c2aae9b1d13a775bdd..b936e76eb9950a9a44281e1a9833f16500221b58 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -413,6 +413,18 @@ impl CodexThread {
+@@ -464,6 +464,18 @@ impl CodexThread {
          reply_rx.await.map_err(|_| CodexErr::InternalAgentDied)
      }
 
@@ -149,7 +149,7 @@ index 35cbd5b894f6c930d7ab85d07d72d8ecd2363a5e..e97a47bea3d09493d41fc4f3bb7c1764
      /// Wait until the underlying session loop has terminated.
      pub async fn wait_until_terminated(&self) {
          self.io.session_loop_termination.clone().await;
-@@ -503,6 +515,9 @@ impl CodexThread {
+@@ -554,6 +566,9 @@ impl CodexThread {
          &self,
          goal: &codex_state::ThreadGoal,
      ) -> Result<bool, String> {
@@ -191,10 +191,10 @@ index 4ad09f9286b6230e5bd1d9401b205184d69e55b2..cc05582f7d44a99b371269332c42086e
 +    archive_self::register(session, turn_context, registry);
  }
 diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
-index 4d6c7e5ca1a1970a0d3d06f10ac42d6d0539bd2c..64fb8b26e5198f6a8d7b2b07ebace749ed4f85ff 100644
+index 3ef627516007b4ebdae46f858bb0576848c6bc44..1863f0f72159c197216822d7745ac11ada6ec8a3 100644
 --- a/codex-rs/core/src/session/handlers.rs
 +++ b/codex-rs/core/src/session/handlers.rs
-@@ -941,6 +941,19 @@ pub(super) async fn submission_loop(
+@@ -946,6 +946,19 @@ pub(super) async fn submission_loop(
                      false
                  }
                  Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
@@ -215,10 +215,10 @@ index 4d6c7e5ca1a1970a0d3d06f10ac42d6d0539bd2c..64fb8b26e5198f6a8d7b2b07ebace749
                      let should_shutdown = sess.is_idle_for_shutdown().await;
                      // A successful reply hands teardown ownership to the unload caller.
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 884ae5c3916c93618dde37993adcc9dfac5a1f3e..d08d7105194f1680011ab96e531371a93133b3ab 100644
+index 22dbe0eb3e2ae6f46e34ac60552176f000ec14b6..3de76f916bff7f292bb0da4be1d845a161eefcdc 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -253,6 +253,7 @@ pub(crate) use file_audio::FileAudioDurations;
+@@ -254,6 +254,7 @@ pub(crate) use file_audio::FileAudioDurations;
  mod approved_plan;
  mod code_mode_warning;
  mod compaction_replacement;
@@ -227,7 +227,7 @@ index 884ae5c3916c93618dde37993adcc9dfac5a1f3e..d08d7105194f1680011ab96e531371a9
  pub(crate) mod context_window;
  mod daemon_recovery;
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index d7ac5fb63daa362ebb9a80d85f5624ea24ddde6e..471e5f9fe8822d91e6447cdf1847e7ba5dd8bc1f 100644
+index 4e20b01e6bf07b93f69f5ea8c8cc486781dc7645..cc1accf85e435669cd3c9a7da027abef55a54de9 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -675,7 +675,8 @@ impl Session {
@@ -241,7 +241,7 @@ index d7ac5fb63daa362ebb9a80d85f5624ea24ddde6e..471e5f9fe8822d91e6447cdf1847e7ba
      }
 
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index 04e3aab6c0ae27c9c01dc0f3d9ccdebe618b962f..0afc58c3bbe544f726dbfe4e75e499f8ab2dee70 100644
+index fd555b57ec49aa7c1e27e0481ce49255d7904d4c..c7f29ff67fe8d601ef57daa40b9bb3aaabb427a9 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
 @@ -650,27 +650,46 @@ pub(crate) async fn run_turn(
@@ -308,10 +308,10 @@ index 04e3aab6c0ae27c9c01dc0f3d9ccdebe618b962f..0afc58c3bbe544f726dbfe4e75e499f8
 
                  let SamplingRequestResult {
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 89101301ef808a5c0aa06cf1e88481e20066da73..d0e91f152a9c85f51d3ff849465242811b41c99f 100644
+index 91770001730448465a89f5e180baff5b9e05e45b..26115b759817821a8896fc97233f43c6ffda7826 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
-@@ -837,6 +837,8 @@ impl Session {
+@@ -844,6 +844,8 @@ impl Session {
      ) {
          let mut state = self.state.lock().await;
          state.last_started_turn_id = Some(turn_id.to_owned());
@@ -320,7 +320,7 @@ index 89101301ef808a5c0aa06cf1e88481e20066da73..d0e91f152a9c85f51d3ff84946524281
          if let Some(attribution) = attribution {
              state.turn_attribution = Some(attribution);
          }
-@@ -1113,6 +1115,7 @@ impl Session {
+@@ -1118,6 +1120,7 @@ impl Session {
                  pending_input,
              )
              .await;
@@ -350,10 +350,10 @@ index e90bd010c66d8b26f5dce54ac3b92a82690803df..721faa6cadb0c84f60fd89ca55f6d234
              restored_turn_routing: None,
              auto_compact_window: AutoCompactWindow::new_with_ids(auto_compact_window_ids),
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index 88ba80d724afb8edb01dc4a8f25658828b561867..11b9b35503bd83c223cf872f021c2f55a4eeda64 100644
+index b74c988780b39f8b3af61d31692ee56650d53bc2..72cb6e61e70057936f61e555bb9387c2a6f1dbba 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -878,7 +878,10 @@ impl Session {
+@@ -887,7 +887,10 @@ impl Session {
                  .sampling_interrupt
                  .as_ref()
                  .is_some_and(SamplingInterrupt::is_requested);
@@ -365,7 +365,7 @@ index 88ba80d724afb8edb01dc4a8f25658828b561867..11b9b35503bd83c223cf872f021c2f55
                  let state = active_turn.turn_state.lock().await;
                  if state.accepts_mailbox_delivery_for_current_turn()
                      && !state.pending_input.is_empty()
-@@ -1169,16 +1172,25 @@ impl Session {
+@@ -1178,16 +1181,25 @@ impl Session {
          drop(outcome_handoff);
          drop(agent_execution_guard);
          drop(ancestor_turn_retention_guard);
@@ -419,10 +419,10 @@ index d5f3fcdfdc3de0a82a7e7c3684fa7600fb1cf43e..8d283c1b93aedd7edf71a4ae5d0d9c1b
                  // including when cancellation drops the handler future.
                  let _admitted_timing = work_timing.map(|(gate, work)| {
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index 0a89a003c2aac22a72f42fa3131262ba365d7f7d..0e803a0cf575b724ebfdf81c7235b3397f142a12 100644
+index b1d4371958b21a84c1bb2a3d1606194adc4e4086..43e72d93f2a54b13f395dca83590e05a10b59374 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
-@@ -964,6 +964,13 @@ pub enum Op {
+@@ -968,6 +968,13 @@ pub enum Op {
          reply: oneshot::Sender<bool>,
      },
 
@@ -436,7 +436,7 @@ index 0a89a003c2aac22a72f42fa3131262ba365d7f7d..0e803a0cf575b724ebfdf81c7235b339
      /// Execute a user-initiated one-off shell command (triggered by "!cmd").
      ///
      /// The command string is executed using the user's default shell and may
-@@ -1182,6 +1189,7 @@ impl Op {
+@@ -1185,6 +1192,7 @@ impl Op {
              Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
              Self::Shutdown => "shutdown",
              Self::ShutdownIfIdle { .. } => "shutdown_if_idle",
