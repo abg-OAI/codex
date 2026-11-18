@@ -157,7 +157,7 @@ jobs:
             --lib
           just test --cargo-profile ci-test \
             --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
-            -p codex-rollout --lib -E 'test(recorder::checkpoint::tests::)'
+            -p codex-rollout --lib
           just test --cargo-profile ci-test \
             --config-file "${GITHUB_WORKSPACE}/.github/nextest-ci.toml" \
             -p codex-core \

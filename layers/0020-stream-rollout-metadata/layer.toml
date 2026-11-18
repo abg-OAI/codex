@@ -1,0 +1,17 @@
+[vcs]
+commit-msg = """
+Stream rollout records when extracting thread metadata
+
+Metadata extraction and resume-directory matching retained all decoded
+rollout items. Visit records on the reader's blocking worker and retain
+only the metadata or most recent turn directory needed by the caller.
+Seed metadata from the first session header, including for imports with
+items preceding that header, then apply records in file order.
+
+Full-history callers collect the same decoded items. Prefix readers can
+stop before the next record, and valid large records remain readable.
+"""
+
+[[operation]]
+[operation.patch]
+file = "patch"
