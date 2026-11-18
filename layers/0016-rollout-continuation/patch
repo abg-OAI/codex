@@ -1,5 +1,5 @@
 diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
-index 250b66b36c890c17bc709fd180532c1417a18a86..ac086941bdfd68b7abb756882984e4e1ebb2b1dc 100644
+index 529f932214f81563d29647915074c1aa9f684362..877ef24e16c230bf7c593127e13301a4a910c1d9 100644
 --- a/codex-rs/thread-store/src/local/mod.rs
 +++ b/codex-rs/thread-store/src/local/mod.rs
 @@ -13,6 +13,7 @@ mod pending_thread_metadata;

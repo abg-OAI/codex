@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index e97a47bea3d09493d41fc4f3bb7c1764c91fdbba..eb4283c25d693b97af02541ffff37502aa61c31f 100644
+index b936e76eb9950a9a44281e1a9833f16500221b58..5a208c006d1cb3daab9d9ddf65424aec0a28062b 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -1176,8 +1176,10 @@ impl CodexThread {
+@@ -1265,8 +1265,10 @@ impl CodexThread {
      }
 
      pub fn rollout_path(&self) -> Option<PathBuf> {
@@ -16,10 +16,10 @@ index e97a47bea3d09493d41fc4f3bb7c1764c91fdbba..eb4283c25d693b97af02541ffff37502
      }
 
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index d08d7105194f1680011ab96e531371a93133b3ab..c86da34695981a7e6ff0ff226b1cb99aae48cb84 100644
+index 3de76f916bff7f292bb0da4be1d845a161eefcdc..f93a64a235e47b102c5e1d191ac352323516fb1d 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -279,6 +279,7 @@ pub(crate) mod multi_agents;
+@@ -281,6 +281,7 @@ pub(crate) mod multi_agents;
  mod persistence_repair;
  mod plugin_selection;
  mod realtime_history;
@@ -27,7 +27,7 @@ index d08d7105194f1680011ab96e531371a93133b3ab..c86da34695981a7e6ff0ff226b1cb99a
  mod retained_context;
  mod review;
  mod rollout_budget;
-@@ -1905,6 +1906,18 @@ impl Session {
+@@ -1911,6 +1912,18 @@ impl Session {
                  self.state.lock().await.latest_token_usage_record =
                      Self::last_token_usage_record_from_rollout(&rollout_items);
 
@@ -46,7 +46,7 @@ index d08d7105194f1680011ab96e531371a93133b3ab..c86da34695981a7e6ff0ff226b1cb99a
                  let thread_settings_applied =
                      RolloutItem::EventMsg(thread_settings::applied_event(self).await);
                  match &self.fork_persistence {
-@@ -1931,7 +1944,13 @@ impl Session {
+@@ -1937,7 +1950,13 @@ impl Session {
                          rollout_items.push(thread_settings_applied);
                      }
                  }
@@ -95,7 +95,7 @@ index 7b538850cd50340298c8196975a503afd577eadd..028a5115f5cb94ec2ecf6c4bcfcd72ec
              codex_protocol::protocol::ThreadSettingsAppliedEvent {
                  thread_id: Some(self.thread_id),
 diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
-index a038e1e641e63c8f7c63a6325abf2df63823ade7..6d1570171a9f72aabc0ca94df0101a3a512cd041 100644
+index fd9a1cdc3362ddce2fbd6a48e6e5abf3b95f5330..66073930e6fececd7266cdc40ea9c8ecc55da55b 100644
 --- a/codex-rs/core/src/thread_manager_tests.rs
 +++ b/codex-rs/core/src/thread_manager_tests.rs
 @@ -183,6 +183,204 @@ async fn startup_fixture() -> (tempfile::TempDir, Config, ThreadManager) {
@@ -443,7 +443,7 @@ index cc2cb664f55398c373d7c330b5b199940d3d7d8c..3a8abfe86f5e79f1851286458fe7b55e
      let found_rollout_path = !thread_rollouts.paths.is_empty();
      for rollout_path in thread_rollouts.paths {
 diff --git a/codex-rs/thread-store/src/local/live_writer.rs b/codex-rs/thread-store/src/local/live_writer.rs
-index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..ad0314333e7df8e1ea37b9109c52be2a5c8064f5 100644
+index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e27ee08e3 100644
 --- a/codex-rs/thread-store/src/local/live_writer.rs
 +++ b/codex-rs/thread-store/src/local/live_writer.rs
 @@ -21,6 +21,8 @@ use crate::ThreadStoreError;
@@ -573,7 +573,7 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..ad0314333e7df8e1ea37b9109c52be2a
  }
 
  async fn index_attached_thread(
-@@ -428,13 +478,15 @@ async fn write_and_project(
+@@ -428,14 +478,16 @@ async fn write_and_project(
      store: &LocalThreadStore,
      thread_id: ThreadId,
      write_op: RolloutWriteOp,
@@ -586,11 +586,12 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..ad0314333e7df8e1ea37b9109c52be2a
 -    let mut cursor = store.live_writer_locks.lock(thread_id).await;
      let (recorder, rollout_id, history_mode) = live_writer_parts(store, thread_id).await?;
      let sync_rollout_path = matches!(&write_op, RolloutWriteOp::Persist | RolloutWriteOp::Flush);
+     let is_flush = matches!(&write_op, RolloutWriteOp::Flush);
 +    let mut checkpoint = None;
      match write_op {
          RolloutWriteOp::AppendItems(items) => {
              let mut items = into_persisted_rollout_items(items, history_mode);
-@@ -442,6 +494,12 @@ async fn write_and_project(
+@@ -443,6 +495,12 @@ async fn write_and_project(
                  return Ok(());
              }
              let next = codex_rollout::stamp_item_ordinals(*cursor, &mut items);
@@ -603,7 +604,7 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..ad0314333e7df8e1ea37b9109c52be2a
              recorder
                  .record_canonical_items(&items)
                  .await
-@@ -449,6 +507,11 @@ async fn write_and_project(
+@@ -450,6 +508,11 @@ async fn write_and_project(
              // Once queued, the recorder owns the batch even if flush is cancelled or retried.
              *cursor = next;
              recorder.flush().await.map_err(thread_store_io_error)?;
@@ -615,7 +616,7 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..ad0314333e7df8e1ea37b9109c52be2a
          }
          RolloutWriteOp::Persist => recorder.persist().await.map_err(thread_store_io_error)?,
          RolloutWriteOp::Flush => recorder.flush().await.map_err(thread_store_io_error)?,
-@@ -466,6 +529,22 @@ async fn write_and_project(
+@@ -478,6 +541,22 @@ async fn write_and_project(
              warn!("failed to project durable rollout for {thread_id}: {err}");
          }
      }
@@ -639,7 +640,7 @@ index 0ffd8c7276a7e68dbef1175b66222f25fa04c83b..ad0314333e7df8e1ea37b9109c52be2a
          sync_materialized_rollout_path(store, thread_id, recorder.rollout_path()).await?;
      }
 diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
-index 3311c0b8ad842ed8ee46e13ce7d6d108a7a4b759..3716ce3143b2f3ea949399b0256cd444c4d11902 100644
+index 877ef24e16c230bf7c593127e13301a4a910c1d9..6ba79663254d42150c751b7f3834b3d78733fedc 100644
 --- a/codex-rs/thread-store/src/local/mod.rs
 +++ b/codex-rs/thread-store/src/local/mod.rs
 @@ -170,6 +170,10 @@ type WriterLockGuard = Arc<codex_rollout::WriterLockGuard>;

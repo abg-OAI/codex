@@ -48,7 +48,7 @@ index a9adb45ef65a03521c70f8453b025e30d6cb09cc..2ca13fd73ef8ababdcd22b46f267bdde
          // Managed requirements are the only configuration path that can keep
          // unified exec disabled. Preserve command execution without exposing a
 diff --git a/codex-rs/core/src/unified_exec/mod.rs b/codex-rs/core/src/unified_exec/mod.rs
-index 466af4bd86ab188cd0afa2d30a794257a2067f53..30260bf82ac23594a7277d54e7a0033bdf8ae835 100644
+index a276a69af4bca9d6bc82eed8385a6cba5b374f6e..de58bf0571bc754bed3a2a7e5db887f96bff5872 100644
 --- a/codex-rs/core/src/unified_exec/mod.rs
 +++ b/codex-rs/core/src/unified_exec/mod.rs
 @@ -62,6 +62,8 @@ pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
@@ -91,7 +91,7 @@ index f9afaaa41d5349e519ca45585bcd05954655dd4d..75c70778c547fc08ee4318f31465b3fb
          if self.timed_out() {
              return Some(124);
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index 9da4ede137bfa6098ebfe62871bfdd3b857c5161..b9763c894bf4f69ca7f7a3fe087577b13f03fa74 100644
+index 1b8e339ab4fb27f28a588425c2b1e93261dc39ec..c5f4bb17e3f885d7d9cc79768daa78e698935ba3 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
 @@ -105,6 +105,11 @@ const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);

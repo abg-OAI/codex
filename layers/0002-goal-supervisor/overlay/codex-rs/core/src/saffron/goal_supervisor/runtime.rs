@@ -19,7 +19,7 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::TruncationPolicy;
 use codex_protocol::protocol::WarningEvent;
-use codex_protocol::user_input::UserInput;
+use codex_user_input::ResolvedUserInput;
 use codex_utils_output_truncation::truncate_text;
 use futures::StreamExt;
 use tokio::sync::Mutex;
@@ -734,7 +734,7 @@ async fn spawn_helper(
     let helper = Box::pin(
         super::local_agent_control(parent).spawn_hidden_agent_with_metadata(
             config,
-            vec![UserInput::Text {
+            vec![ResolvedUserInput::Text {
                 text: prompt,
                 text_elements: Vec::new(),
             }],
@@ -747,6 +747,7 @@ async fn spawn_helper(
                 parent_turn_id: None,
                 turn_trigger: None,
                 root_turn_id: None,
+                inherited_client_metadata: Default::default(),
                 environments: None,
                 disabled_plugin_ids: None,
                 multi_agent_v2_usage_hints: None,

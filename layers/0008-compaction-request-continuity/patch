@@ -14,7 +14,7 @@ index b84082fff7c4ea1a113a6169bc0a1ec90d2c0507..b401f382d03b3945a97f138451e5b0d2
                                      // Tool bodies are not sender authorization evidence.
                                      TruncationPolicy::Bytes(0),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
-index 5316f854344de527a14957aec7bb0ac773fb56d3..607d2b30b302e6956fadc0b0c71f2a14bf75a0ba 100644
+index 497a8f5fa011789219f2636e079d2f16858eb0ae..fd00eef1c8a765f97b8dcf5babfb77741cdc718b 100644
 --- a/codex-rs/core/src/compact.rs
 +++ b/codex-rs/core/src/compact.rs
 @@ -24,6 +24,7 @@ use crate::hook_runtime::run_post_compact_hooks;
@@ -25,7 +25,7 @@ index 5316f854344de527a14957aec7bb0ac773fb56d3..607d2b30b302e6956fadc0b0c71f2a14
  use crate::session::FileAudioDurations;
  use crate::session::RequestEffortUsage;
  use crate::session::session::Session;
-@@ -412,7 +413,11 @@ async fn run_compact_task_inner_impl(
+@@ -404,7 +405,11 @@ async fn run_compact_task_inner_impl(
      };
      let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
 
@@ -38,7 +38,7 @@ index 5316f854344de527a14957aec7bb0ac773fb56d3..607d2b30b302e6956fadc0b0c71f2a14
      if let Some(summary_item) = new_history.last_mut() {
          // This replacement history skips `record_conversation_items`; only the appended summary
          // belongs to this compaction turn.
-@@ -624,20 +629,43 @@ pub(crate) struct CompactedUserMessage<'a> {
+@@ -616,20 +621,43 @@ pub(crate) struct CompactedUserMessage<'a> {
  }
 
  #[cfg(test)]
@@ -91,7 +91,7 @@ index 5316f854344de527a14957aec7bb0ac773fb56d3..607d2b30b302e6956fadc0b0c71f2a14
  }
 
  fn compacted_user_message<'a>(
-@@ -738,23 +766,28 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
+@@ -730,23 +758,28 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
      compacted_history
  }
 
@@ -120,7 +120,7 @@ index 5316f854344de527a14957aec7bb0ac773fb56d3..607d2b30b302e6956fadc0b0c71f2a14
  ) -> Vec<ResponseItemEnvelope> {
      // An injected user message can qualify under both budgets. Its position
      // identifies the occurrence even if another message has the same client ID.
-@@ -765,10 +798,34 @@ fn build_compacted_history_with_limit(
+@@ -757,10 +790,34 @@ fn build_compacted_history_with_limit(
      );
      if max_tokens > 0 {
          let mut remaining = max_tokens;
@@ -623,10 +623,10 @@ index ef92fb2ddcd62e450a86e3f897173766756bca95..60582b60616bd14a7bf8e9482f45d956
              truncate_retained_messages_for_remote_compaction(
                  vec![source.clone()],
 diff --git a/codex-rs/core/src/compact_tests.rs b/codex-rs/core/src/compact_tests.rs
-index 32e8026225a5d8acb01fc8016117a1fb57e789d8..3ca0b3efe28652fbf279305cdfb6c148281cc4d3 100644
+index 9efe51eaa89cc12fce476c002db8eff57bb0d7a9..ad871fdf9245efab0b3e0f20613e70249d6614e6 100644
 --- a/codex-rs/core/src/compact_tests.rs
 +++ b/codex-rs/core/src/compact_tests.rs
-@@ -243,6 +243,143 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
+@@ -242,6 +242,143 @@ fn annotated(items: Vec<ResponseItem>) -> Vec<ResponseItemEnvelope> {
      items.into_iter().map(ResponseItemEnvelope::new).collect()
  }
 
@@ -770,7 +770,7 @@ index 32e8026225a5d8acb01fc8016117a1fb57e789d8..3ca0b3efe28652fbf279305cdfb6c148
  fn raw(items: Vec<ResponseItemEnvelope>) -> Vec<ResponseItem> {
      items
          .into_iter()
-@@ -264,12 +401,12 @@ fn user_message(text: &str) -> ResponseItem {
+@@ -263,12 +400,12 @@ fn user_message(text: &str) -> ResponseItem {
      }
  }
 
@@ -786,7 +786,7 @@ index 32e8026225a5d8acb01fc8016117a1fb57e789d8..3ca0b3efe28652fbf279305cdfb6c148
  }
 
  fn compact_items(items: &[ResponseItemEnvelope], summary: &str) -> Vec<ResponseItemEnvelope> {
-@@ -278,6 +415,7 @@ fn compact_items(items: &[ResponseItemEnvelope], summary: &str) -> Vec<ResponseI
+@@ -277,6 +414,7 @@ fn compact_items(items: &[ResponseItemEnvelope], summary: &str) -> Vec<ResponseI
          summary,
          COMPACT_USER_MESSAGE_MAX_TOKENS,
          &FileAudioDurations::default(),
@@ -794,7 +794,7 @@ index 32e8026225a5d8acb01fc8016117a1fb57e789d8..3ca0b3efe28652fbf279305cdfb6c148
      )
  }
 
-@@ -438,7 +576,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+@@ -437,7 +575,7 @@ fn collect_annotated_user_messages_extracts_user_text_only(
          ResponseItemEnvelope::new(ResponseItem::Other),
      ];
 
@@ -803,7 +803,7 @@ index 32e8026225a5d8acb01fc8016117a1fb57e789d8..3ca0b3efe28652fbf279305cdfb6c148
          .map(|(_, message)| message)
          .collect();
 
-@@ -462,11 +600,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
+@@ -461,11 +599,11 @@ fn collect_annotated_user_messages_extracts_user_text_only(
      };
      assert_eq!(
          collected,
@@ -817,7 +817,7 @@ index 32e8026225a5d8acb01fc8016117a1fb57e789d8..3ca0b3efe28652fbf279305cdfb6c148
      );
      assert_eq!(
          compact_items(&items, "summary"),
-@@ -591,6 +729,7 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages(
+@@ -590,6 +728,7 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages(
          "SUMMARY",
          max_tokens,
          &FileAudioDurations::default(),
@@ -1131,10 +1131,10 @@ index fc36c4ccfed4469659d1565425824c2536cdf9c5..b1a627911a44860eb31a81988dfc23ae
  async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
      let (session, turn_context) = make_session_and_context().await;
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 2f57570aa12c949e01d0cc45917ac68c1cdbdb5b..ce2f9dec25f91afc31f736dbc4ce0ce82775ee4a 100644
+index 87e5b92b6c4f9eb89d6447aa3a1ff6935504bc73..dac19c5bb0da70b969435f4237423f625cb50bd6 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
-@@ -13408,7 +13408,7 @@ async fn sample_rollout(
+@@ -13445,7 +13445,7 @@ async fn sample_rollout(
      rollout_items.push(RolloutItem::ResponseItem(assistant1.clone().into()));
 
      let summary1 = "summary one";
@@ -1143,7 +1143,7 @@ index 2f57570aa12c949e01d0cc45917ac68c1cdbdb5b..ce2f9dec25f91afc31f736dbc4ce0ce8
      live_history.replace_annotated(rebuilt1);
      let (window_number, window_ids) = session.advance_auto_compact_window().await;
      rollout_items.push(RolloutItem::Compacted(Box::new(CompactedItem {
-@@ -13441,7 +13441,7 @@ async fn sample_rollout(
+@@ -13478,7 +13478,7 @@ async fn sample_rollout(
      rollout_items.push(RolloutItem::ResponseItem(assistant2.clone().into()));
 
      let summary2 = "summary two";
@@ -1153,10 +1153,10 @@ index 2f57570aa12c949e01d0cc45917ac68c1cdbdb5b..ce2f9dec25f91afc31f736dbc4ce0ce8
      let (window_number, window_ids) = session.advance_auto_compact_window().await;
      rollout_items.push(RolloutItem::Compacted(Box::new(CompactedItem {
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index 8a2ec57b375d106a98920b3f25098652b79c7f47..cc6d976a9c23b6669ef0d94634b1436bcf5c6f43 100644
+index 769b2562b88fd39e10b5563579abd57f5e8265ea..38900e62c28a56a58ca5e8d9ca83355b1c21a0e0 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
-@@ -81,6 +81,11 @@ pub struct CodexHarnessMetadata {
+@@ -93,6 +93,11 @@ pub struct CodexHarnessMetadata {
      #[serde(default, skip_serializing_if = "Vec::is_empty")]
      pub image_replay_sources: Vec<ImageReplaySource>,
 

@@ -1,8 +1,8 @@
 diff --git a/codex-rs/core/src/agent/control.rs b/codex-rs/core/src/agent/control.rs
-index a6f9b307898c3a0f297e7e9eb8df505783983708..26cc0925447319001897c79fd16bae2210716566 100644
+index eba9b601f41b652744c12c44f78f31e1fbe82e11..442d8afd1cde7e70c3b4fb4a58602f5a7014a879 100644
 --- a/codex-rs/core/src/agent/control.rs
 +++ b/codex-rs/core/src/agent/control.rs
-@@ -77,6 +77,7 @@ mod interrupt;
+@@ -78,6 +78,7 @@ mod interrupt;
  mod legacy;
  mod mailbox;
  mod residency;
