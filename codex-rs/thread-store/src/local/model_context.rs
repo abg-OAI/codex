@@ -53,6 +53,19 @@ pub(super) async fn load_latest_model_context(
                 message: format!("no rollout found for thread id {}", params.thread_id),
             })?;
 
+    if let Err(error) = codex_rollout::ensure_checkpoint_complete(&path) {
+        if error.kind() != io::ErrorKind::WouldBlock {
+            return Err(checkpoint_error(error));
+        }
+        let _guard = store.live_writer_locks.lock(params.thread_id).await;
+        if let Err(error) = codex_rollout::ensure_checkpoint_complete(&path) {
+            if error.kind() != io::ErrorKind::WouldBlock {
+                return Err(checkpoint_error(error));
+            }
+            let writer = store.acquire_writer_lock(params.thread_id)?;
+            super::helpers::recover_checkpoint(&path, &writer).await?;
+        }
+    }
     load_from_rollout_path(store, params.thread_id, &path).await
 }
 
@@ -61,6 +74,7 @@ pub(super) async fn load_from_rollout_path(
     thread_id: codex_protocol::ThreadId,
     path: &Path,
 ) -> ThreadStoreResult<StoredModelContext> {
+    codex_rollout::ensure_checkpoint_complete(path).map_err(checkpoint_error)?;
     let before = super::history_revision::read(path).await;
     let session_meta = codex_rollout::read_session_meta_line(path)
         .await
@@ -96,11 +110,27 @@ pub(super) async fn load_from_rollout_path(
     };
 
     let after = super::history_revision::read(path).await;
+    codex_rollout::ensure_checkpoint_complete(path).map_err(checkpoint_error)?;
+    if before != after
+        && items
+            .iter()
+            .any(|item| matches!(item, RolloutItem::Compacted(_)))
+    {
+        return Err(ThreadStoreError::Conflict {
+            message: format!("rollout changed while reading a checkpoint for thread {thread_id}"),
+        });
+    }
     Ok(StoredModelContext {
         revision: before.filter(|revision| Some(revision) == after.as_ref()),
         thread_id,
         items,
     })
+}
+
+fn checkpoint_error(error: io::Error) -> ThreadStoreError {
+    ThreadStoreError::Internal {
+        message: error.to_string(),
+    }
 }
 
 /// Loads startup context from a fork's frozen inherited prefix.

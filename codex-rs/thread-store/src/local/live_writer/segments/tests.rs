@@ -447,6 +447,21 @@ async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dy
     ));
     let (items, _, _) = RolloutRecorder::load_rollout_items(&path).await?;
     assert!(items.iter().any(|item| matches!(item, RolloutItem::EventMsg(EventMsg::TurnStarted(event)) if event.turn_id == "before")));
+    let fork = store
+        .prepare_fork(crate::PrepareForkParams {
+            thread_id: id,
+            boundary: crate::ForkBoundary::Latest,
+        })
+        .await?;
+    let child = ThreadId::new();
+    let mut params = create_params(&store, child);
+    params.forked_from_id = Some(id);
+    params.history_base = fork.history_base;
+    store.create_thread(params).await?;
+    store
+        .persist_thread(child, crate::PersistContext::Standard)
+        .await?;
+    drop(fork);
     store
         .append_items(AppendThreadItemsParams {
             thread_id: id,
@@ -491,6 +506,34 @@ async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dy
         })
         .await?;
     assert_native_turn_pages(&store, id).await?;
+    let child_path = store.live_rollout_path(child).await?;
+    codex_rollout::state_db::reconcile_rollout(
+        Some(&state),
+        &child_path,
+        "test-provider",
+        None,
+        &[],
+        Some(false),
+        None,
+    )
+    .await;
+    let child_page = store
+        .list_turns(crate::ListTurnsParams {
+            thread_id: child,
+            include_archived: false,
+            cursor: None,
+            page_size: 4,
+            sort_direction: crate::SortDirection::Asc,
+            items_view: crate::StoredTurnItemsView::Summary,
+        })
+        .await?;
+    let [frozen] = child_page.turns.as_slice() else {
+        panic!("fork should see only the turn present at its cutoff");
+    };
+    assert_eq!(frozen.turn_id, "before");
+    assert_eq!(frozen.items.len(), 1);
+    assert_eq!(frozen.items[0].item_id, "user-before");
+    store.shutdown_thread(child).await?;
     store.shutdown_thread(id).await?;
     Ok(())
 }

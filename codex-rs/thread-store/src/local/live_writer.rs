@@ -137,7 +137,8 @@ pub(super) async fn resume_thread(
             message: format!("thread {} is archived", params.thread_id),
         });
     }
-    let history = match params.history {
+    let recovered = super::helpers::recover_checkpoint(&rollout_path, &writer_lock).await?;
+    let history = match params.history.filter(|_| !recovered) {
         Some(history)
             if !matches!(
                 history.first(),
@@ -604,21 +605,23 @@ async fn write_and_project(
             let next = codex_rollout::stamp_item_ordinals(*cursor, &mut items);
             if history_mode == ThreadHistoryMode::Paginated
                 && segments::is_rotation_checkpoint(&items)
-                && segments::matches_tail(recorder.rollout_path(), &items).await?
             {
-                return Ok(());
-            }
-            recorder
-                .record_canonical_items(&items)
-                .await
-                .map_err(thread_store_io_error)?;
-            // Once queued, the recorder owns the batch even if flush is cancelled or retried.
-            *cursor = next;
-            recorder.flush().await.map_err(thread_store_io_error)?;
-            if history_mode == ThreadHistoryMode::Paginated
-                && segments::is_rotation_checkpoint(&items)
-            {
+                if segments::matches_tail(recorder.rollout_path(), &items).await? {
+                    return Ok(());
+                }
+                recorder
+                    .record_checkpoint(items.clone())
+                    .await
+                    .map_err(thread_store_io_error)?;
+                *cursor = next;
                 checkpoint = Some(items);
+            } else {
+                recorder
+                    .record_canonical_items(&items)
+                    .await
+                    .map_err(thread_store_io_error)?;
+                *cursor = next;
+                recorder.flush().await.map_err(thread_store_io_error)?;
             }
         }
         RolloutWriteOp::Persist => recorder.persist().await.map_err(thread_store_io_error)?,

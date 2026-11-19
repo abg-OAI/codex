@@ -467,13 +467,20 @@ impl LocalThreadStore {
     async fn acquire_writer_locks(
         &self,
         thread_ids: &[ThreadId],
-    ) -> ThreadStoreResult<Vec<WriterLockGuard>> {
-        let mut writer_locks = Vec::with_capacity(thread_ids.len());
+    ) -> ThreadStoreResult<HashMap<ThreadId, WriterLockGuard>> {
+        let mut writer_locks = HashMap::with_capacity(thread_ids.len());
         for &thread_id in thread_ids {
-            if self.live_recorders.lock().await.contains_key(&thread_id) {
-                continue;
-            }
-            writer_locks.push(self.acquire_writer_lock(thread_id)?);
+            let active = self
+                .live_recorders
+                .lock()
+                .await
+                .get(&thread_id)
+                .map(|entry| entry.writer_lock.clone());
+            let guard = match active {
+                Some(guard) => guard,
+                None => self.acquire_writer_lock(thread_id)?,
+            };
+            writer_locks.insert(thread_id, guard);
         }
         Ok(writer_locks)
     }
