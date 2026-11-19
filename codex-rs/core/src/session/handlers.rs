@@ -88,11 +88,37 @@ pub async fn inter_agent_communication(
     sub_id: String,
     communication: crate::PendingAgentMessage,
     start_options: codex_protocol::turn_input::TurnStartOptions,
+    accepted: Option<tokio::sync::oneshot::Sender<()>>,
 ) {
     let trigger_turn = communication.trigger_turn;
-    sess.input_queue
-        .enqueue_mailbox_communication(communication, start_options)
-        .await;
+    let ancestor_turn_retention_guard = if trigger_turn {
+        let config = sess.get_config().await;
+        let session_source = sess.session_source().await;
+        let multi_agent_version = sess
+            .multi_agent_version()
+            .unwrap_or_else(|| config.multi_agent_version_from_features());
+        crate::saffron::subagent_completion::retain_ancestors(
+            sess,
+            multi_agent_version,
+            &session_source,
+            sess.thread_id(),
+        )
+    } else {
+        None
+    };
+    if let Some(ancestor_turn_retention_guard) = ancestor_turn_retention_guard {
+        sess.input_queue
+            .enqueue_mailbox_communication_with_ancestor_retention(
+                communication,
+                start_options,
+                ancestor_turn_retention_guard,
+            )
+            .await;
+    } else {
+        sess.input_queue
+            .enqueue_mailbox_communication(communication, start_options)
+            .await;
+    }
     crate::agent_communication::emit_agent_communication_receive(&sub_id);
     if trigger_turn {
         crate::saffron::goal_supervisor::claim_root_continuation(
@@ -107,6 +133,9 @@ pub async fn inter_agent_communication(
     {
         sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
             .await;
+    }
+    if let Some(accepted) = accepted {
+        let _ = accepted.send(());
     }
 }
 
@@ -339,7 +368,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
     }
     let (conversation_shutdown, ()) = tokio::join!(
         sess.conversation.shutdown(),
-        sess.abort_all_tasks(TurnAbortReason::Interrupted),
+        sess.abort_all_tasks_for_shutdown(),
     );
     if let Err(err) = conversation_shutdown {
         warn!("failed to shut down realtime conversation: {err}");
@@ -564,11 +593,11 @@ pub(super) async fn submission_loop(
                         async {
                             while let Ok(sub) = rx_sub.recv().await {
                                 if let SubmissionOp::Protocol(op) = sub.op
-                                    && let Op::InterAgentCommunication { communication, start_options } = *op
+                                    && let Op::InterAgentCommunication { communication, start_options, accepted } = *op
                                     && sub.message_delivery.as_ref().is_some_and(crate::agent_communication::MessageDelivery::awaits_result_write)
                                 {
                                     let mail = crate::PendingAgentMessage::new(communication, sub.message_delivery);
-                                    inter_agent_communication(&sess, sub.id, mail, start_options).await;
+                                    inter_agent_communication(&sess, sub.id, mail, start_options, accepted).await;
                                 }
                             }
                         },
@@ -836,11 +865,18 @@ pub(super) async fn submission_loop(
                 Op::InterAgentCommunication {
                     communication,
                     start_options,
+                    accepted,
                 } => {
                     let communication =
                         crate::PendingAgentMessage::new(communication, sub.message_delivery);
-                    inter_agent_communication(&sess, sub.id.clone(), communication, start_options)
-                        .await;
+                    inter_agent_communication(
+                        &sess,
+                        sub.id.clone(),
+                        communication,
+                        start_options,
+                        accepted,
+                    )
+                    .await;
                     false
                 }
                 Op::ExecApproval {
@@ -914,6 +950,19 @@ pub(super) async fn submission_loop(
                     false
                 }
                 Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
+                Op::ShutdownIfIdle { reply } => {
+                    let should_shutdown = sess.is_idle_for_shutdown().await;
+                    // A successful reply hands teardown ownership to the unload caller.
+                    // If that caller stopped waiting, leave the session loaded.
+                    if !should_shutdown {
+                        let _ = reply.send(false);
+                        false
+                    } else if reply.send(true).is_ok() {
+                        shutdown(&sess, sub.id.clone()).await
+                    } else {
+                        false
+                    }
+                }
                 Op::Review { review_request } => {
                     review(&sess, &config, sub.id.clone(), review_request).await;
                     false
