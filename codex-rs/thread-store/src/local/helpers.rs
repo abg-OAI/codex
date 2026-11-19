@@ -30,6 +30,21 @@ use crate::StoredThread;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
 
+/// Complete a journaled append before moving, retiring, or deleting its physical rollout.
+pub(super) async fn recover_checkpoint(
+    path: &Path,
+    writer: &super::WriterLockGuard,
+) -> ThreadStoreResult<bool> {
+    codex_rollout::RolloutRecorder::recover_checkpoint(path, writer.clone())
+        .await
+        .map_err(|error| ThreadStoreError::Internal {
+            message: format!(
+                "failed to recover compaction checkpoint at {}: {error}",
+                path.display()
+            ),
+        })
+}
+
 pub(super) fn scoped_rollout_path(
     root: PathBuf,
     rollout_path: &Path,

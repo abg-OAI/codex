@@ -38,11 +38,11 @@ pub(super) async fn unarchive_threads(
     // Hold ownership while discovering and moving rollouts, as archive does. A busy
     // descendant remains a best-effort failure rather than blocking the parent's restore.
     let mut thread_ids = Vec::new();
-    let mut _writer_guards = Vec::new();
+    let mut writer_guards = std::collections::HashMap::new();
     for (index, thread_id) in requested_ids.into_iter().enumerate() {
         match store.acquire_writer_lock(thread_id) {
             Ok(guard) => {
-                _writer_guards.push(guard);
+                writer_guards.insert(thread_id, guard);
                 thread_ids.push(thread_id);
             }
             Err(err) if index == 0 => return Err(err),
@@ -58,11 +58,16 @@ pub(super) async fn unarchive_threads(
     .map_err(|err| ThreadStoreError::Internal {
         message: format!("failed to scan thread rollout files: {err}"),
     })?;
-    unarchive_thread_with_index(store, parent_thread_id, &reference_index)
-        .await?
-        .ok_or_else(|| ThreadStoreError::InvalidRequest {
-            message: format!("no archived rollout found for thread id {parent_thread_id}"),
-        })?;
+    unarchive_thread_with_index(
+        store,
+        parent_thread_id,
+        &reference_index,
+        &writer_guards[&parent_thread_id],
+    )
+    .await?
+    .ok_or_else(|| ThreadStoreError::InvalidRequest {
+        message: format!("no archived rollout found for thread id {parent_thread_id}"),
+    })?;
     let root = super::read_thread::read_thread(
         store,
         ReadThreadParams {
@@ -74,7 +79,14 @@ pub(super) async fn unarchive_threads(
     .await?;
     let mut restored = vec![parent_thread_id];
     for thread_id in thread_ids.into_iter().skip(1) {
-        match unarchive_thread_with_index(store, thread_id, &reference_index).await {
+        match unarchive_thread_with_index(
+            store,
+            thread_id,
+            &reference_index,
+            &writer_guards[&thread_id],
+        )
+        .await
+        {
             Ok(Some(thread_id)) => restored.push(thread_id),
             Ok(None) => {}
             Err(err) => warn!("failed to unarchive spawned descendant thread {thread_id}: {err}"),
@@ -87,6 +99,7 @@ async fn unarchive_thread_with_index(
     store: &LocalThreadStore,
     thread_id: ThreadId,
     reference_index: &RolloutReferenceIndex,
+    writer: &super::WriterLockGuard,
 ) -> ThreadStoreResult<Option<ThreadId>> {
     let state_db_ctx = store.state_db().await;
     let Some(selected_archived_path) =
@@ -116,6 +129,7 @@ async fn unarchive_thread_with_index(
             rollout_path.as_path(),
             "archived",
         )?;
+        super::helpers::recover_checkpoint(&canonical_archived_path, writer).await?;
         let file_name =
             validated_rollout_file_name(canonical_archived_path.as_path(), rollout_path.as_path())?;
         let Some((year, month, day)) = rollout_date_parts(&file_name) else {
