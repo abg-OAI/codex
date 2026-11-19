@@ -1,0 +1,24 @@
+[vcs]
+commit-msg = """
+Consolidate deep rollout history at compaction
+
+Active compaction rotates a paginated thread into a new file.
+Each rotation leaves another link for native history readers to follow.
+When a chain reaches 900 segments, copy complete, visible ranges from
+the same thread into a native rollout and index it before publishing
+the next checkpoint. Limit repeated copying of larger archived ranges.
+If consolidation fails, rotation can still use the original prefix.
+
+Keep the original records and files so older forks retain their byte
+cutoffs. Realtime cursors include the physical head that issued them.
+When that head has been folded into an archive, verify its inherited
+header and saved prefix before continuing the original snapshot.
+"""
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"

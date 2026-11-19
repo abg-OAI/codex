@@ -1,0 +1,287 @@
+diff --git a/codex-rs/rollout/src/lib.rs b/codex-rs/rollout/src/lib.rs
+index 17fa0a4b4e40faad8347ae65d22f48ed37ad88f9..db4820c343ed0a44df1b80dfd09f050aa40b272b 100644
+--- a/codex-rs/rollout/src/lib.rs
++++ b/codex-rs/rollout/src/lib.rs
+@@ -147,6 +147,7 @@ pub use maintenance::try_acquire_rollout_maintenance_lock;
+ pub use metadata::builder_from_items;
+ pub use metadata::forked_from_ordinal_exclusive;
+ pub use metadata::rollout_id_from_path;
++pub use metadata::sibling_rollout_path;
+ pub use metadata::thread_id_from_rollout_path;
+ pub use model_context::ModelContextScan;
+ pub use model_context::ModelContextScanProgress;
+diff --git a/codex-rs/rollout/src/metadata.rs b/codex-rs/rollout/src/metadata.rs
+index 5c27e7cbf24fe6e00fd924becc1f3cadd0e8441c..cf248c9b9d38b6da3a19f375b0aba90a0be126d7 100644
+--- a/codex-rs/rollout/src/metadata.rs
++++ b/codex-rs/rollout/src/metadata.rs
+@@ -123,6 +123,15 @@ pub fn rollout_id_from_path(rollout_path: &Path) -> Option<RolloutId> {
+     Some(RolloutFileName::parse(file_name)?.rollout_id())
+ }
+
++/// Names another physical rollout of the same logical thread beside the selected file.
++pub fn sibling_rollout_path(path: &Path, id: RolloutId) -> Option<PathBuf> {
++    let source = RolloutFileName::parse(path.file_name()?.to_str()?)?;
++    let name = RolloutFileName::new(source.timestamp(), source.thread_id(), id)
++        .render()
++        .ok()?;
++    Some(path.with_file_name(name))
++}
++
+ /// Reads the logical fork cutoff without mistaking a revert's history base for its parent.
+ ///
+ /// Older rollouts lack the explicit cutoff. Their history base is safe to use only when it
+diff --git a/codex-rs/thread-store/src/local/live_writer/segments.rs b/codex-rs/thread-store/src/local/live_writer/segments.rs
+index dd9de5b458e7447e2918ccb3ec2b64a86f2b9473..3248b190994fd0a4383cca2076069c39b282cccb 100644
+--- a/codex-rs/thread-store/src/local/live_writer/segments.rs
++++ b/codex-rs/thread-store/src/local/live_writer/segments.rs
+@@ -16,6 +16,9 @@ use super::*;
+ use codex_protocol::protocol::EventMsg;
+ use codex_protocol::protocol::HistoryPosition;
+
++// Leave room below the stock reader's SQL limit for subsequent forks and continuations.
++const MAX_CHECKPOINT_SEGMENTS: usize = 900;
++
+ /// Recognizes batches eligible for physical rotation, including persisted settings.
+ /// Native model-context reads stop at replacement history with a window number;
+ /// they do not require these additional write-batch companions.
+@@ -90,30 +93,67 @@ pub(super) async fn rotate(
+         .map_err(thread_store_io_error)?
+         .meta;
+     let fork_cutoff = codex_rollout::forked_from_ordinal_exclusive(&meta, Some(source_path));
+-    let writer_lock = store
+-        .live_recorders
+-        .lock()
++    let (writer_lock, remaining) = {
++        let entries = store.live_recorders.lock().await;
++        let entry = entries
++            .get(&thread_id)
++            .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?;
++        (entry.writer_lock.clone(), entry.rotations_until_archive)
++    };
++    let source_end = HistoryPosition {
++        thread_id: rollout_id,
++        end_ordinal_exclusive: projection.next_ordinal,
++        end_byte_offset: projection.next_byte_offset,
++    };
++    let remaining = if meta.history_base.is_none() {
++        Some(MAX_CHECKPOINT_SEGMENTS - 1)
++    } else {
++        remaining
++    };
++    let (rotations_until_archive, archive) =
++        match super::super::rollout_archive::RolloutArchive::prepare(
++            store,
++            thread_id,
++            source_path,
++            source_end,
++            remaining,
++            MAX_CHECKPOINT_SEGMENTS,
++        )
+         .await
+-        .get(&thread_id)
+-        .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?
+-        .writer_lock
+-        .clone();
++        {
++            Ok((remaining, archive)) => (Some(remaining), archive),
++            Err(error) => {
++                warn!(
++                    "continuing rotation without a consolidated archive for {thread_id}: {error}"
++                );
++                (None, None)
++            }
++        };
+     let session_timestamp = meta.timestamp.clone();
+     let next_id = ThreadId::new();
+     let next = super::super::rollout_continuation::create(
+         store,
+         meta,
+         next_id,
+-        Some(HistoryPosition {
+-            thread_id: rollout_id,
+-            end_ordinal_exclusive: projection.next_ordinal,
+-            end_byte_offset: projection.next_byte_offset,
+-        }),
++        Some(
++            archive
++                .as_ref()
++                .map_or(source_end, |archive| archive.position),
++        ),
+         fork_cutoff,
+         writer_lock,
+         Some(session_timestamp),
+     )
+-    .await?;
++    .await;
++    let next = match next {
++        Ok(next) => next,
++        Err(error) => {
++            if let Some(archive) = archive {
++                archive.discard(store).await?;
++            }
++            return Err(error);
++        }
++    };
+     let publication = async {
+         next.stage_continuation(items.to_vec())
+             .await
+@@ -141,6 +181,8 @@ pub(super) async fn rotate(
+             .get_mut(&thread_id)
+             .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?;
+         entry.pending_continuation = Some(super::super::PendingContinuation {
++            archive,
++            rotations_until_archive,
+             recorder: next.clone(),
+             rollout_id: next_id,
+         });
+@@ -211,6 +253,9 @@ pub(super) async fn reconcile_publication(
+             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+             Err(error) => return Err(thread_store_io_error(error)),
+         }
++        if let Some(archive) = &pending.archive {
++            archive.discard(store).await?;
++        }
+         if let Some(entry) = store.live_recorders.lock().await.get_mut(&thread_id) {
+             entry.pending_continuation = None;
+         }
+@@ -235,6 +280,7 @@ async fn install_continuation(
+             return Ok(());
+         };
+         entry.rollout_id = pending.rollout_id;
++        entry.rotations_until_archive = pending.rotations_until_archive;
+         entry
+             .rollout_path
+             .send_replace(pending.recorder.rollout_path().to_path_buf());
+diff --git a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
+index ed84a6044f2a130b283157f3a47dc024a56fc344..03ee6174731554000837d483eabc42d70ebdd2ef 100644
+--- a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
++++ b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
+@@ -1,5 +1,7 @@
+ //! Exercise rollover through native readers, physical identities and append cursors.
+
++mod archive;
++
+ use super::*;
+ use crate::CreateThreadParams;
+ use crate::LoadThreadHistoryParams;
+diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
+index 8f063668ce3e898634b766e6ea346956f116b6a4..a7969d4ea14b5381f09124382814dbaf4cbea96c 100644
+--- a/codex-rs/thread-store/src/local/mod.rs
++++ b/codex-rs/thread-store/src/local/mod.rs
+@@ -14,6 +14,7 @@ mod pending_thread_metadata;
+ mod projects;
+ mod read_thread;
+ mod revert_thread;
++mod rollout_archive;
+ mod rollout_continuation;
+ mod rollout_migration;
+ // This lands before the reader PRs that consume the shared lineage resolver.
+@@ -181,6 +182,9 @@ struct LiveRecorderEntry {
+     recorder: RolloutRecorder,
+     // Keep both writers owned until SQLite resolves an uncertain path publication.
+     pending_continuation: Option<PendingContinuation>,
++    // On the first rotation after resume, discover the depth from durable history.
++    // Advance the countdown only when the selected continuation is installed.
++    rotations_until_archive: Option<usize>,
+     // Synchronous legacy consumers follow the installed physical writer across rotations.
+     rollout_path: tokio::sync::watch::Sender<PathBuf>,
+     // Rollout projection rows are keyed by immutable rollout ID, not the stable thread ID used
+@@ -202,6 +206,8 @@ struct RealtimeSeals {
+
+ #[derive(Clone)]
+ struct PendingContinuation {
++    archive: Option<rollout_archive::RolloutArchive>,
++    rotations_until_archive: Option<usize>,
+     recorder: RolloutRecorder,
+     rollout_id: ThreadId,
+ }
+@@ -502,6 +508,7 @@ impl LocalThreadStore {
+             Entry::Vacant(entry) => {
+                 entry.insert(LiveRecorderEntry {
+                     pending_continuation: None,
++                    rotations_until_archive: None,
+                     rollout_path: tokio::sync::watch::channel(
+                         recorder.rollout_path().to_path_buf(),
+                     )
+diff --git a/codex-rs/thread-store/src/local/thread_history/realtime_stream.rs b/codex-rs/thread-store/src/local/thread_history/realtime_stream.rs
+index 4382615c9a27e72ec864d9513df3fc3faec8d3a2..340784efbf7cafc0acec5c360b25fc2dacf5bef9 100644
+--- a/codex-rs/thread-store/src/local/thread_history/realtime_stream.rs
++++ b/codex-rs/thread-store/src/local/thread_history/realtime_stream.rs
+@@ -55,7 +55,13 @@ pub(in crate::local) async fn list_realtime(
+         }
+         Err(error) => return Err(error),
+     };
+-    read_page(store.thread_history_db().await?, params, &snapshot).await
++    read_page(
++        store.thread_history_db().await?,
++        &store.config.codex_home,
++        params,
++        &snapshot,
++    )
++    .await
+ }
+
+ struct RealtimeSnapshot {
+@@ -242,6 +248,7 @@ pub(in crate::local) async fn has_canonical_realtime_session(
+
+ async fn read_page(
+     pool: &sqlx::SqlitePool,
++    codex_home: &std::path::Path,
+     params: ListRealtimeParams,
+     snapshot: &RealtimeSnapshot,
+ ) -> ThreadStoreResult<RealtimePage> {
+@@ -259,10 +266,6 @@ async fn read_page(
+         .map_err(|_| invalid("invalid realtime cursor"))?;
+     if let Some(cursor) = &cursor
+         && (cursor.version != 1
+-            || !snapshot.ranges.iter().any(|span| {
+-                span.rollout == cursor.rollout_id
+-                    && span.end.is_none_or(|end| end >= cursor.snapshot_end)
+-            })
+             || cursor.query != query
+             || params
+                 .snapshot_end
+@@ -274,6 +277,28 @@ async fn read_page(
+     {
+         return Err(invalid("realtime cursor does not match this query"));
+     }
++    if let Some(cursor) = &cursor
++        && !snapshot.ranges.iter().any(|span| {
++            span.rollout == cursor.rollout_id
++                && span.end.is_none_or(|end| end >= cursor.snapshot_end)
++        })
++    {
++        let sealed_ranges = snapshot
++            .ranges
++            .iter()
++            .filter_map(|span| Some((span.rollout, span.start, span.end?)));
++        if !super::super::rollout_archive::contains_snapshot(
++            codex_home,
++            params.thread_id,
++            cursor.rollout_id,
++            cursor.snapshot_end,
++            sealed_ranges,
++        )
++        .await?
++        {
++            return Err(invalid("realtime cursor does not match this query"));
++        }
++    }
+     let snapshot_end = cursor
+         .as_ref()
+         .map(|cursor| cursor.snapshot_end)
+diff --git a/codex-rs/thread-store/src/local/thread_history/realtime_stream_tests.rs b/codex-rs/thread-store/src/local/thread_history/realtime_stream_tests.rs
+index 2533e66d6c686e831c804c94eea5ea0543e4c858..d42c768cfaa478100fea2dd6fa20d64b9c1a630c 100644
+--- a/codex-rs/thread-store/src/local/thread_history/realtime_stream_tests.rs
++++ b/codex-rs/thread-store/src/local/thread_history/realtime_stream_tests.rs
+@@ -14,8 +14,10 @@ async fn single_segment_page(
+     start: u64,
+     projected_end: u64,
+ ) -> ThreadStoreResult<RealtimePage> {
++    let home = TempDir::new().unwrap();
+     read_page(
+         pool,
++        home.path(),
+         params,
+         &RealtimeSnapshot {
+             head,
