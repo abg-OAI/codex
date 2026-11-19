@@ -55,7 +55,13 @@ pub(in crate::local) async fn list_realtime(
         }
         Err(error) => return Err(error),
     };
-    read_page(store.thread_history_db().await?, params, &snapshot).await
+    read_page(
+        store.thread_history_db().await?,
+        &store.config.codex_home,
+        params,
+        &snapshot,
+    )
+    .await
 }
 
 struct RealtimeSnapshot {
@@ -242,6 +248,7 @@ pub(in crate::local) async fn has_canonical_realtime_session(
 
 async fn read_page(
     pool: &sqlx::SqlitePool,
+    codex_home: &std::path::Path,
     params: ListRealtimeParams,
     snapshot: &RealtimeSnapshot,
 ) -> ThreadStoreResult<RealtimePage> {
@@ -259,10 +266,6 @@ async fn read_page(
         .map_err(|_| invalid("invalid realtime cursor"))?;
     if let Some(cursor) = &cursor
         && (cursor.version != 1
-            || !snapshot.ranges.iter().any(|span| {
-                span.rollout == cursor.rollout_id
-                    && span.end.is_none_or(|end| end >= cursor.snapshot_end)
-            })
             || cursor.query != query
             || params
                 .snapshot_end
@@ -273,6 +276,28 @@ async fn read_page(
             || cursor.position >= cursor.snapshot_end)
     {
         return Err(invalid("realtime cursor does not match this query"));
+    }
+    if let Some(cursor) = &cursor
+        && !snapshot.ranges.iter().any(|span| {
+            span.rollout == cursor.rollout_id
+                && span.end.is_none_or(|end| end >= cursor.snapshot_end)
+        })
+    {
+        let sealed_ranges = snapshot
+            .ranges
+            .iter()
+            .filter_map(|span| Some((span.rollout, span.start, span.end?)));
+        if !super::super::rollout_archive::contains_snapshot(
+            codex_home,
+            params.thread_id,
+            cursor.rollout_id,
+            cursor.snapshot_end,
+            sealed_ranges,
+        )
+        .await?
+        {
+            return Err(invalid("realtime cursor does not match this query"));
+        }
     }
     let snapshot_end = cursor
         .as_ref()
