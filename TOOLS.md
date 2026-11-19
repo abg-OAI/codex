@@ -62,6 +62,7 @@ Starts a persistent independent root from the calling root's completed history.
 The current unfinished turn is excluded; `prompt` supplies the new assignment.
 The assignment arrives as attributed `saffron.fork_thread` output, not as a
 human user message. Sender identity comes from the calling thread.
+A persistent local fork requires a paginated source thread.
 The fork inherits model settings, working directory, and permissions,
 but does not inherit or automatically create a goal.
 `reasoning_effort` can override the inherited effort without changing the model.
@@ -108,6 +109,32 @@ move, and requests are not retried automatically.
 Explicit placement never falls back to the caller's section.
 Placement failure never cancels the fork or its assignment.
 
+`saffron.promote_subagent`
+-------------------------
+
+The owning root can promote a completed subagent into an idle, independent
+thread with a new ID, the subagent's full history and its effective settings.
+The subagent and its open descendants must be loaded and completed, with
+no pending work or running terminal processes. A local source subagent
+requires paginated history. For a saved legacy subagent, preview migration
+with `codex migrate-rollouts --thread <source_thread_id>` and add `--apply`
+to migrate it.
+
+```cpp
+{
+  // Source subagent's thread ID or task name in the calling root's tree.
+  "target": string,
+}
+```
+
+Promotion creates the standalone thread before retiring the original subtree,
+starting with its descendants. The new thread starts without a goal or running tasks.
+The result includes `source_thread_id`, the destination `thread_id`, `status`
+and `error`. A status of `promoted` confirms retirement. If creation or
+retirement is unconfirmed, inspect the destination and error. Retry using
+`source_thread_id` as the target to reconcile the same destination, even
+after the task name has been retired. Some descendants may already be closed.
+
 `saffron.edit_active_goal`
 --------------------------
 
@@ -136,8 +163,9 @@ The goal retains its identity, objective, budget, and accumulated usage.
 `saffron.set_completion_delivery`
 ---------------------------------
 
-Lets a spawned subagent choose whether its successful terminal result starts
-a new turn for an idle parent or waits for the parent's next natural turn.
+Lets a spawned v2 subagent with a task path choose whether its successful
+terminal result starts a new turn for an idle parent or waits for the
+parent's next natural turn.
 The default is `wake_parent`; failures and abnormal termination always wake
 the parent.
 
@@ -195,7 +223,7 @@ the available evidence establishes that no required work remains.
 
 ```cpp
 {
-  // Completion summary delivered to the parent.
+  // Optional completion summary delivered to the parent.
   "message": string?,
 }
 ```
