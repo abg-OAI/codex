@@ -141,13 +141,13 @@ index 84f7c9d14af1544418762870890d464496dc7bec..4a320f5f7327ed04287bf7e6554e4f3e
          Ok(()) => Ok(true),
          Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
 diff --git a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
-index 77ea445a4dbe91295bb95ac87077a50c4b5a9bfa..116b485756fe1715533f226bfad7f8ca583f0bff 100644
+index 3338a9f4382b36f179455e78e75af2fc09c0b2c4..ed84a6044f2a130b283157f3a47dc024a56fc344 100644
 --- a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
 +++ b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
-@@ -238,6 +238,119 @@ fn compatibility_turn(thread_id: ThreadId, label: &str) -> serde_json::Result<Ve
+@@ -381,6 +381,135 @@ fn compatibility_turn(thread_id: ThreadId, label: &str) -> serde_json::Result<Ve
      ]))
  }
-
+ 
 +/// Offline splitting preserves native cursor ordinals while keeping the latest model read local.
 +#[tokio::test]
 +async fn cold_split_preserves_the_parent_and_serves_the_checkpoint_tail()
@@ -162,7 +162,14 @@ index 77ea445a4dbe91295bb95ac87077a50c4b5a9bfa..116b485756fe1715533f226bfad7f8ca
 +    let store = LocalThreadStore::new(config, Some(state.clone()));
 +    let id = ThreadId::new();
 +    create(&store, id).await?;
-+    let mut history = compatibility_turn(id, "first")?;
++    let call_start = codex_protocol::realtime::RealtimeItem {
++        id: "early-start".into(),
++        realtime_session_id: "early-call".into(),
++        observed_at_ms: Some(1),
++        content: codex_protocol::realtime::RealtimeItemContent::RealtimeSessionStarted,
++    };
++    let mut history = vec![RolloutItem::RealtimeItem(call_start.clone())];
++    history.extend(compatibility_turn(id, "first")?);
 +    let mut second = compatibility_turn(id, "second")?;
 +    history.push(second.remove(0));
 +    let mut snapshot = checkpoint(id)?;
@@ -227,6 +234,15 @@ index 77ea445a4dbe91295bb95ac87077a50c4b5a9bfa..116b485756fe1715533f226bfad7f8ca
 +        .unwrap();
 +    assert_eq!(frozen.end_byte_offset, original.len() as u64);
 +    assert_eq!(std::fs::read_to_string(&rollout_path)?.lines().count(), 1);
++    // The call started before the retained checkpoint and exists only in the predecessor.
++    assert_eq!(
++        store.load_realtime_session_head(id).await?.as_deref(),
++        Some("early-call")
++    );
++    assert_eq!(
++        store.load_realtime_session(id, "early-call".into()).await?,
++        Some(vec![call_start])
++    );
 +    let held = parent.with_extension("held");
 +    std::fs::rename(&parent, &held)?;
 +    assert_eq!(model_items(load().await?.items)?, before);

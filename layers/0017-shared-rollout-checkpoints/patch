@@ -16,21 +16,21 @@ index b936e76eb9950a9a44281e1a9833f16500221b58..5a208c006d1cb3daab9d9ddf65424aec
      }
 
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 3de76f916bff7f292bb0da4be1d845a161eefcdc..f93a64a235e47b102c5e1d191ac352323516fb1d 100644
+index 525541e10961c9d587601d92f51532feaf755b6b..a24758ebeeaa7c9379d60683336be8e3cf185485 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -281,6 +281,7 @@ pub(crate) mod multi_agents;
- mod persistence_repair;
+@@ -282,6 +282,7 @@ mod persistence_repair;
  mod plugin_selection;
+ mod realtime_handoff;
  mod realtime_history;
 +mod restart_checkpoint;
  mod retained_context;
  mod review;
  mod rollout_budget;
-@@ -1911,6 +1912,18 @@ impl Session {
+@@ -1917,6 +1918,18 @@ impl Session {
                  self.state.lock().await.latest_token_usage_record =
                      Self::last_token_usage_record_from_rollout(&rollout_items);
-
+ 
 +                let settings_guard = thread_settings::acquire_persistence_lock(self).await;
 +                // Copied paginated subagents already have a self-contained physical prefix.
 +                // Other children capture their reconstructed context without snapshotting the parent.
@@ -46,7 +46,7 @@ index 3de76f916bff7f292bb0da4be1d845a161eefcdc..f93a64a235e47b102c5e1d191ac35232
                  let thread_settings_applied =
                      RolloutItem::EventMsg(thread_settings::applied_event(self).await);
                  match &self.fork_persistence {
-@@ -1937,7 +1950,13 @@ impl Session {
+@@ -1943,7 +1956,13 @@ impl Session {
                          rollout_items.push(thread_settings_applied);
                      }
                  }
@@ -443,17 +443,17 @@ index cc2cb664f55398c373d7c330b5b199940d3d7d8c..3a8abfe86f5e79f1851286458fe7b55e
      let found_rollout_path = !thread_rollouts.paths.is_empty();
      for rollout_path in thread_rollouts.paths {
 diff --git a/codex-rs/thread-store/src/local/live_writer.rs b/codex-rs/thread-store/src/local/live_writer.rs
-index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e27ee08e3 100644
+index 0c968163cad22cb95f28c4b6c62d3a11a0ef7bca..1f832e61b6848a9735f61b4b7bdc91760f8d7021 100644
 --- a/codex-rs/thread-store/src/local/live_writer.rs
 +++ b/codex-rs/thread-store/src/local/live_writer.rs
 @@ -21,6 +21,8 @@ use crate::ThreadStoreError;
  use crate::ThreadStoreResult;
  use crate::types::canonical_history_mode_from_rollout_items;
-
+ 
 +mod segments;
 +
  const ROLLOUT_SIZE_BYTES_METRIC: &str = "codex.rollout.size_bytes";
-
+ 
  pub(super) async fn create_thread(
 @@ -31,8 +33,25 @@ pub(super) async fn create_thread(
      let inherited_cursor = if params.initial_window_id.allocation().is_some()
@@ -483,7 +483,7 @@ index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e
          codex_rollout::next_model_id_ordinals(&prefix).0
      } else {
          0
-@@ -191,26 +210,49 @@ pub(super) async fn append_items(
+@@ -191,12 +210,33 @@ pub(super) async fn append_items(
      store: &LocalThreadStore,
      params: AppendThreadItemsParams,
  ) -> ThreadStoreResult<()> {
@@ -521,8 +521,17 @@ index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e
 +        .await
 +    }
  }
-
- pub(super) async fn persist_thread(
+ 
+ pub(super) async fn seal_realtime_items(
+@@ -261,6 +301,7 @@ async fn seal_realtime_records(
+     items: Vec<RolloutItem>,
+ ) -> ThreadStoreResult<()> {
+     let mut cursor = store.live_writer_locks.lock(thread_id).await;
++    segments::reconcile_publication(store, thread_id).await?;
+     let (recorder, rollout_id, history_mode, seals) = {
+         let entries = store.live_recorders.lock().await;
+         let entry = entries
+@@ -309,14 +350,16 @@ pub(super) async fn persist_thread(
      store: &LocalThreadStore,
      thread_id: ThreadId,
  ) -> ThreadStoreResult<()> {
@@ -530,7 +539,7 @@ index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e
 +    let writer = store.live_writer_locks.lock(thread_id).await;
 +    write_and_project(store, thread_id, RolloutWriteOp::Persist, writer).await
  }
-
+ 
  pub(super) async fn flush_thread(
      store: &LocalThreadStore,
      thread_id: ThreadId,
@@ -539,9 +548,9 @@ index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e
 +    let writer = store.live_writer_locks.lock(thread_id).await;
 +    write_and_project(store, thread_id, RolloutWriteOp::Flush, writer).await
  }
-
+ 
  pub(super) async fn shutdown_thread(
-@@ -219,6 +261,7 @@ pub(super) async fn shutdown_thread(
+@@ -325,6 +368,7 @@ pub(super) async fn shutdown_thread(
  ) -> ThreadStoreResult<()> {
      let mut pending_metadata = store.pending_thread_metadata.lock(thread_id).await;
      let _live_writer_guard = store.live_writer_locks.lock(thread_id).await;
@@ -549,7 +558,7 @@ index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e
      let (recorder, rollout_id, history_mode) = live_writer_parts(store, thread_id).await?;
      let rollout_path = recorder.rollout_path().to_path_buf();
      if matches!(history_mode, ThreadHistoryMode::Legacy) {
-@@ -274,11 +317,18 @@ pub(super) async fn discard_thread(
+@@ -380,11 +424,18 @@ pub(super) async fn discard_thread(
          .await
          .remove(&thread_id)
          .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?;
@@ -571,9 +580,9 @@ index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e
 +    let current = entry.recorder.discard().await;
 +    pending.and(current).map_err(thread_store_io_error)
  }
-
+ 
  async fn index_attached_thread(
-@@ -428,14 +478,16 @@ async fn write_and_project(
+@@ -534,14 +585,16 @@ async fn write_and_project(
      store: &LocalThreadStore,
      thread_id: ThreadId,
      write_op: RolloutWriteOp,
@@ -591,7 +600,7 @@ index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e
      match write_op {
          RolloutWriteOp::AppendItems(items) => {
              let mut items = into_persisted_rollout_items(items, history_mode);
-@@ -443,6 +495,12 @@ async fn write_and_project(
+@@ -549,6 +602,12 @@ async fn write_and_project(
                  return Ok(());
              }
              let next = codex_rollout::stamp_item_ordinals(*cursor, &mut items);
@@ -604,7 +613,7 @@ index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e
              recorder
                  .record_canonical_items(&items)
                  .await
-@@ -450,6 +508,11 @@ async fn write_and_project(
+@@ -556,6 +615,11 @@ async fn write_and_project(
              // Once queued, the recorder owns the batch even if flush is cancelled or retried.
              *cursor = next;
              recorder.flush().await.map_err(thread_store_io_error)?;
@@ -616,7 +625,7 @@ index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e
          }
          RolloutWriteOp::Persist => recorder.persist().await.map_err(thread_store_io_error)?,
          RolloutWriteOp::Flush => recorder.flush().await.map_err(thread_store_io_error)?,
-@@ -478,6 +541,22 @@ async fn write_and_project(
+@@ -584,6 +648,22 @@ async fn write_and_project(
              warn!("failed to project durable rollout for {thread_id}: {err}");
          }
      }
@@ -640,11 +649,11 @@ index ed0d66a353c97dae4418d1c0414a0f411597a999..32d7e1c4e1973dd4233e67db3e23ca9e
          sync_materialized_rollout_path(store, thread_id, recorder.rollout_path()).await?;
      }
 diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
-index 877ef24e16c230bf7c593127e13301a4a910c1d9..6ba79663254d42150c751b7f3834b3d78733fedc 100644
+index 43fd02855f2a7ef715937e23753ce95ee8a2f2a9..f2a2b03bf39e5cc7b16033cdb68f2c81b9e77f15 100644
 --- a/codex-rs/thread-store/src/local/mod.rs
 +++ b/codex-rs/thread-store/src/local/mod.rs
-@@ -170,6 +170,10 @@ type WriterLockGuard = Arc<codex_rollout::WriterLockGuard>;
-
+@@ -177,6 +177,10 @@ type WriterLockGuard = Arc<codex_rollout::WriterLockGuard>;
+ 
  struct LiveRecorderEntry {
      recorder: RolloutRecorder,
 +    // Keep both writers owned until SQLite resolves an uncertain path publication.
@@ -654,10 +663,10 @@ index 877ef24e16c230bf7c593127e13301a4a910c1d9..6ba79663254d42150c751b7f3834b3d7
      // Rollout projection rows are keyed by immutable rollout ID, not the stable thread ID used
      // to find this live writer.
      rollout_id: ThreadId,
-@@ -180,6 +184,12 @@ struct LiveRecorderEntry {
-     writer_lock: WriterLockGuard,
+@@ -194,6 +198,12 @@ struct RealtimeSeals {
+     committed: HashSet<String>,
  }
-
+ 
 +#[derive(Clone)]
 +struct PendingContinuation {
 +    recorder: RolloutRecorder,
@@ -667,10 +676,10 @@ index 877ef24e16c230bf7c593127e13301a4a910c1d9..6ba79663254d42150c751b7f3834b3d7
  #[derive(Default)]
  struct LiveWriterLocks {
      // Keep per-thread locks after a writer goes idle. Removing one while another caller is about
-@@ -371,6 +381,19 @@ impl LocalThreadStore {
+@@ -392,6 +402,19 @@ impl LocalThreadStore {
          live_writer::rollout_path(self, thread_id).await
      }
-
+ 
 +    /// Subscribes to the physical path installed by the local writer owner.
 +    pub(crate) async fn live_rollout_path_subscription(
 +        &self,
@@ -687,7 +696,7 @@ index 877ef24e16c230bf7c593127e13301a4a910c1d9..6ba79663254d42150c751b7f3834b3d7
      /// Select only materialized rollout inputs without creating a file for untouched threads.
      pub(crate) async fn feedback_rollout_path(
          &self,
-@@ -448,6 +471,11 @@ impl LocalThreadStore {
+@@ -469,6 +492,11 @@ impl LocalThreadStore {
              }),
              Entry::Vacant(entry) => {
                  entry.insert(LiveRecorderEntry {
@@ -1025,3 +1034,562 @@ index 55140b466a9a0cedc2462a8a76209606b7dd2d93..c917b5b659755592dd1d73286975ee65
      let path = tokio::fs::canonicalize(rollout_path).await.ok()?;
      for subdir in [
          codex_rollout::SESSIONS_SUBDIR,
+diff --git a/codex-rs/thread-store/src/local/thread_history/realtime_stream.rs b/codex-rs/thread-store/src/local/thread_history/realtime_stream.rs
+index f71b8b8d0be741e17a1bb8d36bf1f88982b6f064..4382615c9a27e72ec864d9513df3fc3faec8d3a2 100644
+--- a/codex-rs/thread-store/src/local/thread_history/realtime_stream.rs
++++ b/codex-rs/thread-store/src/local/thread_history/realtime_stream.rs
+@@ -47,116 +47,117 @@ pub(in crate::local) async fn list_realtime(
+     {
+         return Err(invalid("realtime observation time range must be nonempty"));
+     }
+-    match validate_thread_for_paginated_reads(
+-        store,
+-        params.thread_id,
+-        /*include_archived*/ true,
+-        "thread/realtime/list",
+-    )
+-    .await
+-    {
+-        Ok(()) => {}
++    let _writer_guard = store.live_writer_locks.lock(params.thread_id).await;
++    let snapshot = match realtime_snapshot(store, params.thread_id, RealtimeRead::List).await {
++        Ok(snapshot) => snapshot,
+         Err(ThreadStoreError::Unsupported { .. }) => {
+-            return Ok(empty_page(
+-                ThreadRealtimeCoverage::Unsupported,
+-                /*snapshot_end*/ 0,
+-                /*projected_through_item_index*/ 0,
+-            ));
++            return Ok(empty_page(ThreadRealtimeCoverage::Unsupported, 0, 0));
+         }
+         Err(error) => return Err(error),
+-    }
+-    let _writer_guard = store.live_writer_locks.lock(params.thread_id).await;
+-    let resolved = super::super::thread_rollout_resolver::resolve_current_including_archived(
+-        store,
+-        params.thread_id,
+-    )
+-    .await?;
+-    let Some(resolved) = resolved else {
+-        return read_page(
+-            store.thread_history_db().await?,
+-            params.clone(),
+-            params.thread_id,
+-            /*first_position*/ 0,
+-            /*projected_end*/ 0,
+-        )
+-        .await;
+     };
+-    let meta = codex_rollout::read_session_meta_line(&resolved.path)
+-        .await
+-        .map_err(thread_history_error)?
+-        .meta;
+-    let child_start = meta
+-        .subagent_history_start_ordinal
+-        .or_else(|| meta.history_base.map(|base| base.end_ordinal_exclusive));
+-    // A copied fork without a boundary cannot distinguish its own frames from the parent's.
+-    if meta.forked_from_id.is_some() && child_start.is_none() {
+-        return Ok(empty_page(
+-            ThreadRealtimeCoverage::Unsupported,
+-            /*snapshot_end*/ 0,
+-            /*projected_through_item_index*/ 0,
+-        ));
+-    }
+-    super::super::thread_history_materialization::materialize_to_sqlite(
+-        store,
+-        resolved.rollout_id,
+-        &resolved.path,
+-    )
+-    .await?;
+-    let pool = store.thread_history_db().await?;
+-    let projected_end = super::projection_state(store, resolved.rollout_id)
+-        .await?
+-        .map_or(0, |state| state.next_ordinal);
+-    read_page(
+-        pool,
+-        params,
+-        resolved.rollout_id,
+-        child_start.unwrap_or(0),
+-        projected_end,
+-    )
+-    .await
++    read_page(store.thread_history_db().await?, params, &snapshot).await
+ }
+ 
+-/// Resolve and project the complete durable prefix while the caller holds the writer lock.
+-async fn recovery_snapshot(
++struct RealtimeSnapshot {
++    head: ThreadId,
++    projected_end: u64,
++    ranges: Vec<RealtimeRange>,
++}
++
++#[derive(Serialize)]
++struct RealtimeRange {
++    rollout: ThreadId,
++    start: u64,
++    end: Option<u64>,
++}
++
++impl RealtimeSnapshot {
++    fn rows(&self, select: &'static str) -> ThreadStoreResult<QueryBuilder<Sqlite>> {
++        let ranges = serde_json::to_string(&self.ranges).map_err(thread_history_error)?;
++        let mut query = QueryBuilder::new(select);
++        query.push(" FROM json_each(").push_bind(ranges).push(
++            ") AS r JOIN thread_realtime_items ON thread_id = json_extract(r.value, '$.rollout')
++             AND rollout_ordinal >= json_extract(r.value, '$.start')
++             AND (json_extract(r.value, '$.end') IS NULL OR rollout_ordinal < json_extract(r.value, '$.end'))",
++        );
++        Ok(query)
++    }
++}
++
++enum RealtimeRead {
++    List,
++    Recover,
++}
++
++/// Under the writer lock, collect this logical thread's visible ranges up to its fork boundary.
++async fn realtime_snapshot(
+     store: &LocalThreadStore,
+     thread_id: ThreadId,
+-) -> ThreadStoreResult<Option<(ThreadId, u64, u64)>> {
+-    let Some(resolved) =
++    read: RealtimeRead,
++) -> ThreadStoreResult<RealtimeSnapshot> {
++    let resolved =
+         super::super::thread_rollout_resolver::resolve_current_including_archived(store, thread_id)
+-            .await?
+-    else {
+-        // A fresh paginated thread has a live writer before its rollout or SQLite row exists.
+-        return Ok(None);
++            .await?;
++    // A new paginated thread can have a writer before its first durable record.
++    let mut snapshot = RealtimeSnapshot {
++        head: resolved.as_ref().map_or(thread_id, |head| head.rollout_id),
++        projected_end: 0,
++        ranges: Vec::new(),
+     };
+-    validate_thread_for_paginated_reads(
+-        store,
+-        thread_id,
+-        /*include_archived*/ true,
+-        "load_realtime_session",
+-    )
+-    .await?;
+-    let meta = codex_rollout::read_session_meta_line(&resolved.path)
+-        .await
+-        .map_err(thread_history_error)?
+-        .meta;
+-    let first = meta
+-        .subagent_history_start_ordinal
+-        .or_else(|| meta.history_base.map(|base| base.end_ordinal_exclusive));
+-    if meta.forked_from_id.is_some() && first.is_none() {
+-        return Err(ThreadStoreError::Unsupported {
+-            operation: "load_realtime_session",
+-        });
++    let operation = match read {
++        RealtimeRead::List => "thread/realtime/list",
++        RealtimeRead::Recover if resolved.is_none() => return Ok(snapshot),
++        RealtimeRead::Recover => "load_realtime_session",
++    };
++    validate_thread_for_paginated_reads(store, thread_id, true, operation).await?;
++    if resolved.is_none() {
++        return Ok(snapshot);
+     }
+-    super::super::thread_history_materialization::materialize_to_sqlite(
+-        store,
+-        resolved.rollout_id,
+-        &resolved.path,
+-    )
+-    .await?;
+-    let end = super::projection_state(store, resolved.rollout_id)
+-        .await?
+-        .map_or(0, |state| state.next_ordinal);
+-    Ok(Some((resolved.rollout_id, first.unwrap_or(0), end)))
++    let mut lineage =
++        super::super::rollout_lineage::LineageWalk::for_history_page(store, thread_id);
++    let mut depth = 0;
++    while let Some((segment, _)) = lineage.at_depth(depth).await? {
++        let meta = codex_rollout::read_session_meta_line(&segment.rollout_path)
++            .await
++            .map_err(thread_history_error)?
++            .meta;
++        if meta.id != thread_id {
++            break;
++        }
++        let fork_cutoff =
++            codex_rollout::forked_from_ordinal_exclusive(&meta, Some(&segment.rollout_path));
++        if meta.forked_from_id.is_some()
++            && meta.history_base.is_none()
++            && meta.subagent_history_start_ordinal.is_none()
++        {
++            return Err(ThreadStoreError::Unsupported { operation });
++        }
++        super::super::thread_history_materialization::materialize_to_sqlite(
++            store,
++            segment.rollout_id,
++            &segment.rollout_path,
++        )
++        .await?;
++        if depth == 0 {
++            snapshot.projected_end = super::projection_state(store, segment.rollout_id)
++                .await?
++                .map_or(0, |state| state.next_ordinal);
++        }
++        snapshot.ranges.push(RealtimeRange {
++            rollout: segment.rollout_id,
++            start: segment
++                .start_ordinal
++                .max(meta.subagent_history_start_ordinal.unwrap_or(0)),
++            end: segment.end_ordinal(),
++        });
++        if meta.history_base.is_none_or(|base| {
++            fork_cutoff.is_some_and(|cutoff| base.end_ordinal_exclusive <= cutoff)
++        }) {
++            break;
++        }
++        depth += 1;
++    }
++    Ok(snapshot)
+ }
+ 
+ /// Recover a logical call from the same authoritative durable-prefix projection as list_realtime.
+@@ -166,25 +167,21 @@ pub(in crate::local) async fn load_realtime_session(
+     session_id: String,
+ ) -> ThreadStoreResult<Option<Vec<RealtimeItem>>> {
+     let _writer_guard = store.live_writer_locks.lock(thread_id).await;
+-    let Some((rollout_id, first, end)) = recovery_snapshot(store, thread_id).await? else {
+-        return Ok(None);
+-    };
+-    let rows = sqlx::query_scalar::<_, String>(
+-        r#"
+-SELECT item_json
+-FROM thread_realtime_items
+-WHERE thread_id = ? AND rollout_ordinal >= ? AND rollout_ordinal < ?
+-  AND json_extract(item_json, '$.realtime_session_id') = ?
+-ORDER BY rollout_ordinal
+-"#,
+-    )
+-    .bind(rollout_id.to_string())
+-    .bind(sqlite_integer(first, "first realtime position")?)
+-    .bind(sqlite_integer(end, "realtime snapshot end")?)
+-    .bind(session_id)
+-    .fetch_all(store.thread_history_db().await?)
+-    .await
+-    .map_err(thread_history_error)?;
++    let snapshot = realtime_snapshot(store, thread_id, RealtimeRead::Recover).await?;
++    let rows = snapshot
++        .rows("SELECT item_json")?
++        .push(" WHERE rollout_ordinal < ")
++        .push_bind(sqlite_integer(
++            snapshot.projected_end,
++            "realtime snapshot end",
++        )?)
++        .push(" AND json_extract(item_json, '$.realtime_session_id') = ")
++        .push_bind(session_id)
++        .push(" ORDER BY rollout_ordinal")
++        .build_query_scalar::<String>()
++        .fetch_all(store.thread_history_db().await?)
++        .await
++        .map_err(thread_history_error)?;
+     let items: Vec<RealtimeItem> = rows
+         .into_iter()
+         .map(|row| serde_json::from_str(&row).map_err(thread_history_error))
+@@ -205,25 +202,19 @@ pub(in crate::local) async fn load_realtime_session_head(
+     thread_id: ThreadId,
+ ) -> ThreadStoreResult<Option<String>> {
+     let _writer_guard = store.live_writer_locks.lock(thread_id).await;
+-    let Some((rollout_id, first, end)) = recovery_snapshot(store, thread_id).await? else {
+-        return Ok(None);
+-    };
+-    sqlx::query_scalar::<_, String>(
+-        r#"
+-SELECT json_extract(item_json, '$.realtime_session_id')
+-FROM thread_realtime_items
+-WHERE thread_id = ? AND rollout_ordinal >= ? AND rollout_ordinal < ?
+-  AND item_type = 'realtime_session_started'
+-ORDER BY rollout_ordinal DESC
+-LIMIT 1
+-"#,
+-    )
+-    .bind(rollout_id.to_string())
+-    .bind(sqlite_integer(first, "first realtime position")?)
+-    .bind(sqlite_integer(end, "realtime snapshot end")?)
+-    .fetch_optional(store.thread_history_db().await?)
+-    .await
+-    .map_err(thread_history_error)
++    let snapshot = realtime_snapshot(store, thread_id, RealtimeRead::Recover).await?;
++    snapshot
++        .rows("SELECT json_extract(item_json, '$.realtime_session_id')")?
++        .push(" WHERE rollout_ordinal < ")
++        .push_bind(sqlite_integer(
++            snapshot.projected_end,
++            "realtime snapshot end",
++        )?)
++        .push(" AND item_type = 'realtime_session_started' ORDER BY rollout_ordinal DESC LIMIT 1")
++        .build_query_scalar()
++        .fetch_optional(store.thread_history_db().await?)
++        .await
++        .map_err(thread_history_error)
+ }
+ 
+ /// A canonical start marker makes enrollment sticky when the rollout flag is disabled.
+@@ -232,40 +223,29 @@ pub(in crate::local) async fn has_canonical_realtime_session(
+     thread_id: ThreadId,
+ ) -> ThreadStoreResult<bool> {
+     let _writer_guard = store.live_writer_locks.lock(thread_id).await;
+-    let snapshot = match recovery_snapshot(store, thread_id).await {
++    let snapshot = match realtime_snapshot(store, thread_id, RealtimeRead::Recover).await {
+         Err(ThreadStoreError::Unsupported {
+             operation: "load_realtime_session",
+         }) => return Ok(false),
+         result => result?,
+     };
+-    let Some((rollout_id, first, end)) = snapshot else {
+-        return Ok(false);
+-    };
+-    sqlx::query_scalar::<_, bool>(
+-        r#"
+-SELECT EXISTS (
+-    SELECT 1 FROM thread_realtime_items
+-    WHERE thread_id = ? AND rollout_ordinal >= ? AND rollout_ordinal < ?
+-      AND item_type = 'realtime_session_started'
+-      AND json_extract(item_json, '$.observed_at_ms') IS NOT NULL
+-)
+-"#,
+-    )
+-    .bind(rollout_id.to_string())
+-    .bind(sqlite_integer(first, "first realtime position")?)
+-    .bind(sqlite_integer(end, "realtime snapshot end")?)
+-    .fetch_one(store.thread_history_db().await?)
+-    .await
+-    .map_err(thread_history_error)
++    let exists = snapshot.rows("SELECT 1")?
++        .push(" WHERE rollout_ordinal < ")
++        .push_bind(sqlite_integer(snapshot.projected_end, "realtime snapshot end")?)
++        .push(" AND item_type = 'realtime_session_started' AND json_extract(item_json, '$.observed_at_ms') IS NOT NULL LIMIT 1")
++        .build_query_scalar::<i64>()
++        .fetch_optional(store.thread_history_db().await?)
++        .await
++        .map_err(thread_history_error)?;
++    Ok(exists.is_some())
+ }
+ 
+ async fn read_page(
+     pool: &sqlx::SqlitePool,
+     params: ListRealtimeParams,
+-    rollout_id: ThreadId,
+-    first_position: u64,
+-    projected_end: u64,
++    snapshot: &RealtimeSnapshot,
+ ) -> ThreadStoreResult<RealtimePage> {
++    let projected_end = snapshot.projected_end;
+     let mut query = params.clone();
+     query.cursor = None;
+     query.page_size = 0;
+@@ -279,12 +259,17 @@ async fn read_page(
+         .map_err(|_| invalid("invalid realtime cursor"))?;
+     if let Some(cursor) = &cursor
+         && (cursor.version != 1
+-            || cursor.rollout_id != rollout_id
++            || !snapshot.ranges.iter().any(|span| {
++                span.rollout == cursor.rollout_id
++                    && span.end.is_none_or(|end| end >= cursor.snapshot_end)
++            })
+             || cursor.query != query
+             || params
+                 .snapshot_end
+                 .is_some_and(|end| end != cursor.snapshot_end)
+-            || cursor.position < first_position
++            || !snapshot.ranges.iter().any(|span| {
++                cursor.position >= span.start && span.end.is_none_or(|end| cursor.position < end)
++            })
+             || cursor.position >= cursor.snapshot_end)
+     {
+         return Err(invalid("realtime cursor does not match this query"));
+@@ -308,14 +293,9 @@ async fn read_page(
+         ));
+     }
+     let snapshot_end_sql = sqlite_integer(snapshot_end, "snapshot end")?;
+-    let mut sql = QueryBuilder::<Sqlite>::new(
+-        "SELECT rollout_ordinal, item_json FROM thread_realtime_items WHERE thread_id = ",
+-    );
+-    sql.push_bind(rollout_id.to_string());
+-    sql.push(" AND rollout_ordinal >= ")
+-        .push_bind(sqlite_integer(first_position, "first realtime position")?);
++    let mut sql = snapshot.rows("SELECT rollout_ordinal, item_json")?;
+     // Only new, enrolled calls write a canonical timestamp.
+-    sql.push(" AND ")
++    sql.push(" WHERE ")
+         .push(OBSERVED_AT)
+         .push(" IS NOT NULL AND item_type != 'transcript_segment'");
+     if !exact_id_uses_current_snapshot {
+@@ -406,7 +386,7 @@ async fn read_page(
+             .map(|entry| {
+                 serde_json::to_string(&Cursor {
+                     version: 1,
+-                    rollout_id,
++                    rollout_id: snapshot.head,
+                     query,
+                     snapshot_end,
+                     observed_at_ms: entry.item.observed_at_ms,
+@@ -421,15 +401,16 @@ async fn read_page(
+     let coverage = if let Some(event_id) = &params.event_id
+         && data.is_empty()
+     {
+-        let exists: bool = sqlx::query_scalar(
+-            "SELECT EXISTS(SELECT 1 FROM thread_realtime_items WHERE thread_id = ? AND item_id = ? AND rollout_ordinal >= ?)",
+-        )
+-        .bind(rollout_id.to_string())
+-        .bind(event_id)
+-        .bind(sqlite_integer(first_position, "first realtime position")?)
+-        .fetch_one(&mut *transaction)
+-        .await
+-        .map_err(thread_history_error)?;
++        let exists = snapshot
++            .rows("SELECT 1")?
++            .push(" WHERE item_id = ")
++            .push_bind(event_id.clone())
++            .push(" LIMIT 1")
++            .build_query_scalar::<i64>()
++            .fetch_optional(&mut *transaction)
++            .await
++            .map_err(thread_history_error)?
++            .is_some();
+         if exists {
+             ThreadRealtimeCoverage::Ready
+         } else {
+diff --git a/codex-rs/thread-store/src/local/thread_history/realtime_stream_tests.rs b/codex-rs/thread-store/src/local/thread_history/realtime_stream_tests.rs
+index 193713454b68404e1da50994df7d2d6eaefaab97..2533e66d6c686e831c804c94eea5ea0543e4c858 100644
+--- a/codex-rs/thread-store/src/local/thread_history/realtime_stream_tests.rs
++++ b/codex-rs/thread-store/src/local/thread_history/realtime_stream_tests.rs
+@@ -7,6 +7,29 @@ use codex_protocol::realtime::RealtimeItemContent;
+ use pretty_assertions::assert_eq;
+ use tempfile::TempDir;
+ 
++async fn single_segment_page(
++    pool: &sqlx::SqlitePool,
++    params: ListRealtimeParams,
++    head: ThreadId,
++    start: u64,
++    projected_end: u64,
++) -> ThreadStoreResult<RealtimePage> {
++    read_page(
++        pool,
++        params,
++        &RealtimeSnapshot {
++            head,
++            projected_end,
++            ranges: vec![RealtimeRange {
++                rollout: head,
++                start,
++                end: None,
++            }],
++        },
++    )
++    .await
++}
++
+ async fn database() -> (TempDir, sqlx::SqlitePool) {
+     let home = TempDir::new().unwrap();
+     let config = crate::local::test_support::test_config(home.path());
+@@ -51,7 +74,7 @@ async fn snapshot_stays_fixed_while_position_catchup_finds_a_late_seal() {
+     insert(&pool, thread, /*position*/ 0, Some(200)).await;
+     insert(&pool, thread, /*position*/ 1, Some(200)).await;
+     insert(&pool, thread, /*position*/ 2, Some(100)).await;
+-    let first = read_page(
++    let first = single_segment_page(
+         &pool,
+         params(thread),
+         thread,
+@@ -64,7 +87,7 @@ async fn snapshot_stays_fixed_while_position_catchup_finds_a_late_seal() {
+     assert_eq!(first.snapshot_end, 3);
+ 
+     insert(&pool, thread, /*position*/ 3, Some(50)).await;
+-    let next = read_page(
++    let next = single_segment_page(
+         &pool,
+         ListRealtimeParams {
+             cursor: first.next_cursor.clone(),
+@@ -85,7 +108,7 @@ async fn snapshot_stays_fixed_while_position_catchup_finds_a_late_seal() {
+     );
+     assert_eq!(next.snapshot_end, 3);
+     // Equal observation times on opposite sides of a page boundary use rollout position.
+-    let last = read_page(
++    let last = single_segment_page(
+         &pool,
+         ListRealtimeParams {
+             cursor: next.next_cursor,
+@@ -106,7 +129,7 @@ async fn snapshot_stays_fixed_while_position_catchup_finds_a_late_seal() {
+     );
+     assert!(last.next_cursor.is_none());
+ 
+-    let catchup = read_page(
++    let catchup = single_segment_page(
+         &pool,
+         ListRealtimeParams {
+             order: ThreadRealtimeOrder::Position,
+@@ -121,7 +144,7 @@ async fn snapshot_stays_fixed_while_position_catchup_finds_a_late_seal() {
+     .unwrap();
+     assert_eq!(catchup.data[0].position, 3);
+ 
+-    let error = read_page(
++    let error = single_segment_page(
+         &pool,
+         ListRealtimeParams {
+             cursor: first.next_cursor,
+@@ -142,7 +165,7 @@ async fn projection_lag_is_explicit_and_descendants_hide_parent_positions() {
+     let (_home, pool) = database().await;
+     let thread = ThreadId::default();
+     insert(&pool, thread, /*position*/ 1, Some(100)).await;
+-    let pending = read_page(
++    let pending = single_segment_page(
+         &pool,
+         ListRealtimeParams {
+             required_through_position: Some(2),
+@@ -156,7 +179,7 @@ async fn projection_lag_is_explicit_and_descendants_hide_parent_positions() {
+     .unwrap();
+     assert_eq!(pending.coverage, ThreadRealtimeCoverage::Pending);
+     assert!(pending.data.is_empty());
+-    let hidden = read_page(
++    let hidden = single_segment_page(
+         &pool,
+         ListRealtimeParams {
+             order: ThreadRealtimeOrder::Position,
+@@ -179,7 +202,7 @@ async fn exact_event_id_waits_for_the_acknowledged_seal_to_be_projected() {
+         event_id: Some("event-1".into()),
+         ..params(thread)
+     };
+-    let pending = read_page(
++    let pending = single_segment_page(
+         &pool,
+         query.clone(),
+         thread,
+@@ -198,7 +221,7 @@ async fn exact_event_id_waits_for_the_acknowledged_seal_to_be_projected() {
+     );
+ 
+     insert(&pool, thread, /*position*/ 1, Some(100)).await;
+-    let stale = read_page(
++    let stale = single_segment_page(
+         &pool,
+         query.clone(),
+         thread,
+@@ -225,7 +248,7 @@ async fn exact_event_id_waits_for_the_acknowledged_seal_to_be_projected() {
+             ..query.clone()
+         },
+     ] {
+-        let page = read_page(
++        let page = single_segment_page(
+             &pool, excluded, thread, /*first_position*/ 0, /*projected_end*/ 1,
+         )
+         .await
+@@ -239,7 +262,7 @@ async fn exact_event_id_waits_for_the_acknowledged_seal_to_be_projected() {
+             )
+         );
+     }
+-    let ready = read_page(
++    let ready = single_segment_page(
+         &pool, query, thread, /*first_position*/ 0, /*projected_end*/ 2,
+     )
+     .await
