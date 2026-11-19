@@ -1,3 +1,5 @@
+[vcs]
+commit-msg = '''
 rollouts: Bound checkpoint reads across shared history
 
 Native paginated forks share inherited transcript files, but current
@@ -28,3 +30,12 @@ Later writes reconcile an uncertain result before choosing a recorder;
 a positively rejected candidate is stopped and removed.
 Predecessors remain immutable and existing native reference sharing
 supplies fork disk savings without database or wire-format changes.
+'''
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"

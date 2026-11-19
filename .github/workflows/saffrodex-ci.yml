@@ -27,9 +27,13 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
-          go-version-file: go.mod
+          version: 2026.10.13
+          install_args: --locked
+
+      - name: Test release source contract
+        run: python3 -B -m unittest discover -s tools -p 'test_*.py'
 
       - name: Free runner disk space
         run: |
@@ -46,13 +50,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          upstream=$(jq -er '
-            [.tag, .commit]
-            | if all(.[]; type == "string" and length > 0)
-              then @tsv
-              else error("tag and commit must be non-empty strings")
-              end
-          ' upstream.json)
+          upstream=$(python3 tools/upstream.py)
           IFS=$'\t' read -r codex_tag codex_commit <<<"${upstream}"
 
           # Fetch only the configured release boundary, then verify that its
@@ -65,10 +63,12 @@ jobs:
             exit 1
           }
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_AUTHOR_NAME="github-actions[bot]"
+          export GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_COMMITTER_NAME="${GIT_AUTHOR_NAME}"
+          export GIT_COMMITTER_EMAIL="${GIT_AUTHOR_EMAIL}"
           projection_path="${RUNNER_TEMP}/saffrodex-projection"
-          go run ./cmd/layerctl projection create ci --worktree "${projection_path}"
+          mise exec -- layerctl projection create ci --worktree "${projection_path}"
 
           echo "path=${projection_path}" >>"${GITHUB_OUTPUT}"
           {

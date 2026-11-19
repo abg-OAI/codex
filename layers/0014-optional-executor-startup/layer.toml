@@ -1,3 +1,5 @@
+[vcs]
+commit-msg = '''
 Bound optional executor startup and retain thread exclusions
 
 A remote executor that connects but stalls during instruction discovery
@@ -14,3 +16,12 @@ only in-memory state. Copying history without that database does not
 transfer exclusions. Complete admission reads feed the ordinary first
 instruction load, preserving its ordering, trust and byte budget; later
 refreshes remain live. Pinned reviewer snapshots avoid new discovery.
+'''
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"

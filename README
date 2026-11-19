@@ -5,7 +5,7 @@ Saffrodex is a small downstream distribution of OpenAI Codex.
 This repository keeps its downstream work as stable canonical layers instead
 of continually rebasing one rolling source branch.
 
-`layerctl` projects the repository's ordered layers onto an exact Codex
+`layerctl` projects the repository's ordered layers onto a pinned Codex
 `rust-v*` release.
 The resulting Git history has the upstream release as its ancestor and one
 generated commit for each Saffrodex layer, while the canonical layer history
@@ -24,24 +24,23 @@ Repository layout
 ```text
 .github/workflows/      Canonical release automation
 layers/NNNN-layer-slug/ Ordered generated commit definitions
-cmd/layerctl/           CLI entry point
-internal/               layerctl domains and adapters
+mise.toml / mise.lock   Pinned standalone layerctl dependency
 LAYERCTL.md             Layer maintenance and release operations
 tools/                  Canonical repository operations
-upstream.json           Current exact Codex base
 ```
 
 Layer directory names are applied in lexical order.
 Their four-digit prefixes are the only ordering mechanism.
-Each directory contains the required generated commit message in
-`COMMIT_EDITMSG`, an optional binary-safe delta in `patch`, and optional
-complete added files under `overlay/`.
-The patch applies before the additive overlay; changes to inherited files
-remain in the patch.
+Each directory contains `layer.toml`, declaring its generated commit message
+and ordered operations for patches and overlays.
+The foundation manifest also pins the official Codex release tag and commit.
+Multiple patch operations can contribute to one generated commit.
 `layers/0000-foundation/` is the required first layer and carries changes
 needed by every generated Saffrodex source tree.
 
-See `LAYERCTL.md` for projection, layer capture, upstream advancement,
+Install the pinned [standalone layerctl](https://github.com/NonLogicalDev/util.layerctl)
+with `mise install --locked github:NonLogicalDev/util.layerctl`.
+See `LAYERCTL.md` for setup, projection, layer capture, upstream advancement,
 verification, and release operations.
 
 The default-branch workflow creates releases from a full projection:
@@ -50,7 +49,8 @@ The default-branch workflow creates releases from a full projection:
 tools/release.sh [-b RELEASE_NOTES]
 ```
 
-The script only dispatches that workflow. The workflow reads `upstream.json`,
+The script only dispatches that workflow.
+The workflow reads the foundation source pin,
 materializes the canonical layers, chooses the next Saffrodex release number,
 publishes the immutable projection tag, builds each platform, and creates the
 GitHub release.

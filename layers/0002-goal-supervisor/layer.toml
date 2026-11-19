@@ -1,5 +1,16 @@
+[vcs]
+commit-msg = '''
 Supervise durable goals across idle periods
 
 Keep helper decisions, continuation ownership, wake recovery and previous
 action context in one supervisor lifecycle. Preserve isolated Saffron
 storage and the deployed migration sequence.
+'''
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"

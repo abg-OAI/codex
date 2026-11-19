@@ -1,3 +1,5 @@
+[vcs]
+commit-msg = '''
 Add saffron.await_exec
 
 Repeated `write_stdin` polling consumes model turns while an external
@@ -15,3 +17,12 @@ than the command's expected output cadence.
 
 Cover output wakeups, early exit detection, exit-only waits, timeout
 reuse, and the model-visible tool boundary.
+'''
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"
