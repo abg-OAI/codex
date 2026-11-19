@@ -192,6 +192,17 @@ impl Handler {
         if turn.session_source.is_non_root_agent() {
             return Err(invalid("only root threads may create independent forks"));
         }
+        if turn.history_mode == ThreadHistoryMode::Legacy
+            && session
+                .services
+                .thread_store
+                .as_any()
+                .is::<codex_thread_store::LocalThreadStore>()
+        {
+            return Err(invalid(
+                "Independent local forks require a paginated source thread",
+            ));
+        }
         let manager = self
             .host
             .manager

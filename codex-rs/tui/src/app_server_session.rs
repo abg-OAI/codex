@@ -1089,10 +1089,6 @@ impl AppServerSession {
         self.managed_new_thread_defaults.as_ref()
     }
 
-    pub(crate) fn supports_paginated_history(&self) -> bool {
-        self.history_support == ThreadHistorySupport::Paginated
-    }
-
     /// Fetches the current account info without refreshing the auth token.
     ///
     /// Used by both `bootstrap` (to populate the initial UI) and `get_login_status`
@@ -1489,17 +1485,15 @@ impl AppServerSession {
             .check_namespace(&self.request_handle, &config.cwd)
             .await?;
         let fork_parent = match presentation {
-            ForkPresentation::Regular => self
-                .thread_read(thread_id, /*include_turns*/ false)
-                .await
-                .ok(),
+            ForkPresentation::Regular => {
+                Some(self.thread_read(thread_id, /*include_turns*/ false).await?)
+            }
             ForkPresentation::SideConversation(_) => None,
         };
-        let exclude_turns = self.history_support == ThreadHistorySupport::Paginated
-            && (fork_parent
-                .as_ref()
-                .is_some_and(|thread| thread.history_mode == ThreadHistoryMode::Paginated)
-                || presentation != ForkPresentation::Regular);
+        let exclude_turns = match &fork_parent {
+            Some(parent) => parent.history_mode == ThreadHistoryMode::Paginated,
+            None => self.history_support == ThreadHistorySupport::Paginated,
+        };
         let request_id = self.next_request_id();
         let session_config = if config.model.is_none() {
             // Avoid inferring a tier from the stale client default model.
@@ -1562,38 +1556,13 @@ impl AppServerSession {
         }
         self.thread_tool_transport()
             .configure_mcp(&mut params.config);
-        let response: ThreadForkResponse = match self
+        let mut response: ThreadForkResponse = self
             .request_handle
-            .request_typed(ClientRequest::ThreadFork {
-                request_id,
-                params: params.clone(),
-            })
+            .request_typed(ClientRequest::ThreadFork { request_id, params })
             .await
-        {
-            Ok(response) => response,
-            Err(TypedRequestError::Server { source, .. })
-                if params.exclude_turns
-                    && !params.attach_to_source
-                    && is_history_pagination_unsupported(&source) =>
-            {
-                self.history_support = ThreadHistorySupport::LegacyOnly;
-                params.exclude_turns = false;
-                let request_id = self.next_request_id();
-                self.request_handle
-                    .request_typed(ClientRequest::ThreadFork { request_id, params })
-                    .await
-                    .map_err(|err| {
-                        bootstrap_request_error("thread/fork failed during TUI bootstrap", err)
-                    })?
-            }
-            Err(err) => {
-                return Err(bootstrap_request_error(
-                    "thread/fork failed during TUI bootstrap",
-                    err,
-                ));
-            }
-        };
-        let mut response = response;
+            .map_err(|err| {
+                bootstrap_request_error("thread/fork failed during TUI bootstrap", err)
+            })?;
         if presentation == ForkPresentation::Regular
             && !response.thread.ephemeral
             && let Err(error) = self

@@ -1434,7 +1434,7 @@ impl App {
                     .thread_read(thread_id, /*include_turns*/ false)
                     .await?;
                 let turns = match thread.history_mode {
-                    ThreadHistoryMode::Paginated if app_server.supports_paginated_history() => {
+                    ThreadHistoryMode::Paginated => {
                         app_server
                             .thread_turns_page(
                                 thread_id,
@@ -1444,7 +1444,7 @@ impl App {
                             .await?
                             .data
                     }
-                    ThreadHistoryMode::Legacy | ThreadHistoryMode::Paginated => {
+                    ThreadHistoryMode::Legacy => {
                         app_server
                             .thread_read(thread_id, /*include_turns*/ true)
                             .await?

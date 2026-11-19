@@ -31,7 +31,6 @@ use crate::context::world_state::IncrementalToolsUpdate;
 use crate::init_state_db;
 use crate::responses_metadata::CodexResponsesRequestKind;
 use crate::session::SessionSettingsUpdate;
-use crate::session::session::Session;
 use crate::session::step_context::StepContext;
 use crate::session::step_settings::StepSettingsUpdate;
 use crate::session::tests::update_selected_settings_for_test;
@@ -2073,19 +2072,19 @@ async fn cold_resume_with_thread_instructions_preserves_lazy_v2_child_inheritanc
     let _ = config.features.enable(Feature::Sqlite);
     let admitted_country = RequestCountry::from_iso_code("DE").unwrap();
     let harness = AgentControlHarness::new_with_config(home, config).await;
-    let parent = harness
-        .manager
-        .start_thread(StartThreadOptions {
+    let parent = crate::test_support::start_saved_legacy_thread(
+        &harness.manager,
+        StartThreadOptions {
             request_country: admitted_country.clone(),
-            history_mode: Some(ThreadHistoryMode::Legacy),
             thread_instructions_provider: Some(Arc::new(TestThreadInstructionsProvider {
                 text: "initial thread instructions".into(),
                 shared,
             })),
             ..StartThreadOptions::new(harness.config.clone())
-        })
-        .await
-        .expect("start parent with thread instructions");
+        },
+    )
+    .await
+    .expect("start parent with thread instructions");
     let parent_thread_id = parent.thread_id;
     let control = &parent
         .thread
@@ -3383,7 +3382,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
     let new_thread = harness
         .manager
         .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+            history_mode: Some(ThreadHistoryMode::Paginated),
             ..StartThreadOptions::new(parent_config.clone())
         })
         .await
@@ -3573,7 +3572,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
     assert_ne!(child_thread_id, parent_thread_id);
     assert_eq!(
         child_thread.config_snapshot().await.history_mode,
-        ThreadHistoryMode::Legacy
+        ThreadHistoryMode::Paginated
     );
     let history = child_thread.session.clone_history().await;
     let history_items = history.raw_items().cloned().collect::<Vec<_>>();
@@ -4568,14 +4567,23 @@ async fn resume_and_cold_fork_restore_mcp_attribution_in_constructed_requests(
     record_invalid_source: bool,
 ) {
     let harness = AgentControlHarness::new().await;
-    let source = harness
-        .manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let source = crate::test_support::start_saved_legacy_thread(
+        &harness.manager,
+        StartThreadOptions {
+            initial_history: codex_history::InitialHistory::Forked(vec![
+                codex_history::RolloutItem::ResponseItem(codex_history::ResponseItemEnvelope {
+                    item: user_message("saved conversation"),
+                    metadata: Some(codex_history::CodexHarnessMetadata {
+                        mcp_attribution: Some(McpAttribution::default()),
+                        ..Default::default()
+                    }),
+                }),
+            ]),
             ..StartThreadOptions::new(harness.config.clone())
-        })
-        .await
-        .expect("start legacy source");
+        },
+    )
+    .await
+    .expect("start legacy source");
     let source_thread_id = source.thread_id;
     let source_thread = source.thread;
     let turn_context = source_thread.session.new_default_turn().await;
@@ -4640,7 +4648,10 @@ async fn resume_and_cold_fork_restore_mcp_attribution_in_constructed_requests(
         .manager
         .fork_legacy_thread(
             ForkSnapshot::Interrupted,
-            StartThreadOptions::new(harness.config.clone()),
+            StartThreadOptions::new(crate::config::Config {
+                ephemeral: true,
+                ..harness.config.clone()
+            }),
             rollout_path.clone(),
         )
         .await

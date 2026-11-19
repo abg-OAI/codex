@@ -5,7 +5,6 @@
 //! prepared result retains the connection identity and any provider error for read-only history.
 
 use super::*;
-use codex_app_server_client::TypedRequestError;
 
 /// Settings retained for a backend that is not currently displayed.
 #[derive(Clone)]
@@ -57,36 +56,31 @@ impl App {
         let mut blank = self.agents_overview.blank_sessions.get(&thread_id)?.clone();
 
         // A turn can start while this backend is parked, without the TUI seeing it.
-        let paginated = matches!(
-            thread.history_mode,
-            codex_app_server_protocol::ThreadHistoryMode::Paginated
-        ) && app_server.supports_paginated_history();
-        let untouched = if paginated {
-            match app_server.thread_turns_page(thread_id, /*cursor*/ None, /*limit*/ 1).await {
-                Ok(page) => Some(page.data.is_empty() && page.next_cursor.is_none()),
-                Err(error) if Self::can_fallback_from_include_turns_error(&error) => Some(true),
-                Err(error) if error.chain().any(|cause| matches!(
-                    cause.downcast_ref::<TypedRequestError>(),
-                    Some(TypedRequestError::Server { source, .. })
-                        if crate::app_server_session::is_history_pagination_unsupported(source)
-                )) => None,
-                Err(_) => Some(false),
-            }
-        } else {
-            None
-        };
-        let untouched = match untouched {
-            Some(untouched) => untouched,
-            None => match app_server
-                .thread_read(thread_id, /*include_turns*/ true)
-                .await
-            {
-                Ok(thread) => {
-                    thread.turns.is_empty()
-                        && matches!(thread.status, codex_app_server_protocol::ThreadStatus::Idle)
+        let untouched = match thread.history_mode {
+            codex_app_server_protocol::ThreadHistoryMode::Paginated => {
+                match app_server
+                    .thread_turns_page(thread_id, /*cursor*/ None, /*limit*/ 1)
+                    .await
+                {
+                    Ok(page) => page.data.is_empty() && page.next_cursor.is_none(),
+                    Err(error) => Self::can_fallback_from_include_turns_error(&error),
                 }
-                Err(error) => Self::can_fallback_from_include_turns_error(&error),
-            },
+            }
+            codex_app_server_protocol::ThreadHistoryMode::Legacy => {
+                match app_server
+                    .thread_read(thread_id, /*include_turns*/ true)
+                    .await
+                {
+                    Ok(thread) => {
+                        thread.turns.is_empty()
+                            && matches!(
+                                thread.status,
+                                codex_app_server_protocol::ThreadStatus::Idle
+                            )
+                    }
+                    Err(error) => Self::can_fallback_from_include_turns_error(&error),
+                }
+            }
         };
         if !untouched {
             return None;

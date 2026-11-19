@@ -4,17 +4,14 @@ use super::AppServerSession;
 use super::AppServerStartedThread;
 use super::HistoryHydrationScope;
 use super::ResumeModelSettings;
-use super::ThreadHistorySupport;
 use super::ThreadParamsMode;
 use super::ThreadSettingsOwner;
 use super::bootstrap_request_error;
-use super::is_history_pagination_unsupported;
 use super::started_thread_from_resume_response;
 use super::thread_resume_params_from_config;
 use super::thread_session_state_from_thread_response;
 use crate::legacy_core::config::Config;
 use codex_app_server_client::AppServerRequestHandle;
-use codex_app_server_client::TypedRequestError;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::SortDirection;
@@ -254,65 +251,34 @@ impl AppServerSession {
             self.thread_tool_transport()
                 .configure_mcp(&mut params.config);
         }
-        let paginated = self.history_support == ThreadHistorySupport::Paginated;
-        let cached_legacy = paginated
-            && self
-                .history_pagination
-                .get(&thread_id)
-                .is_some_and(|state| state.history_mode == ThreadHistoryMode::Legacy);
-        // Hold the maintenance lock through a full legacy resume to prevent migration.
-        let mut rollout_maintenance_guard = if cached_legacy && self.uses_embedded_app_server() {
-            codex_rollout::try_acquire_rollout_maintenance_lock(config.codex_home.as_path())
-                .ok()
-                .flatten()
+        self.unread_revisions.remove(&thread_id);
+        let mut metadata = Box::pin(self.thread_read(thread_id, /*include_turns*/ false)).await?;
+        // A migration can finish between observing legacy history and acquiring its lock.
+        let rollout_maintenance_guard = if self.uses_embedded_app_server()
+            && metadata.history_mode == ThreadHistoryMode::Legacy
+        {
+            let guard =
+                codex_rollout::try_acquire_rollout_maintenance_lock(config.codex_home.as_path())?
+                    .ok_or_else(|| {
+                    color_eyre::eyre::eyre!(
+                        "Rollout migration is in progress. Retry resume when it finishes."
+                    )
+                })?;
+            metadata = Box::pin(self.thread_read(thread_id, /*include_turns*/ false)).await?;
+            Some(guard)
         } else {
             None
         };
-        // Capture the receipt before the resume-time history boundary. Later results are delivered live.
-        self.unread_revisions.remove(&thread_id);
-        let metadata = Box::pin(self.thread_read(thread_id, /*include_turns*/ false))
-            .await
-            .ok();
-        let known_legacy = cached_legacy
-            && (!self.uses_embedded_app_server()
-                || (rollout_maintenance_guard.is_some()
-                    && metadata
-                        .is_some_and(|thread| thread.history_mode == ThreadHistoryMode::Legacy)));
-        params.exclude_turns = paginated && !known_legacy;
-        if params.exclude_turns {
-            rollout_maintenance_guard = None;
-        }
+        params.exclude_turns = metadata.history_mode == ThreadHistoryMode::Paginated;
         let request_id = self.next_request_id();
-        let resume_response = self
+        let response: ThreadResumeResponse = self
             .request_handle
-            .request_typed(ClientRequest::ThreadResume {
-                request_id,
-                params: params.clone(),
-            })
-            .await;
+            .request_typed(ClientRequest::ThreadResume { request_id, params })
+            .await
+            .map_err(|err| {
+                bootstrap_request_error("thread/resume failed during TUI bootstrap", err)
+            })?;
         drop(rollout_maintenance_guard);
-        let response: ThreadResumeResponse = match resume_response {
-            Ok(response) => response,
-            Err(TypedRequestError::Server { source, .. })
-                if params.exclude_turns && is_history_pagination_unsupported(&source) =>
-            {
-                self.history_support = ThreadHistorySupport::LegacyOnly;
-                params.exclude_turns = false;
-                let request_id = self.next_request_id();
-                self.request_handle
-                    .request_typed(ClientRequest::ThreadResume { request_id, params })
-                    .await
-                    .map_err(|err| {
-                        bootstrap_request_error("thread/resume failed during TUI bootstrap", err)
-                    })?
-            }
-            Err(err) => {
-                return Err(bootstrap_request_error(
-                    "thread/resume failed during TUI bootstrap",
-                    err,
-                ));
-            }
-        };
         self.finish_thread_resume(
             local_settings,
             &config,
