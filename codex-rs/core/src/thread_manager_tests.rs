@@ -184,6 +184,204 @@ async fn startup_fixture() -> (tempfile::TempDir, Config, ThreadManager) {
 }
 
 #[tokio::test]
+async fn referenced_fork_checkpoint_preserves_context_settings_and_interrupt() {
+    assert_referenced_fork_checkpoint(false).await;
+}
+
+#[tokio::test]
+async fn referenced_fork_checkpoint_preserves_completed_summary() {
+    assert_referenced_fork_checkpoint(true).await;
+}
+
+async fn assert_referenced_fork_checkpoint(completed: bool) {
+    use codex_thread_store::ForkBoundary;
+    use codex_thread_store::LoadThreadHistoryParams;
+    use codex_thread_store::PrepareForkParams;
+
+    let home = tempdir().unwrap();
+    let mut config = test_config().await;
+    config.codex_home = home.path().abs();
+    config.cwd = config.codex_home.abs();
+    config.sqlite = codex_state::SqliteConfig::new_for_testing(config.codex_home.clone());
+    config.ephemeral = false;
+    let state_db = init_state_db(&config)
+        .await
+        .expect("disposable state database");
+    let manager = ThreadManager::with_models_provider_home_and_state_for_tests(
+        CodexAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        config.codex_home.to_path_buf(),
+        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        Some(state_db),
+    );
+    let source = manager
+        .start_thread(StartThreadOptions {
+            history_mode: Some(ThreadHistoryMode::Paginated),
+            environments: Some(Vec::new()),
+            ..StartThreadOptions::new(config.clone())
+        })
+        .await
+        .unwrap();
+    let mut items: Vec<RolloutItem> = serde_json::from_value(serde_json::json!([
+        {"type":"event_msg", "payload":{"type":"turn_started", "turn_id":"source-active"}},
+        {"type":"response_item", "payload":{"type":"message", "role":"user",
+            "content":[{"type":"input_text", "text":"fork source message"}]}}
+    ]))
+    .unwrap();
+    items.push(RolloutItem::EventMsg(EventMsg::ItemCompleted(
+        codex_protocol::protocol::ItemCompletedEvent {
+            thread_id: source.thread_id,
+            turn_id: "source-active".into(),
+            item: codex_protocol::items::TurnItem::UserMessage(
+                codex_protocol::items::UserMessageItem {
+                    id: "source-user".into(),
+                    client_id: None,
+                    content: vec![codex_protocol::user_input::UserInput::Text {
+                        text: "fork source message".into(),
+                        text_elements: Vec::new(),
+                    }],
+                },
+            ),
+            content_token_count: None,
+            started_at_ms: Some(0),
+            completed_at_ms: 1,
+        },
+    )));
+    if completed {
+        items.push(
+            serde_json::from_value(serde_json::json!({
+                "type":"event_msg", "payload":{"type":"task_complete", "turn_id":"source-active"}
+            }))
+            .unwrap(),
+        );
+    }
+    source.thread.append_rollout_items(&items).await.unwrap();
+    source.thread.flush_rollout().await.unwrap();
+    let prepared = manager
+        .state
+        .thread_store
+        .prepare_fork(PrepareForkParams {
+            thread_id: source.thread_id,
+            boundary: ForkBoundary::Latest,
+        })
+        .await
+        .unwrap();
+    config.model_reasoning_effort = Some(codex_protocol::openai_models::ReasoningEffort::Low);
+    let child = manager
+        .fork_prepared_thread(
+            StartThreadOptions {
+                history_mode: Some(ThreadHistoryMode::Paginated),
+                environments: Some(Vec::new()),
+                ..StartThreadOptions::new(config)
+            },
+            prepared,
+        )
+        .await
+        .unwrap();
+    child.thread.flush_rollout().await.unwrap();
+    let context = manager
+        .state
+        .thread_store
+        .load_latest_model_context(LoadThreadHistoryParams {
+            thread_id: child.thread_id,
+            include_archived: false,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        context.items.get(1),
+        Some(RolloutItem::Compacted(_))
+    ));
+    if !completed {
+        assert!(
+            matches!(context.items.last(), Some(RolloutItem::EventMsg(EventMsg::TurnAborted(event)))
+            if event.reason == TurnAbortReason::Interrupted)
+        );
+    }
+    let turns = manager
+        .state
+        .thread_store
+        .list_turns(codex_thread_store::ListTurnsParams {
+            thread_id: child.thread_id,
+            include_archived: false,
+            cursor: None,
+            page_size: 10,
+            sort_direction: codex_thread_store::SortDirection::Asc,
+            items_view: codex_thread_store::StoredTurnItemsView::Summary,
+        })
+        .await
+        .unwrap();
+    let inherited_turn = turns
+        .turns
+        .iter()
+        .find(|turn| turn.turn_id == "source-active")
+        .unwrap();
+    assert_eq!(
+        inherited_turn.status,
+        if completed {
+            codex_thread_store::StoredTurnStatus::Completed
+        } else {
+            codex_thread_store::StoredTurnStatus::Interrupted
+        }
+    );
+    let inherited_item = inherited_turn
+        .items
+        .iter()
+        .find(|item| item.item_id == "source-user")
+        .expect("inherited user summary");
+    assert!(
+        std::str::from_utf8(&inherited_item.item_json)
+            .unwrap()
+            .contains("fork source message")
+    );
+    let settings = context
+        .items
+        .iter()
+        .rev()
+        .find_map(|item| match item {
+            RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event)) => {
+                Some(&event.thread_settings)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(settings).unwrap(),
+        serde_json::to_value(child.thread.thread_settings_snapshot().await).unwrap()
+    );
+    let RolloutItem::Compacted(checkpoint) = &context.items[1] else {
+        unreachable!()
+    };
+    let model_items = checkpoint.replacement_history.as_ref().unwrap();
+    assert_eq!(
+        model_items
+            .iter()
+            .filter(|item| serde_json::to_string(&item.item)
+                .unwrap()
+                .contains("fork source message"))
+            .count(),
+        1
+    );
+    let interrupted = model_items
+        .iter()
+        .filter(|item| {
+            serde_json::to_string(&item.item)
+                .unwrap()
+                .contains("turn_aborted")
+        })
+        .count();
+    assert_eq!(interrupted, usize::from(!completed));
+    // Model-bearing startup items are before the checkpoint, never replayed after its replacement.
+    assert!(
+        !context.items[2..]
+            .iter()
+            .any(|item| matches!(item, RolloutItem::ResponseItem(_)))
+    );
+    child.thread.shutdown_and_wait().await.unwrap();
+    source.thread.shutdown_and_wait().await.unwrap();
+}
+
+#[tokio::test]
 #[expect(
     clippy::await_holding_invalid_type,
     reason = "hold startup before registration while the submission loop applies settings"

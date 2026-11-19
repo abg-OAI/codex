@@ -16,6 +16,7 @@ mod realtime;
 mod realtime_stream;
 mod search;
 mod segment_paging;
+mod split_turn_summary;
 mod turn_lookup;
 
 pub(super) use read::list_items;
