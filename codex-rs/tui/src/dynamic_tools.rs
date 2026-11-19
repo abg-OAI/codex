@@ -456,7 +456,10 @@ async fn execute_inner(
                 }
                 Ok(page) => (page.data, page.next_cursor),
                 Err(TypedRequestError::Server { source, .. })
-                    if crate::app_server_session::is_history_pagination_unsupported(&source) =>
+                    if !paginated
+                        && crate::app_server_session::is_history_pagination_unsupported(
+                            &source,
+                        ) =>
                 {
                     let response: ThreadReadResponse =
                         request(&handle, |request_id| ClientRequest::ThreadRead {
@@ -555,19 +558,16 @@ async fn execute_inner(
                 == ThreadHistoryMode::Paginated)
                 .then_some(ThreadHistoryMode::Paginated);
             let exclude_turns = source_thread.history_mode == ThreadHistoryMode::Paginated;
-            let source: ThreadResumeResponse = request_with_history_fallback(
-                &handle,
-                exclude_turns,
-                |request_id, exclude_turns| ClientRequest::ThreadResume {
+            let source: ThreadResumeResponse =
+                request(&handle, |request_id| ClientRequest::ThreadResume {
                     request_id,
                     params: ThreadResumeParams {
                         thread_id: params.thread_id.clone(),
                         exclude_turns,
                         ..ThreadResumeParams::default()
                     },
-                },
-            )
-            .await?;
+                })
+                .await?;
             thread_start_params.model = Some(source.model);
             thread_start_params.service_tier = Some(source.service_tier);
             thread_start_params.runtime_workspace_roots = Some(source.runtime_workspace_roots);
@@ -685,9 +685,10 @@ async fn execute_inner(
                 let turns = match page {
                     Ok(page) => page.data,
                     Err(TypedRequestError::Server { source, .. })
-                        if crate::app_server_session::is_history_pagination_unsupported(
-                            &source,
-                        ) =>
+                        if thread.history_mode == ThreadHistoryMode::Legacy
+                            && crate::app_server_session::is_history_pagination_unsupported(
+                                &source,
+                            ) =>
                     {
                         let response: ThreadReadResponse =
                             request(&handle, |request_id| ClientRequest::ThreadRead {
@@ -710,10 +711,8 @@ async fn execute_inner(
                 None
             };
             let exclude_turns = thread.history_mode == ThreadHistoryMode::Paginated;
-            let response: ThreadForkResponse = request_with_history_fallback(
-                &handle,
-                exclude_turns,
-                |request_id, exclude_turns| ClientRequest::ThreadFork {
+            let response: ThreadForkResponse =
+                request(&handle, |request_id| ClientRequest::ThreadFork {
                     request_id,
                     params: ThreadForkParams {
                         thread_id: thread_id.clone(),
@@ -723,9 +722,8 @@ async fn execute_inner(
                         config: mcp_config.clone(),
                         ..ThreadForkParams::default()
                     },
-                },
-            )
-            .await?;
+                })
+                .await?;
             let forked_thread_id = response.thread.id.clone();
             register_background_thread(
                 app_event_tx,
@@ -750,10 +748,8 @@ async fn execute_inner(
             validate_prompt(&prompt, MAX_DELEGATED_INPUT_BYTES)?;
             let thread = read_thread(&handle, &arguments.thread_id).await?;
             let exclude_turns = thread.history_mode == ThreadHistoryMode::Paginated;
-            let resumed: ThreadResumeResponse = request_with_history_fallback(
-                &handle,
-                exclude_turns,
-                |request_id, exclude_turns| ClientRequest::ThreadResume {
+            let resumed: ThreadResumeResponse =
+                request(&handle, |request_id| ClientRequest::ThreadResume {
                     request_id,
                     params: ThreadResumeParams {
                         thread_id: arguments.thread_id.clone(),
@@ -761,9 +757,8 @@ async fn execute_inner(
                         config: mcp_config.clone(),
                         ..ThreadResumeParams::default()
                     },
-                },
-            )
-            .await?;
+                })
+                .await?;
             let daybreak_enabled = thread.daybreak_enabled.unwrap_or(false);
             register_background_thread(
                 app_event_tx,
@@ -914,7 +909,7 @@ async fn execute_inner(
                             let latest_turn = match turns_page {
                                 Ok(Ok(page)) => page.data.into_iter().next(),
                                 Ok(Err(TypedRequestError::Server { source, .. }))
-                                    if crate::app_server_session::is_history_pagination_unsupported(
+                                    if thread.history_mode == ThreadHistoryMode::Legacy && crate::app_server_session::is_history_pagination_unsupported(
                                         &source,
                                     ) =>
                                 {
@@ -1251,29 +1246,6 @@ async fn request<T: DeserializeOwned>(
         ))))
         .await
         .map_err(|error| error.to_string())
-}
-
-async fn request_with_history_fallback<T: DeserializeOwned>(
-    handle: &AppServerRequestHandle,
-    exclude_turns: bool,
-    mut build: impl FnMut(RequestId, bool) -> ClientRequest,
-) -> Result<T, String> {
-    let request_id = || RequestId::String(format!("tui-dynamic-{}", Uuid::new_v4()));
-    match handle
-        .request_typed(build(request_id(), exclude_turns))
-        .await
-    {
-        Err(TypedRequestError::Server { source, .. })
-            if exclude_turns
-                && crate::app_server_session::is_history_pagination_unsupported(&source) =>
-        {
-            handle
-                .request_typed(build(request_id(), /*exclude_turns*/ false))
-                .await
-                .map_err(|error| error.to_string())
-        }
-        result => result.map_err(|error| error.to_string()),
-    }
 }
 
 async fn read_thread(handle: &AppServerRequestHandle, thread_id: &str) -> Result<Thread, String> {

@@ -1515,6 +1515,14 @@ impl ThreadRequestProcessor {
             .load_with_overrides(config_overrides.clone(), typesafe_overrides.clone())
             .await
             .map_err(|err| config_load_error(&err))?;
+        if !config.ephemeral
+            && history_mode == Some(ThreadHistoryMode::Legacy)
+            && thread_store.as_any().is::<LocalThreadStore>()
+        {
+            return Err(invalid_request(
+                "Persistent local threads use paginated history",
+            ));
+        }
         if config.ephemeral && daybreak_enabled.is_some() {
             return Err(invalid_request(
                 "daybreakEnabled is not supported for ephemeral threads",
@@ -5630,6 +5638,14 @@ impl ThreadRequestProcessor {
         if ephemeral && defer_goal_continuation {
             return Err(invalid_request(
                 "`deferGoalContinuation` cannot be combined with `ephemeral`",
+            ));
+        }
+        if !ephemeral
+            && source_thread.history_mode == ThreadHistoryMode::Legacy
+            && self.thread_store.as_any().is::<LocalThreadStore>()
+        {
+            return Err(invalid_request(
+                "Migrate this legacy thread with `codex migrate-rollouts` before creating a persistent local fork",
             ));
         }
         if paginated_source && ephemeral && include_turns {
