@@ -1,0 +1,301 @@
+diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
+index af5182b9465b1472555c45898525bb04e1ff5c7f..54dba6980f02d4ed188f50a0b8f21340ffe8d03c 100644
+--- a/codex-rs/Cargo.lock
++++ b/codex-rs/Cargo.lock
+@@ -5181,6 +5181,7 @@ dependencies = [
+ name = "codex-thread-store"
+ version = "0.0.0"
+ dependencies = [
++ "blake3",
+  "caseless",
+  "chrono",
+  "codex-app-server-protocol",
+diff --git a/codex-rs/cli/src/migrate_rollouts.rs b/codex-rs/cli/src/migrate_rollouts.rs
+index f7f695b73260fb661dcb4906e3bf38a805475022..6d823d6ee7ec11a1ddaaa4fe8d908326dbab95d1 100644
+--- a/codex-rs/cli/src/migrate_rollouts.rs
++++ b/codex-rs/cli/src/migrate_rollouts.rs
+@@ -24,6 +24,10 @@ pub(crate) struct MigrateRolloutsCommand {
+     #[arg(long)]
+     apply: bool,
+
++    /// Split one or more unloaded paginated threads at their latest complete checkpoint.
++    #[arg(long, requires = "thread", conflicts_with = "max_mib_per_second")]
++    split: bool,
++
+     /// Restrict inspection or migration to one or more thread IDs.
+     #[arg(long, value_name = "THREAD_ID", value_parser = ThreadId::from_string)]
+     thread: Vec<ThreadId>,
+@@ -74,6 +78,41 @@ pub(crate) async fn run(
+     };
+     let json = command.json;
+     let verbose = command.verbose;
++    if command.split {
++        let state = codex_rollout::state_db::get_state_db(&config)
++            .await
++            .context("split requires the local thread index")?;
++        let store =
++            LocalThreadStore::new(LocalThreadStoreConfig::from_config(&config), Some(state));
++        let mut results = Vec::new();
++        for id in command.thread {
++            let outcome = store.split_closed_rollout(id, command.apply).await?;
++            if json {
++                results.push(serde_json::json!({"thread_id":id, "outcome":outcome}));
++            } else {
++                use codex_thread_store::ColdSplitOutcome;
++                match outcome {
++                    ColdSplitOutcome::Ineligible => {
++                        println!("{id} has no eligible checkpoint to split")
++                    }
++                    ColdSplitOutcome::Eligible { retained_bytes } => {
++                        println!("{id} can split with {retained_bytes} retained bytes")
++                    }
++                    ColdSplitOutcome::Split {
++                        rollout_path,
++                        retained_bytes,
++                    } => println!(
++                        "{id} split to {} with {retained_bytes} retained bytes",
++                        rollout_path.display()
++                    ),
++                }
++            }
++        }
++        if json {
++            println!("{}", serde_json::to_string_pretty(&results)?);
++        }
++        return Ok(());
++    }
+     let thread_history_db_path = config.sqlite.thread_history_db_path();
+     let thread_storage_before = if mode == RolloutMigrationMode::Apply && !json {
+         thread_storage_bytes(
+diff --git a/codex-rs/thread-store/Cargo.toml b/codex-rs/thread-store/Cargo.toml
+index e88567275248b3f50903b071a86c11cad4b775d4..f84859adf01c58fd804a7b71e93d5b731fc25699 100644
+--- a/codex-rs/thread-store/Cargo.toml
++++ b/codex-rs/thread-store/Cargo.toml
+@@ -13,6 +13,7 @@ doctest = false
+ workspace = true
+
+ [dependencies]
++blake3 = { workspace = true }
+ caseless = { workspace = true }
+ chrono = { workspace = true, features = ["serde"] }
+ codex-app-server-protocol = { workspace = true }
+@@ -32,6 +33,7 @@ serde = { workspace = true, features = ["derive"] }
+ serde_json = { workspace = true }
+ sqlx = { workspace = true }
+ sqlx-macros = { workspace = true }
++tempfile = { workspace = true }
+ thiserror = { workspace = true }
+ tokio = { workspace = true }
+ tracing = { workspace = true }
+@@ -41,6 +43,5 @@ zstd = { workspace = true }
+ codex-protocol-test-support = { workspace = true }
+ codex-utils-absolute-path = { workspace = true }
+ pretty_assertions = { workspace = true }
+-tempfile = { workspace = true }
+ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+ uuid = { workspace = true }
+diff --git a/codex-rs/thread-store/src/lib.rs b/codex-rs/thread-store/src/lib.rs
+index 6cef8653e37fdea7871937abe8762d5f415fc4ee..1589cf08b35134a182703852dde4454ecab2230f 100644
+--- a/codex-rs/thread-store/src/lib.rs
++++ b/codex-rs/thread-store/src/lib.rs
+@@ -36,6 +36,7 @@ pub use in_memory::InMemoryThreadStore;
+ pub use in_memory::InMemoryThreadStoreCalls;
+ pub use live_thread::LiveThread;
+ pub use live_thread::LiveThreadInitGuard;
++pub use local::ColdSplitOutcome;
+ pub use local::LocalThreadStore;
+ pub use local::LocalThreadStoreConfig;
+ pub use local::RolloutMigrationFailureReason;
+diff --git a/codex-rs/thread-store/src/local/archive_thread.rs b/codex-rs/thread-store/src/local/archive_thread.rs
+index e66eba5d10dbde655abe5f26a61f29e690daf55e..c88a8409805357a9cecbd2d07f2a46294fecd044 100644
+--- a/codex-rs/thread-store/src/local/archive_thread.rs
++++ b/codex-rs/thread-store/src/local/archive_thread.rs
+@@ -105,6 +105,11 @@ async fn archive_thread_with_paths(
+         let file_name =
+             validated_rollout_file_name(canonical_rollout_path.as_path(), rollout_path.as_path())?;
+         let destination = archive_folder.join(&file_name);
++        super::cold_split::cache::remove(&canonical_rollout_path).map_err(|err| {
++            ThreadStoreError::Internal {
++                message: format!("could not discard checkpoint copy before archival: {err}"),
++            }
++        })?;
+         if rollout_path == selected_rollout_path {
+             archived_path = Some(destination.clone());
+         }
+diff --git a/codex-rs/thread-store/src/local/delete_thread.rs b/codex-rs/thread-store/src/local/delete_thread.rs
+index 84f7c9d14af1544418762870890d464496dc7bec..4a320f5f7327ed04287bf7e6554e4f3e4e06ad2f 100644
+--- a/codex-rs/thread-store/src/local/delete_thread.rs
++++ b/codex-rs/thread-store/src/local/delete_thread.rs
+@@ -344,6 +344,13 @@ fn delete_rollout_path(store: &LocalThreadStore, rollout_path: &Path) -> ThreadS
+         Ok(true) | Err(_) => Err(err),
+     })?;
+     validated_rollout_file_name(&canonical_rollout_path, rollout_path)?;
++    if canonical_rollout_path.is_file() {
++        super::cold_split::cache::remove(&canonical_rollout_path).map_err(|err| {
++            ThreadStoreError::Internal {
++                message: format!("could not remove rollout checkpoint copy: {err}"),
++            }
++        })?;
++    }
+     match std::fs::remove_file(&canonical_rollout_path) {
+         Ok(()) => Ok(true),
+         Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
+diff --git a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
+index 77ea445a4dbe91295bb95ac87077a50c4b5a9bfa..116b485756fe1715533f226bfad7f8ca583f0bff 100644
+--- a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
++++ b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
+@@ -238,6 +238,119 @@ fn compatibility_turn(thread_id: ThreadId, label: &str) -> serde_json::Result<Ve
+     ]))
+ }
+
++/// Offline splitting preserves native cursor ordinals while keeping the latest model read local.
++#[tokio::test]
++async fn cold_split_preserves_the_parent_and_serves_the_checkpoint_tail()
++-> Result<(), Box<dyn std::error::Error>> {
++    let home = TempDir::new()?;
++    let config = test_config(home.path());
++    let state = codex_state::StateRuntime::init(
++        config.sqlite.clone(),
++        config.default_model_provider_id.clone(),
++    )
++    .await?;
++    let store = LocalThreadStore::new(config, Some(state.clone()));
++    let id = ThreadId::new();
++    create(&store, id).await?;
++    let mut history = compatibility_turn(id, "first")?;
++    let mut second = compatibility_turn(id, "second")?;
++    history.push(second.remove(0));
++    let mut snapshot = checkpoint(id)?;
++    let RolloutItem::Compacted(c) = &mut snapshot[0] else {
++        panic!("missing compaction")
++    };
++    c.resume_metadata.as_mut().unwrap().last_started_turn_id = Some("second".into());
++    snapshot.splice(1..1,[
++        RolloutItem::WorldState(codex_protocol::protocol::WorldStateItem::full(Default::default())),
++        serde_json::from_value(serde_json::json!({"type":"turn_context","payload":{
++            "turn_id":"second","cwd":home.path(),"approval_policy":"never",
++            "permission_profile":codex_protocol::models::PermissionProfile::read_only(),"model":"test-model"
++        }}))?,
++    ]);
++    history.extend(snapshot);
++    history.extend(second);
++    history.extend(compatibility_turn(id, "later")?);
++    store
++        .append_items(AppendThreadItemsParams {
++            thread_id: id,
++            items: history,
++        })
++        .await?;
++    let parent = store.live_rollout_path(id).await?;
++    store.shutdown_thread(id).await?;
++    codex_rollout::state_db::reconcile_rollout(
++        Some(&state),
++        &parent,
++        "test-provider",
++        None,
++        &[],
++        Some(false),
++        None,
++    )
++    .await;
++    let original = std::fs::read(&parent)?;
++    let model_items = |items: Vec<RolloutItem>| {
++        serde_json::to_value(items.into_iter().skip(1).collect::<Vec<_>>())
++    };
++    let load = || {
++        store.load_latest_model_context(crate::LoadThreadHistoryParams {
++            thread_id: id,
++            include_archived: false,
++        })
++    };
++    let before = model_items(load().await?.items)?;
++    assert!(matches!(
++        store.split_closed_rollout(id, false).await?,
++        crate::ColdSplitOutcome::Eligible { .. }
++    ));
++    assert_eq!(state.get_thread(id).await?.unwrap().rollout_path, parent);
++    let crate::ColdSplitOutcome::Split { rollout_path, .. } =
++        store.split_closed_rollout(id, true).await?
++    else {
++        panic!("missing split")
++    };
++    assert_eq!(std::fs::read(&parent)?, original);
++    let frozen = codex_rollout::read_session_meta_line(&rollout_path)
++        .await?
++        .meta
++        .history_base
++        .unwrap();
++    assert_eq!(frozen.end_byte_offset, original.len() as u64);
++    assert_eq!(std::fs::read_to_string(&rollout_path)?.lines().count(), 1);
++    let held = parent.with_extension("held");
++    std::fs::rename(&parent, &held)?;
++    assert_eq!(model_items(load().await?.items)?, before);
++    std::fs::rename(&held, &parent)?;
++    // A newer incomplete compaction in the active file requires replay before the copied tail.
++    let clean_head = std::fs::read(&rollout_path)?;
++    let incomplete = serde_json::json!({"timestamp":"2026-01-01T00:00:00Z","ordinal":frozen.end_ordinal_exclusive+1,
++        "type":"compacted","payload":{"message":"unfinished"}});
++    {
++        use std::io::Write;
++        let mut head = std::fs::OpenOptions::new()
++            .append(true)
++            .open(&rollout_path)?;
++        writeln!(head, "{incomplete}")?;
++    }
++    assert!(
++        crate::local::model_context::scan_current_checkpoint(&rollout_path)
++            .await?
++            .is_none()
++    );
++    std::fs::write(&rollout_path, clean_head)?;
++
++    let cache = rollout_path.with_extension("checkpoint-tail");
++    std::fs::write(&cache, b"damaged copy")?;
++    assert_eq!(model_items(load().await?.items)?, before);
++    std::fs::remove_file(cache)?;
++    assert_eq!(model_items(load().await?.items)?, before);
++    assert!(matches!(
++        store.split_closed_rollout(id, true).await?,
++        crate::ColdSplitOutcome::Ineligible
++    ));
++    Ok(())
++}
++
+ /// Compaction seals the prefix immediately and the same turn finishes in its continuation.
+ #[tokio::test]
+ async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dyn std::error::Error>>
+diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
+index 313bd7a82981952973cb03cc9fab7e6e042c3f03..75e36cb64acef032e8ba478708ff43aca368a0da 100644
+--- a/codex-rs/thread-store/src/local/mod.rs
++++ b/codex-rs/thread-store/src/local/mod.rs
+@@ -1,4 +1,5 @@
+ mod archive_thread;
++mod cold_split;
+ mod create_thread;
+ mod delete_thread;
+ mod helpers;
+@@ -126,6 +127,7 @@ use crate::UpdateProjectParams;
+ use crate::UpdateThreadMetadataParams;
+ use crate::UpdatedProject;
+
++pub use cold_split::ColdSplitOutcome;
+ pub use rollout_migration::RolloutMigrationFailureReason;
+ pub use rollout_migration::RolloutMigrationMode;
+ pub use rollout_migration::RolloutMigrationOptions;
+diff --git a/codex-rs/thread-store/src/local/model_context/checkpoint.rs b/codex-rs/thread-store/src/local/model_context/checkpoint.rs
+index 00ea50b5d17cecd9a9670a61e2291eff8a71a2c0..057798e97b46e98105cb3115d2c115deff360ad4 100644
+--- a/codex-rs/thread-store/src/local/model_context/checkpoint.rs
++++ b/codex-rs/thread-store/src/local/model_context/checkpoint.rs
+@@ -52,8 +52,10 @@ pub(in crate::local) async fn scan_checkpoint(
+             let ScanOutcome::Parsed(line) = outcome else {
+                 continue;
+             };
+-            if matches!(line.item, RolloutItem::SessionMeta(_)) {
+-                break;
++            if let RolloutItem::SessionMeta(meta) = line.item {
++                return Ok(meta.meta.history_base.and_then(|base| {
++                    crate::local::cold_split::cache::complete_scan(&path, meta.meta.id, base, scan)
++                }));
+             }
+             if scan.push(line.item) == ModelContextScanProgress::Complete {
+                 return Ok(Some(scan.finish()));

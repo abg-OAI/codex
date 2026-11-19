@@ -1,0 +1,18 @@
+[vcs]
+commit-msg = """
+Split closed rollouts at a saved checkpoint
+
+Start a native continuation at the selected rollout's durable end so
+saved cursors and forks retain their positions. Keep a bounded copy
+of the checkpoint turn and subsequent records beside the continuation
+for model resume. Fall back to native history when the copy is absent
+or cannot satisfy the read.
+"""
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"
