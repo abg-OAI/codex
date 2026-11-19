@@ -63,7 +63,8 @@ pub(super) fn validate_environment_configs(
         match &selection.config {
             EnvironmentConfigState::FromThread
             | EnvironmentConfigState::Pending
-            | EnvironmentConfigState::Failed(_) => {}
+            | EnvironmentConfigState::Failed(_)
+            | EnvironmentConfigState::Unavailable => {}
             EnvironmentConfigState::Ready(config) => {
                 validate_environment_config(selection, config, features).map_err(|error| {
                     ConstraintError::InvalidValue {
@@ -87,7 +88,10 @@ pub(super) fn ensure_configs_stay_owner_provided(
         environment.config == EnvironmentConfigState::FromThread
             && current.iter().any(|current| {
                 current.environment_id == environment.environment_id
-                    && current.config != EnvironmentConfigState::FromThread
+                    && !matches!(
+                        current.config,
+                        EnvironmentConfigState::FromThread | EnvironmentConfigState::Unavailable
+                    )
             })
     }) {
         return Err(ConstraintError::InvalidValue {
@@ -346,6 +350,19 @@ impl Session {
         let mut current = self.services.turn_environments.selections();
         let mut future = state.session_configuration.environments.clone();
         let inherited = matches!(source, ConfigUpdateSource::Inherited);
+        if current.iter().chain(&future).any(|environment| {
+            environment.environment_id == selection.environment_id
+                && matches!(environment.config, EnvironmentConfigState::Unavailable)
+        }) {
+            return if inherited {
+                Ok(())
+            } else {
+                Err(CodexErr::InvalidRequest(format!(
+                    "executor `{}` is unavailable for this thread",
+                    selection.environment_id
+                )))
+            };
+        }
         let matches = |environment: &TurnEnvironmentSelection| {
             environment.has_same_workspace(selection)
                 && (!inherited || matches!(environment.config, EnvironmentConfigState::Pending))

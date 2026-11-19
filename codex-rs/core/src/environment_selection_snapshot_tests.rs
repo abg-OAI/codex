@@ -354,3 +354,76 @@ async fn credential_refresh_does_not_restore_a_removed_environment() {
         "removal should wait until the credential refresh finishes"
     );
 }
+
+/// Excluded executors retain their position and cannot regain capabilities through new requests.
+#[tokio::test]
+async fn unavailable_executor_survives_registry_removal_updates_and_child_inheritance() {
+    let manager = Arc::new(EnvironmentManager::default_for_tests());
+    let cwd = PathUri::from_abs_path(&AbsolutePathBuf::current_dir().unwrap());
+    let local = TurnEnvironmentSelection {
+        environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
+        cwd: cwd.clone(),
+        workspace_roots: Vec::new(),
+        config: EnvironmentConfigState::FromThread,
+        selected_capability_roots: Default::default(),
+    };
+    let excluded = TurnEnvironmentSelection {
+        environment_id: "removed-box".to_string(),
+        config: EnvironmentConfigState::Unavailable,
+        ..local.clone()
+    };
+    let roots = vec![SelectedCapabilityRoot {
+        id: "excluded-skill".to_string(),
+        location: CapabilityRootLocation::Environment {
+            environment_id: excluded.environment_id.clone(),
+            path: cwd,
+        },
+    }];
+    let owner = ThreadEnvironments::new(
+        Arc::clone(&manager),
+        crate::shell::default_user_shell(),
+        ThreadEnvironmentDefaults::new(tests::test_environment_config(), SandboxType::None),
+        ShellSnapshot::disabled(),
+        TurnEnvironmentSnapshot::default(),
+        false,
+    )
+    .with_unavailable_selections(&[local.clone(), excluded.clone()]);
+    owner.update_selections(&[local.clone()]);
+    let before = owner.snapshot().await;
+    assert_eq!(
+        before.all_selections()[0].environment_id,
+        LOCAL_ENVIRONMENT_ID
+    );
+    assert_eq!(
+        before.inheritable_requests()[1].config,
+        EnvironmentConfigState::Unavailable
+    );
+    assert!(
+        owner
+            .inspect_selected_capability_roots(&roots)
+            .ready_roots
+            .is_empty()
+    );
+    let mut retry = excluded.clone();
+    retry.config = EnvironmentConfigState::Ready(tests::test_environment_config());
+    retry.cwd = PathUri::parse("file:///changed").unwrap();
+    owner.update_selections(&[local.clone(), retry]);
+    assert_eq!(owner.selections()[1], excluded);
+    let snapshot = owner.snapshot().await;
+    let child = ThreadEnvironments::new(
+        manager,
+        crate::shell::default_user_shell(),
+        ThreadEnvironmentDefaults::new(tests::test_environment_config(), SandboxType::None),
+        ShellSnapshot::disabled(),
+        snapshot,
+        false,
+    );
+    child.update_selections(&[local]);
+    assert_eq!(child.snapshot().await.all_selections()[1], excluded);
+    assert!(
+        child
+            .inspect_selected_capability_roots(&roots)
+            .ready_roots
+            .is_empty()
+    );
+}
