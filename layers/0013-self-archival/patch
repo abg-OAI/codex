@@ -241,13 +241,13 @@ index 4e20b01e6bf07b93f69f5ea8c8cc486781dc7645..cc1accf85e435669cd3c9a7da027abef
      }
 
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index fd555b57ec49aa7c1e27e0481ce49255d7904d4c..c7f29ff67fe8d601ef57daa40b9bb3aaabb427a9 100644
+index 32fc11c5c8f3415e67911a69f34547d2cd56abda..9de6f0f83cab84186a6f5f62924c06567455c552 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
-@@ -650,27 +650,46 @@ pub(crate) async fn run_turn(
+@@ -660,28 +660,52 @@ pub(crate) async fn run_turn(
                  .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
                  .await;
-
+ 
 -            run_sampling_request(
 -                Arc::clone(&sess),
 -                Arc::clone(&step_context),
@@ -278,16 +278,23 @@ index fd555b57ec49aa7c1e27e0481ce49255d7904d4c..c7f29ff67fe8d601ef57daa40b9bb3aa
          .await;
 -        let sampling_request_result =
 -            sampling_request_result.and_then(|(output, notifications)| {
--                sess.check_rollout_budget()?;
--                Ok((output, notifications))
+-                let has_final_answer =
+-                    !output.mailbox_preempted && output.last_agent_message.final_answer.is_some();
+-                let next = work.accept_response(has_final_answer)?;
+-                Ok((output, notifications, next))
 -            });
 +        let sampling_request_result = sampling_request_result.and_then(|result| {
-+            sess.check_rollout_budget()?;
-+            Ok(result)
++            let Some((output, notifications)) = result else {
++                sess.check_rollout_budget()?;
++                return Ok(None);
++            };
++            let has_final_answer =
++                !output.mailbox_preempted && output.last_agent_message.final_answer.is_some();
++            let next = work.accept_response(has_final_answer)?;
++            Ok(Some((output, notifications, next)))
 +        });
          match sampling_request_result {
--            Ok(result) => {
--                let (sampling_request_output, notify_messages) = result;
+-            Ok((sampling_request_output, notify_messages, next)) => {
 +            Ok(None) => {
 +                if cancellation_token.is_cancelled() {
 +                    return Err(CodexErr::TurnAborted);
@@ -303,9 +310,9 @@ index fd555b57ec49aa7c1e27e0481ce49255d7904d4c..c7f29ff67fe8d601ef57daa40b9bb3aa
 +                )
 +                .await;
 +            }
-+            Ok(Some((sampling_request_output, notify_messages))) => {
++            Ok(Some((sampling_request_output, notify_messages, next))) => {
                  guardian_budget_compacted = false;
-
+ 
                  let SamplingRequestResult {
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
 index 91770001730448465a89f5e180baff5b9e05e45b..26115b759817821a8896fc97233f43c6ffda7826 100644

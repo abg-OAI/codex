@@ -192,6 +192,149 @@ async fn continuation_preserves_native_rollout_compatibility()
 }
 
 /// Reads one turn per page so the native cursor crosses the inherited segment boundary.
+#[tokio::test]
+async fn rotated_call_recovers_its_own_frames_and_cursor() -> Result<(), Box<dyn std::error::Error>>
+{
+    use codex_protocol::realtime::{RealtimeItem, RealtimeItemContent, RealtimeSessionOutcome};
+    let home = TempDir::new()?;
+    let config = test_config(home.path());
+    let state = codex_state::StateRuntime::init(
+        config.sqlite.clone(),
+        config.default_model_provider_id.clone(),
+    )
+    .await?;
+    let store = LocalThreadStore::new(config, Some(state.clone()));
+    let id = ThreadId::new();
+    store.create_thread(create_params(&store, id)).await?;
+    let start = RealtimeItem {
+        id: "start".into(),
+        realtime_session_id: "call".into(),
+        observed_at_ms: Some(10),
+        content: RealtimeItemContent::RealtimeSessionStarted,
+    };
+    let frame = RealtimeItem {
+        id: "frame".into(),
+        observed_at_ms: Some(11),
+        content: RealtimeItemContent::Frame {
+            channels: codex_protocol::realtime::RealtimeFrameChannels {
+                voice_transcript: codex_protocol::realtime::RealtimeVoiceTranscript {
+                    role: codex_protocol::realtime::RealtimeTranscriptRole::User,
+                    text: "hello".into(),
+                },
+            },
+        },
+        ..start.clone()
+    };
+    let closed = RealtimeItem {
+        id: "closed".into(),
+        observed_at_ms: Some(12),
+        content: RealtimeItemContent::RealtimeSessionClosed {
+            outcome: RealtimeSessionOutcome::Ended,
+            final_frame_sequence: None,
+        },
+        ..start.clone()
+    };
+    store
+        .seal_realtime_items(id, vec![start.clone(), frame.clone()])
+        .await?;
+    let original = store.live_rollout_path(id).await?;
+    codex_rollout::state_db::reconcile_rollout(
+        Some(&state),
+        &original,
+        "test-provider",
+        None,
+        &[],
+        Some(false),
+        None,
+    )
+    .await;
+    let query = crate::ListRealtimeParams {
+        thread_id: id,
+        session_id: None,
+        from_observed_at_ms: None,
+        to_observed_at_ms: None,
+        order: codex_app_server_protocol::ThreadRealtimeOrder::Position,
+        after_position: None,
+        event_id: None,
+        cursor: None,
+        page_size: 1,
+        snapshot_end: None,
+        required_through_position: None,
+    };
+    let page = store.list_realtime(query.clone()).await?;
+    assert_eq!(page.data[0].item.id, "start");
+    let cursor = page.next_cursor.expect("frame must be on a second page");
+    store
+        .append_items(AppendThreadItemsParams {
+            thread_id: id,
+            items: checkpoint(id)?,
+        })
+        .await?;
+    assert_ne!(store.live_rollout_path(id).await?, original);
+    store.seal_realtime_items(id, vec![closed.clone()]).await?;
+    let continued = store
+        .list_realtime(crate::ListRealtimeParams {
+            cursor: Some(cursor),
+            ..query.clone()
+        })
+        .await?;
+    assert_eq!(continued.data[0].item.id, "frame");
+    assert!(continued.next_cursor.is_none());
+    assert_eq!(continued.snapshot_end, page.snapshot_end);
+    assert_eq!(
+        store.load_realtime_session_head(id).await?.as_deref(),
+        Some("call")
+    );
+    assert_eq!(
+        store.load_realtime_session(id, "call".into()).await?,
+        Some(vec![start, frame, closed])
+    );
+    assert!(store.realtime_frames_enabled(id).await?);
+    let fork = store
+        .prepare_fork(crate::PrepareForkParams {
+            thread_id: id,
+            boundary: crate::ForkBoundary::Latest,
+        })
+        .await?;
+    let child = ThreadId::new();
+    let mut params = create_params(&store, child);
+    params.forked_from_id = Some(id);
+    params.history_base = fork.history_base;
+    store.create_thread(params).await?;
+    store
+        .persist_thread(child, crate::PersistContext::Standard)
+        .await?;
+    store.flush_thread(child).await?;
+    let child_path = store.live_rollout_path(child).await?;
+    codex_rollout::state_db::reconcile_rollout(
+        Some(&state),
+        &child_path,
+        "test-provider",
+        None,
+        &[],
+        Some(false),
+        None,
+    )
+    .await;
+    assert_eq!(store.load_realtime_session_head(child).await?, None);
+    assert_eq!(
+        store.load_realtime_session(child, "call".into()).await?,
+        None
+    );
+    assert!(!store.realtime_frames_enabled(child).await?);
+    assert!(
+        store
+            .list_realtime(crate::ListRealtimeParams {
+                thread_id: child,
+                ..query
+            })
+            .await?
+            .data
+            .is_empty()
+    );
+    Ok(())
+}
+
 async fn assert_native_turn_pages(
     store: &LocalThreadStore,
     thread_id: ThreadId,
@@ -414,24 +557,36 @@ async fn failed_publication_preserves_original_writer() -> Result<(), Box<dyn st
 #[tokio::test]
 async fn unresolved_publication_recovers_before_next_append()
 -> Result<(), Box<dyn std::error::Error>> {
-    exercise_unresolved_publication("BEFORE", false).await
+    exercise_unresolved_publication("BEFORE", Recovery::Append).await
 }
 
 #[tokio::test]
 async fn uncertain_committed_publication_recovers_before_next_append()
 -> Result<(), Box<dyn std::error::Error>> {
-    exercise_unresolved_publication("AFTER", false).await
+    exercise_unresolved_publication("AFTER", Recovery::Append).await
 }
 
 #[tokio::test]
 async fn discard_closes_both_writers_after_uncertain_publication()
 -> Result<(), Box<dyn std::error::Error>> {
-    exercise_unresolved_publication("AFTER", true).await
+    exercise_unresolved_publication("AFTER", Recovery::Discard).await
+}
+
+#[tokio::test]
+async fn realtime_seal_reconciles_uncertain_publication() -> Result<(), Box<dyn std::error::Error>>
+{
+    exercise_unresolved_publication("AFTER", Recovery::RealtimeSeal).await
+}
+
+enum Recovery {
+    Append,
+    Discard,
+    RealtimeSeal,
 }
 
 async fn exercise_unresolved_publication(
     timing: &str,
-    discard: bool,
+    recovery: Recovery,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let home = TempDir::new()?;
     let config = test_config(home.path());
@@ -499,6 +654,25 @@ async fn exercise_unresolved_publication(
             .await
             .is_err()
     );
+    let final_input = codex_protocol::realtime::RealtimeItem {
+        id: "final-input".into(),
+        realtime_session_id: "call-1".into(),
+        observed_at_ms: None,
+        content: codex_protocol::realtime::RealtimeItemContent::SessionInputSaved {
+            reason: codex_protocol::realtime::SessionInputReason::SessionEnd,
+            source_event_ids: Vec::new(),
+            input_item_id: "input-tail".into(),
+            input: "last words".into(),
+        },
+    };
+    if matches!(recovery, Recovery::RealtimeSeal) {
+        assert!(
+            store
+                .seal_realtime_items(id, vec![final_input.clone()])
+                .await
+                .is_err()
+        );
+    }
     assert!(store.flush_thread(id).await.is_err());
     assert!(store.shutdown_thread(id).await.is_err());
     assert_eq!(
@@ -508,7 +682,7 @@ async fn exercise_unresolved_publication(
             .collect::<Result<Vec<_>, _>>()?,
         before
     );
-    if discard {
+    if matches!(recovery, Recovery::Discard) {
         let (current, pending) = {
             let entries = store.live_recorders.lock().await;
             let entry = entries.get(&id).unwrap();
@@ -543,6 +717,22 @@ async fn exercise_unresolved_publication(
         .await?;
     let selected = state.get_thread(id).await?.unwrap().rollout_path;
     assert_eq!(selected == old, timing == "BEFORE");
+    if matches!(recovery, Recovery::RealtimeSeal) {
+        store
+            .seal_realtime_items(id, vec![final_input.clone()])
+            .await?;
+        store
+            .seal_realtime_items(id, vec![final_input.clone()])
+            .await?;
+        assert_eq!(store.live_rollout_path(id).await?, selected);
+        assert_eq!(state.get_thread(id).await?.unwrap().rollout_path, selected);
+        let original = paths.iter().position(|p| p == &old).unwrap();
+        assert_eq!(std::fs::read(&old)?, before[original]);
+        let (items, _, _) = RolloutRecorder::load_rollout_items(&selected).await?;
+        assert_eq!(items.iter().filter(|item| matches!(item, RolloutItem::RealtimeItem(item) if item.id == final_input.id)).count(), 1);
+        store.shutdown_thread(id).await?;
+        return Ok(());
+    }
     let appended: RolloutItem = serde_json::from_value(serde_json::json!({
         "type":"response_item", "payload":{"type":"message","role":"user",
             "content":[{"type":"input_text","text":"after rejected publication"}]}
