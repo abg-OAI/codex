@@ -1,0 +1,13 @@
+diff --git a/codex-rs/core/src/saffron/promote_subagent/tests.rs b/codex-rs/core/src/saffron/promote_subagent/tests.rs
+index 632189135c231a1498a46f46019a7a4dfc9d69a2..a570c2beea7318747fb3515db881b21263155b04 100644
+--- a/codex-rs/core/src/saffron/promote_subagent/tests.rs
++++ b/codex-rs/core/src/saffron/promote_subagent/tests.rs
+@@ -528,7 +528,7 @@ fn ready_retry_preserves_newer_completed_work_and_the_existing_copy() -> anyhow:
+         assert!(fixture.child.is_running());
+         let copied = fixture.manager.get_thread(receipt.destination_id).await?;
+         assert!(copied.is_running());
+-        let copied_history = serde_json::to_string(&saved_conversation(&copied).await?);
++        let copied_history = serde_json::to_string(&saved_conversation(&copied).await?)?;
+         assert!(!copied_history.contains("new-work-after-copy"));
+         let retry = fixture.promote().await?;
+         assert_eq!(retry["thread_id"], result["thread_id"]);

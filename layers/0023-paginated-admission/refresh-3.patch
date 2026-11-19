@@ -1,0 +1,185 @@
+diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
+index 54dba6980f02d4ed188f50a0b8f21340ffe8d03c..f0d171cbbd601e7f665d84c9159a2978ade063e4 100644
+--- a/codex-rs/Cargo.lock
++++ b/codex-rs/Cargo.lock
+@@ -6195,6 +6195,7 @@ dependencies = [
+  "codex-features",
+  "codex-guardian-context",
+  "codex-guardian-v2",
++ "codex-history",
+  "codex-home",
+  "codex-hooks",
+  "codex-http-client",
+diff --git a/codex-rs/core/tests/common/Cargo.toml b/codex-rs/core/tests/common/Cargo.toml
+index bd70c86c5326e97847e10c06a226d58488f4c5c2..25f4038facb38708b0073a4ff21a1bdfac24b5a6 100644
+--- a/codex-rs/core/tests/common/Cargo.toml
++++ b/codex-rs/core/tests/common/Cargo.toml
+@@ -26,6 +26,7 @@ codex-extension-api = { workspace = true }
+ codex-exec-server = { workspace = true }
+ codex-guardian-context = { workspace = true }
+ codex-guardian-v2 = { workspace = true }
++codex-history = { workspace = true }
+ codex-home = { workspace = true }
+ codex-features = { workspace = true }
+ codex-hooks = { workspace = true }
+diff --git a/codex-rs/core/tests/common/test_codex.rs b/codex-rs/core/tests/common/test_codex.rs
+index 25cc2365a115b443259346d3af3adf6b7eff565e..2a5aa50d4e5300f3f7c8183d13a13a9c82ac2891 100644
+--- a/codex-rs/core/tests/common/test_codex.rs
++++ b/codex-rs/core/tests/common/test_codex.rs
+@@ -969,14 +969,39 @@ impl TestCodexBuilder {
+             }
+             (Some(path), None) => {
+                 let auth_manager = self.auth.manager_for_home(config.codex_home.as_path());
+-                Box::pin(thread_manager.resume_legacy_thread_from_rollout(
+-                    config.clone(),
+-                    path,
+-                    auth_manager,
+-                    /*parent_trace*/ None,
+-                    client_mcp_extensions(),
+-                ))
+-                .await?
++                let meta = codex_core::read_session_meta_line(&path).await?.meta;
++                if meta.history_mode == ThreadHistoryMode::Paginated {
++                    let context = thread_store
++                        .load_latest_model_context(codex_thread_store::LoadThreadHistoryParams {
++                            thread_id: meta.id,
++                            include_archived: false,
++                        })
++                        .await?;
++                    let history =
++                        codex_history::InitialHistory::Resumed(codex_history::ResumedHistory {
++                            conversation_id: context.thread_id,
++                            history_revision: context.revision,
++                            history: Arc::new(context.items),
++                            rollout_path: Some(path),
++                        });
++                    Box::pin(thread_manager.resume_thread_with_history(
++                        config.clone(),
++                        history,
++                        auth_manager,
++                        /*parent_trace*/ None,
++                        client_mcp_extensions(),
++                    ))
++                    .await?
++                } else {
++                    Box::pin(thread_manager.resume_legacy_thread_from_rollout(
++                        config.clone(),
++                        path,
++                        auth_manager,
++                        /*parent_trace*/ None,
++                        client_mcp_extensions(),
++                    ))
++                    .await?
++                }
+             }
+             (None, Some(user_shell_override)) => {
+                 Box::pin(
+@@ -1003,14 +1028,27 @@ impl TestCodexBuilder {
+                 } else {
+                     None
+                 };
+-                Box::pin(thread_manager.start_thread(StartThreadOptions {
++                let options = StartThreadOptions {
+                     request_country: self.request_country.clone(),
+                     history_mode: self.history_mode,
+                     client_mcp_extensions: client_mcp_extensions(),
+                     environments: environment_requests,
+                     ..StartThreadOptions::new(config.clone())
+-                }))
+-                .await?
++                };
++                if self.history_mode == Some(ThreadHistoryMode::Legacy)
++                    && !config.ephemeral
++                    && thread_store
++                        .as_any()
++                        .is::<codex_thread_store::LocalThreadStore>()
++                {
++                    Box::pin(codex_core::test_support::start_saved_legacy_thread(
++                        &thread_manager,
++                        options,
++                    ))
++                    .await?
++                } else {
++                    Box::pin(thread_manager.start_thread(options)).await?
++                }
+             }
+         };
+
+diff --git a/codex-rs/core/tests/saffron_compaction_retention.rs b/codex-rs/core/tests/saffron_compaction_retention.rs
+index 2ff625381b7687e37cc4809318a8e945c0679fdd..a9fb010cf7bcb49f3ac81e278c54aa25302cc3a1 100644
+--- a/codex-rs/core/tests/saffron_compaction_retention.rs
++++ b/codex-rs/core/tests/saffron_compaction_retention.rs
+@@ -7,6 +7,7 @@ use codex_model_provider_info::ModelProviderInfo;
+ use codex_protocol::items::TurnItem;
+ use codex_protocol::protocol::EventMsg;
+ use codex_protocol::protocol::Op;
++use codex_protocol::protocol::ThreadHistoryMode;
+ use core_test_support::responses;
+ use core_test_support::skip_if_no_network;
+ use core_test_support::test_codex::TestCodexBuilder;
+@@ -16,12 +17,17 @@ use serde_json::json;
+ use wiremock::MockServer;
+
+ /// Admitted agent messages retain attribution through compaction and cold resume.
+-#[test_case::test_case(false, "send_message_to_thread"; "local_message")]
+-#[test_case::test_case(true, "send_message_to_thread"; "remote_message")]
+-#[test_case::test_case(false, "fork_thread"; "local_assignment")]
+-#[test_case::test_case(true, "fork_thread"; "remote_assignment")]
++#[test_case::test_case(false, "send_message_to_thread", None; "local_message")]
++#[test_case::test_case(true, "send_message_to_thread", None; "remote_message")]
++#[test_case::test_case(false, "fork_thread", None; "local_assignment")]
++#[test_case::test_case(true, "fork_thread", None; "remote_assignment")]
++#[test_case::test_case(false, "send_message_to_thread", Some(ThreadHistoryMode::Legacy); "saved_legacy_message")]
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+-async fn saffron_delivery_survives_compaction_and_resume(remote: bool, tool: &str) -> Result<()> {
++async fn saffron_delivery_survives_compaction_and_resume(
++    remote: bool,
++    tool: &str,
++    history_mode: Option<ThreadHistoryMode>,
++) -> Result<()> {
+     use codex_core::TurnInput;
+     use codex_core::TurnInputRequest;
+     use codex_protocol::models::FunctionCallOutputPayload;
+@@ -29,7 +35,7 @@ async fn saffron_delivery_survives_compaction_and_resume(remote: bool, tool: &st
+
+     skip_if_no_network!(Ok(()));
+     let server = responses::start_mock_server().await;
+-    let mut builder = test_codex();
++    let mut builder = test_codex().with_history_mode(history_mode);
+     let compact = if remote {
+         builder = builder.with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+         responses::sse(vec![
+@@ -131,6 +137,7 @@ async fn local_compaction_retains_requests() -> Result<()> {
+     provider.name = "Local compaction test".to_owned();
+     provider.supports_websockets = false;
+     let builder = test_codex()
++        .with_history_mode(None)
+         .with_model("gpt-5.4")
+         .with_config(move |config| config.model_provider = provider);
+     assert_retained_request(
+@@ -149,7 +156,9 @@ async fn local_compaction_retains_requests() -> Result<()> {
+ async fn remote_compaction_retains_requests() -> Result<()> {
+     skip_if_no_network!(Ok(()));
+     let server = responses::start_mock_server().await;
+-    let builder = test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
++    let builder = test_codex()
++        .with_history_mode(None)
++        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+     assert_retained_request(
+         &server,
+         builder,
+@@ -194,7 +203,13 @@ async fn assert_retained_request(
+     .await;
+     test.submit_turn("Continue the report.").await?;
+     test.codex.flush_rollout().await?;
+-    let history = test.codex.load_history(false).await?;
++    let history = test
++        .thread_store
++        .load_latest_model_context(codex_thread_store::LoadThreadHistoryParams {
++            thread_id: test.session_configured.thread_id,
++            include_archived: false,
++        })
++        .await?;
+     assert!(
+         history
+             .items

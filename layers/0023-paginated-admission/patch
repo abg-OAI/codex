@@ -1,0 +1,1168 @@
+diff --git a/codex-rs/app-server/src/external_agent_migration/session_importer.rs b/codex-rs/app-server/src/external_agent_migration/session_importer.rs
+index 1a3613b43457761db733818e75afececcf080a7b..997ae267c92846c292e9aa08b6830d1572ebb72a 100644
+--- a/codex-rs/app-server/src/external_agent_migration/session_importer.rs
++++ b/codex-rs/app-server/src/external_agent_migration/session_importer.rs
+@@ -37,6 +37,7 @@ use codex_rollout::RolloutItem;
+ use codex_rollout::into_persisted_rollout_items;
+ use codex_thread_store::AppendThreadItemsParams;
+ use codex_thread_store::CreateThreadParams;
++use codex_thread_store::LocalThreadStore;
+ use codex_thread_store::PersistContext;
+ use codex_thread_store::ThreadMetadataPatch;
+ use codex_thread_store::ThreadPersistenceMetadata;
+@@ -310,7 +311,7 @@ impl ExternalAgentSessionImporter {
+                         source_content_sha256: &source_content_sha256,
+                         expected_source_content_sha256: &expected_source_content_sha256,
+                         thread_id,
+-                        source_items: &session.rollout_items,
++                        source_items: session.rollout_items,
+                     },
+                 )
+                 .await;
+@@ -465,6 +466,19 @@ impl ExternalAgentSessionImporter {
+             ThreadMemoryMode::Disabled
+         };
+         let now = Utc::now();
++        let history_mode = if self.thread_store.as_any().is::<LocalThreadStore>() {
++            if !self.thread_store.supports_paginated_history_lists() {
++                return Err(SessionImportStepFailure::new(
++                    "history_unavailable",
++                    "Local import requires the thread history index".into(),
++                ));
++            }
++            rollout_items = LocalThreadStore::paginate_import_messages(thread_id, rollout_items)
++                .map_err(|err| SessionImportStepFailure::new("invalid_session", err.to_string()))?;
++            ThreadHistoryMode::Paginated
++        } else {
++            ThreadHistoryMode::Legacy
++        };
+         let create_params = CreateThreadParams {
+             attached_thread: false,
+             creator_user_id: None,
+@@ -498,7 +512,7 @@ impl ExternalAgentSessionImporter {
+             selected_capability_roots: Vec::new(),
+             runtime_workspace_roots: None,
+             multi_agent_version: Some(MultiAgentVersion::V1),
+-            history_mode: ThreadHistoryMode::Legacy,
++            history_mode,
+             history_base: None,
+             subagent_history_start_ordinal: None,
+             initial_window_id: codex_protocol::ContextWindowId::new_uuid_v7(),
+@@ -508,7 +522,7 @@ impl ExternalAgentSessionImporter {
+                 memory_mode,
+             },
+         };
+-        rollout_items = into_persisted_rollout_items(rollout_items, ThreadHistoryMode::Legacy);
++        rollout_items = into_persisted_rollout_items(rollout_items, history_mode);
+         let (created_at, updated_at) = rollout_items
+             .iter()
+             .filter_map(|item| match item {
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index 525d57f5b8d90f7db515033f89e9e45f1c1eb9eb..f2dca1e00d194162041b1fbe6d542f4db6c6512e 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -1515,6 +1515,14 @@ impl ThreadRequestProcessor {
+             .load_with_overrides(config_overrides.clone(), typesafe_overrides.clone())
+             .await
+             .map_err(|err| config_load_error(&err))?;
++        if !config.ephemeral
++            && history_mode == Some(ThreadHistoryMode::Legacy)
++            && thread_store.as_any().is::<LocalThreadStore>()
++        {
++            return Err(invalid_request(
++                "Persistent local threads use paginated history",
++            ));
++        }
+         if config.ephemeral && daybreak_enabled.is_some() {
+             return Err(invalid_request(
+                 "daybreakEnabled is not supported for ephemeral threads",
+@@ -5552,6 +5560,14 @@ impl ThreadRequestProcessor {
+                 /*include_history*/ false,
+             )
+             .await?;
++        if !ephemeral
++            && source_thread.history_mode == ThreadHistoryMode::Legacy
++            && self.thread_store.as_any().is::<LocalThreadStore>()
++        {
++            return Err(invalid_request(
++                "Migrate this legacy thread with `codex migrate-rollouts` before creating a persistent local fork",
++            ));
++        }
+         let loaded_parent = self
+             .thread_manager
+             .get_thread(source_thread.thread_id)
+diff --git a/codex-rs/app-server/tests/suite/v2/external_agent_import_sync.rs b/codex-rs/app-server/tests/suite/v2/external_agent_import_sync.rs
+index f04718b1ecc73661ceb5b14a41a350d138e05bfb..aa3c547df8d2d60fd7dcd6e4f9ccd8209b52e302 100644
+--- a/codex-rs/app-server/tests/suite/v2/external_agent_import_sync.rs
++++ b/codex-rs/app-server/tests/suite/v2/external_agent_import_sync.rs
+@@ -279,6 +279,18 @@ async fn cold_exact_prefix_appends_suffix_to_same_task_and_checkpoints() -> Resu
+     let mut fixture = ImportFixture::new().await?;
+     let original = fixture.import_one().await?;
+
++    let initial = fixture.read(&original).await?.thread;
++    assert_eq!(
++        initial.history_mode,
++        codex_app_server_protocol::ThreadHistoryMode::Paginated
++    );
++    let initial_ids: Vec<_> = initial
++        .turns
++        .iter()
++        .flat_map(Turn::item_payloads)
++        .map(|item| item.id().to_string())
++        .collect();
++
+     fixture.append(&[("assistant", LATE_ASSISTANT)])?;
+     assert_eq!(fixture.import_detected().await?, vec![original.clone()]);
+
+@@ -287,6 +299,26 @@ async fn cold_exact_prefix_appends_suffix_to_same_task_and_checkpoints() -> Resu
+         &fixture.read(&original).await?,
+         &[("user", FIRST_USER), ("assistant", LATE_ASSISTANT)],
+     );
++    fixture.append(&[("user", LATER_USER)])?;
++    assert_eq!(fixture.import_detected().await?, vec![original.clone()]);
++    let after = fixture.read(&original).await?;
++    assert_history(
++        &after,
++        &[
++            ("user", FIRST_USER),
++            ("assistant", LATE_ASSISTANT),
++            ("user", LATER_USER),
++        ],
++    );
++    let ids: std::collections::HashSet<_> = after
++        .thread
++        .turns
++        .iter()
++        .flat_map(Turn::item_payloads)
++        .map(|item| item.id())
++        .collect();
++    assert_eq!(ids.len(), 4);
++    assert!(initial_ids.iter().all(|id| ids.contains(id.as_str())));
+     assert!(fixture.detect().await?.items.is_empty());
+     Ok(())
+ }
+diff --git a/codex-rs/app-server/tests/suite/v2/rollout_migration.rs b/codex-rs/app-server/tests/suite/v2/rollout_migration.rs
+index a9fb5aa9c37f4962c1fcbd36342802097ee33282..8e3562315b9ec2011a4ff03e6b8e33398d6881fe 100644
+--- a/codex-rs/app-server/tests/suite/v2/rollout_migration.rs
++++ b/codex-rs/app-server/tests/suite/v2/rollout_migration.rs
+@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
+ use anyhow::Result;
+ use app_test_support::MockResponsesConfig;
+ use app_test_support::TestAppServer;
++use app_test_support::create_fake_rollout;
+ use codex_app_server_protocol::ExperimentalFeatureEnablementSetParams;
+ use codex_app_server_protocol::ExperimentalFeatureEnablementSetResponse;
+ use codex_app_server_protocol::ThreadHistoryMode;
+@@ -10,8 +11,6 @@ use codex_app_server_protocol::ThreadReadParams;
+ use codex_app_server_protocol::ThreadReadResponse;
+ use codex_app_server_protocol::ThreadResumeParams;
+ use codex_app_server_protocol::ThreadResumeResponse;
+-use codex_app_server_protocol::ThreadStartParams;
+-use codex_app_server_protocol::ThreadStartResponse;
+ use codex_app_server_protocol::TurnStartParams;
+ use codex_app_server_protocol::UserInput;
+ use core_test_support::responses;
+@@ -47,14 +46,23 @@ async fn runtime_enabled_legacy_migration_preserves_cold_resume_model_context()
+         .with_codex_home(codex_home.path())
+         .build_initialized()
+         .await?;
+-    let start_id = primary
+-        .send_thread_start_request_with_auto_env(ThreadStartParams {
+-            history_mode: Some(ThreadHistoryMode::Legacy),
++    let saved = create_fake_rollout(
++        codex_home.path(),
++        "2025-01-05T12-00-00",
++        "2025-01-05T12:00:00Z",
++        "old conversation",
++        Some("mock_provider"),
++        None,
++    )?;
++    let resume_id = primary
++        .send_thread_resume_request(ThreadResumeParams {
++            thread_id: saved,
+             ..Default::default()
+         })
+         .await?;
+-    let ThreadStartResponse { thread, .. } =
+-        timeout(DEFAULT_READ_TIMEOUT, primary.read_response(start_id)).await??;
++    let ThreadResumeResponse { thread, .. } =
++        timeout(DEFAULT_READ_TIMEOUT, primary.read_response(resume_id)).await??;
++    assert_eq!(thread.history_mode, ThreadHistoryMode::Legacy);
+     timeout(
+         DEFAULT_READ_TIMEOUT,
+         primary.start_turn_and_wait_for_completion(TurnStartParams {
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_fork.rs b/codex-rs/app-server/tests/suite/v2/thread_fork.rs
+index 7da78ead50ffe0408d92fb34bb6ebae24f2b737f..df2ce231e8973c568218a7ef6bfa9c9e7b7a6c0d 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_fork.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_fork.rs
+@@ -146,6 +146,40 @@ async fn list_threads(mcp: &mut TestAppServer) -> Result<ThreadListResponse> {
+     to_response::<ThreadListResponse>(list_resp)
+ }
+
++#[tokio::test]
++async fn persistent_local_fork_requires_migrating_a_legacy_parent() -> Result<()> {
++    let codex_home = TempDir::new()?;
++    let saved = create_fake_rollout(
++        codex_home.path(),
++        "2025-02-04T10-00-00",
++        "2025-02-04T10:00:00Z",
++        "saved before migration",
++        None,
++        None,
++    )?;
++    let mut server = TestAppServer::builder()
++        .with_codex_home(codex_home.path())
++        .build_initialized()
++        .await?;
++    let request = server
++        .send_thread_fork_request(ThreadForkParams {
++            thread_id: saved,
++            ..Default::default()
++        })
++        .await?;
++    let error = timeout(
++        DEFAULT_READ_TIMEOUT,
++        server.read_stream_until_error_message(RequestId::Integer(request)),
++    )
++    .await??;
++    assert_eq!(error.error.code, -32600);
++    assert!(
++        error.error.message.contains("codex migrate-rollouts"),
++        "{error:?}"
++    );
++    Ok(())
++}
++
+ #[tokio::test]
+ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
+     let server = create_mock_responses_server_repeating_assistant("Done").await;
+@@ -153,7 +187,7 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
+     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+
+     let preview = "Saved user message";
+-    let conversation_id = create_fake_rollout(
++    let conversation_id = create_fake_paginated_rollout(
+         codex_home.path(),
+         "2025-01-05T12-00-00",
+         "2025-01-05T12:00:00Z",
+@@ -253,7 +287,7 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
+                 .account_scoped,
+         ),
+         (false, true),
+-        "forking legacy history creates a newly account-scoped thread"
++        "forking an unscoped parent creates an account-scoped thread"
+     );
+     assert!(thread.cwd.as_path().is_absolute());
+     assert_eq!(thread.source, SessionSource::VsCode);
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_start.rs b/codex-rs/app-server/tests/suite/v2/thread_start.rs
+index 6c2aefad7bc64f2c5bedfdc51bc0217cf264d006..959ce201e5db773ac020c9b95cd5940d2a0c9e90 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_start.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_start.rs
+@@ -513,7 +513,7 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
+ }
+
+ #[tokio::test]
+-async fn thread_start_history_mode_accepts_legacy_and_paginated() -> Result<()> {
++async fn persistent_local_start_requires_paginated_history() -> Result<()> {
+     let server = create_mock_responses_server_repeating_assistant("Done").await;
+     let codex_home = TempDir::new()?;
+     create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
+@@ -523,8 +523,26 @@ async fn thread_start_history_mode_accepts_legacy_and_paginated() -> Result<()>
+         .build_initialized()
+         .await?;
+
++    let request_id = mcp
++        .send_thread_start_request_with_auto_env(ThreadStartParams {
++            history_mode: Some(ThreadHistoryMode::Legacy),
++            ..Default::default()
++        })
++        .await?;
++    let error = timeout(
++        DEFAULT_READ_TIMEOUT,
++        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
++    )
++    .await??;
++    assert_eq!(error.error.code, INVALID_REQUEST_ERROR_CODE);
++    assert_eq!(
++        error.error.message,
++        "Persistent local threads use paginated history"
++    );
++
+     let ThreadStartResponse { thread, .. } = mcp
+         .start_thread(ThreadStartParams {
++            ephemeral: Some(true),
+             history_mode: Some(ThreadHistoryMode::Legacy),
+             ..Default::default()
+         })
+diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
+index f93a64a235e47b102c5e1d191ac352323516fb1d..a4fc4ecea31723ea25488196f758cfc04d3c9ccc 100644
+--- a/codex-rs/core/src/session/mod.rs
++++ b/codex-rs/core/src/session/mod.rs
+@@ -944,6 +944,15 @@ impl Session {
+         let history_mode = conversation_history.get_history_mode(
+             requested_history_mode.unwrap_or_else(|| thread_store.default_history_mode()),
+         );
++        if !config.ephemeral
++            && thread_store.as_any().is::<LocalThreadStore>()
++            && history_mode == ThreadHistoryMode::Legacy
++            && !matches!(conversation_history, InitialHistory::Resumed(_))
++        {
++            return Err(CodexErr::InvalidRequest(
++                "A new persistent local thread needs paginated history. Migrate a legacy thread before forking it.".into(),
++            ));
++        }
+         let base_instructions = config
+             .base_instructions
+             .clone()
+diff --git a/codex-rs/external-agent-migration/src/sessions/append.rs b/codex-rs/external-agent-migration/src/sessions/append.rs
+index 61f329cc199dd70421022a9fe54f6cdb53ddfc1e..481effd0b744f1da8bef6ea6d562dc5b172a3c85 100644
+--- a/codex-rs/external-agent-migration/src/sessions/append.rs
++++ b/codex-rs/external-agent-migration/src/sessions/append.rs
+@@ -6,9 +6,11 @@ use codex_core::ThreadManager;
+ use codex_protocol::ThreadId;
+ use codex_protocol::models::ResponseItem;
+ use codex_protocol::protocol::EventMsg;
++use codex_protocol::protocol::ThreadHistoryMode;
+ use codex_protocol::protocol::ThreadMemoryMode;
+ use codex_rollout::RolloutItem;
+ use codex_thread_store::AppendThreadItemsParams;
++use codex_thread_store::LocalThreadStore;
+ use codex_thread_store::ReadThreadParams;
+ use codex_thread_store::ResumeThreadParams;
+ use codex_thread_store::ThreadPersistenceMetadata;
+@@ -21,7 +23,7 @@ pub struct ExistingSessionAppend<'a> {
+     pub source_content_sha256: &'a str,
+     pub expected_source_content_sha256: &'a str,
+     pub thread_id: ThreadId,
+-    pub source_items: &'a [RolloutItem],
++    pub source_items: Vec<RolloutItem>,
+ }
+
+ /// Appends an exact missing suffix to one cold imported thread and checkpoints the source.
+@@ -41,6 +43,37 @@ pub async fn append_existing_session(
+         thread_id,
+         source_items,
+     } = request;
++    if let Some(local) = thread_store.as_any().downcast_ref::<LocalThreadStore>() {
++        let Ok(thread) = local
++            .read_thread(ReadThreadParams {
++                thread_id,
++                include_archived: false,
++                include_history: false,
++            })
++            .await
++        else {
++            return false;
++        };
++        if thread.history_mode == ThreadHistoryMode::Paginated {
++            if !matches!(
++                local.extend_paginated_import(thread_id, source_items).await,
++                Ok(true)
++            ) {
++                return false;
++            }
++            let Ok(_permit) = checkpoint_permits.acquire().await else {
++                return false;
++            };
++            return checkpoint(
++                codex_home,
++                source_path,
++                thread_id,
++                expected_source_content_sha256,
++                source_content_sha256,
++            )
++            .await;
++        }
++    }
+     let Ok(mut thread) = thread_store
+         .read_thread(ReadThreadParams {
+             thread_id,
+@@ -66,7 +99,7 @@ pub async fn append_existing_session(
+     let Some(rollout_path) = thread.rollout_path else {
+         return false;
+     };
+-    if plan_append(source_items, &history.items).is_none() {
++    if plan_append(&source_items, &history.items).is_none() {
+         return false;
+     }
+     if thread_store
+@@ -97,7 +130,7 @@ pub async fn append_existing_session(
+             .take()
+             .filter(|history| history.thread_id == thread_id)
+             .filter(|history| persistence_metadata(&history.items, thread_id).is_some())
+-            .and_then(|history| plan_append(source_items, &history.items)),
++            .and_then(|history| plan_append(&source_items, &history.items)),
+         Ok(_) | Err(_) => None,
+     };
+     let Some(items) = fresh_items else {
+@@ -133,13 +166,30 @@ pub async fn append_existing_session(
+             .take()
+             .filter(|history| history.thread_id == thread_id)
+             .filter(|history| persistence_metadata(&history.items, thread_id).is_some())
+-            .is_some_and(|history| model_transcripts_match(source_items, &history.items)),
++            .is_some_and(|history| model_transcripts_match(&source_items, &history.items)),
+         Ok(_) | Err(_) => false,
+     };
+     if !target_matches_source {
+         return false;
+     }
+
++    checkpoint(
++        codex_home,
++        source_path,
++        thread_id,
++        expected_source_content_sha256,
++        source_content_sha256,
++    )
++    .await
++}
++
++async fn checkpoint(
++    codex_home: &Path,
++    source_path: &Path,
++    thread_id: ThreadId,
++    expected_source_content_sha256: &str,
++    source_content_sha256: &str,
++) -> bool {
+     let codex_home = codex_home.to_path_buf();
+     let source_path = source_path.to_path_buf();
+     let expected_source_content_sha256 = expected_source_content_sha256.to_string();
+diff --git a/codex-rs/rollout/src/lib.rs b/codex-rs/rollout/src/lib.rs
+index 814234a8db773ce23cb4337f589383caa6986cb1..17fa0a4b4e40faad8347ae65d22f48ed37ad88f9 100644
+--- a/codex-rs/rollout/src/lib.rs
++++ b/codex-rs/rollout/src/lib.rs
+@@ -106,6 +106,7 @@ pub use compression::open_rollout_line_reader;
+ pub use compression::plain_rollout_path;
+ pub use compression::spawn_rollout_compression_worker;
+ pub use seekable_reader::open_rollout_seekable_reader;
++pub use seekable_reader::open_rollout_stream;
+ pub use seekable_reader::read_rollout_prefix;
+ pub use seekable_reader::rollout_contains_prefix;
+
+diff --git a/codex-rs/rollout/src/seekable_reader.rs b/codex-rs/rollout/src/seekable_reader.rs
+index a72617aeaab43a8d28cd50a55b7bcc640b200447..350cb88f2c354e92b7b136b49c16640009f89b2d 100644
+--- a/codex-rs/rollout/src/seekable_reader.rs
++++ b/codex-rs/rollout/src/seekable_reader.rs
+@@ -20,6 +20,13 @@ enum RolloutReader {
+ }
+
+ impl RolloutReader {
++    fn into_stream(self) -> io::Result<Box<dyn Read>> {
++        match self {
++            Self::Plain(file) => Ok(Box::new(file)),
++            Self::Compressed(file) => Ok(Box::new(zstd::stream::read::Decoder::new(file)?)),
++        }
++    }
++
+     fn open(path: &Path) -> io::Result<Self> {
+         let plain_path = plain_rollout_path(path);
+         let compressed_path = plain_path.with_extension("jsonl.zst");
+@@ -41,6 +48,11 @@ impl RolloutReader {
+     }
+ }
+
++/// Opens decoded JSONL bytes for a sequential scan of either rollout representation.
++pub fn open_rollout_stream(path: &Path) -> io::Result<Box<dyn Read>> {
++    RolloutReader::open(path)?.into_stream()
++}
++
+ /// Reads at most `max_bytes` decoded rollout bytes without materializing the durable file.
+ ///
+ /// Returns `None` for nonregular files. This retains an open representation while reading, so
+@@ -56,10 +68,7 @@ pub fn read_rollout_prefix(path: &Path, max_bytes: usize) -> io::Result<Option<V
+     if !file.metadata()?.is_file() {
+         return Ok(None);
+     }
+-    let reader: Box<dyn Read> = match source {
+-        RolloutReader::Plain(file) => Box::new(file),
+-        RolloutReader::Compressed(file) => Box::new(zstd::stream::read::Decoder::new(file)?),
+-    };
++    let reader = source.into_stream()?;
+     let mut bytes = Vec::new();
+     reader.take(max_bytes as u64).read_to_end(&mut bytes)?;
+     Ok(Some(bytes))
+diff --git a/codex-rs/thread-store/src/local/rollout_migration.rs b/codex-rs/thread-store/src/local/rollout_migration.rs
+index 968af560a0d80b1d2cda1219ce268b510af15337..cf092800b1f301e457a5f78ee59f508890e3e1e7 100644
+--- a/codex-rs/thread-store/src/local/rollout_migration.rs
++++ b/codex-rs/thread-store/src/local/rollout_migration.rs
+@@ -49,6 +49,7 @@ use crate::ThreadStoreError;
+ use crate::ThreadStoreResult;
+
+ mod canonicalizer;
++mod imported_messages;
+ mod legacy_event;
+ mod line_parser;
+ mod publish;
+diff --git a/codex-rs/tui/src/app/agents_overview.rs b/codex-rs/tui/src/app/agents_overview.rs
+index 0db25eff2345ae9a0aaf56c77ea12689a8656d1b..df8c91bae6e5dcdc8ec077e953c8eca0d510ecd6 100644
+--- a/codex-rs/tui/src/app/agents_overview.rs
++++ b/codex-rs/tui/src/app/agents_overview.rs
+@@ -1434,7 +1434,7 @@ impl App {
+                     .thread_read(thread_id, /*include_turns*/ false)
+                     .await?;
+                 let turns = match thread.history_mode {
+-                    ThreadHistoryMode::Paginated if app_server.supports_paginated_history() => {
++                    ThreadHistoryMode::Paginated => {
+                         app_server
+                             .thread_turns_page(
+                                 thread_id,
+@@ -1444,7 +1444,7 @@ impl App {
+                             .await?
+                             .data
+                     }
+-                    ThreadHistoryMode::Legacy | ThreadHistoryMode::Paginated => {
++                    ThreadHistoryMode::Legacy => {
+                         app_server
+                             .thread_read(thread_id, /*include_turns*/ true)
+                             .await?
+diff --git a/codex-rs/tui/src/app/resume_preparation.rs b/codex-rs/tui/src/app/resume_preparation.rs
+index 7e8359f93f47beace60600a4609a13ef27a5f889..45e7a3f3fdc2645a0e56b17dd9feb4caaec5dcf6 100644
+--- a/codex-rs/tui/src/app/resume_preparation.rs
++++ b/codex-rs/tui/src/app/resume_preparation.rs
+@@ -5,7 +5,6 @@
+ //! prepared result retains the connection identity and any provider error for read-only history.
+
+ use super::*;
+-use codex_app_server_client::TypedRequestError;
+
+ /// Settings retained for a backend that is not currently displayed.
+ #[derive(Clone)]
+@@ -57,36 +56,31 @@ impl App {
+         let mut blank = self.agents_overview.blank_sessions.get(&thread_id)?.clone();
+
+         // A turn can start while this backend is parked, without the TUI seeing it.
+-        let paginated = matches!(
+-            thread.history_mode,
+-            codex_app_server_protocol::ThreadHistoryMode::Paginated
+-        ) && app_server.supports_paginated_history();
+-        let untouched = if paginated {
+-            match app_server.thread_turns_page(thread_id, /*cursor*/ None, /*limit*/ 1).await {
+-                Ok(page) => Some(page.data.is_empty() && page.next_cursor.is_none()),
+-                Err(error) if Self::can_fallback_from_include_turns_error(&error) => Some(true),
+-                Err(error) if error.chain().any(|cause| matches!(
+-                    cause.downcast_ref::<TypedRequestError>(),
+-                    Some(TypedRequestError::Server { source, .. })
+-                        if crate::app_server_session::is_history_pagination_unsupported(source)
+-                )) => None,
+-                Err(_) => Some(false),
++        let untouched = match thread.history_mode {
++            codex_app_server_protocol::ThreadHistoryMode::Paginated => {
++                match app_server
++                    .thread_turns_page(thread_id, /*cursor*/ None, /*limit*/ 1)
++                    .await
++                {
++                    Ok(page) => page.data.is_empty() && page.next_cursor.is_none(),
++                    Err(error) => Self::can_fallback_from_include_turns_error(&error),
++                }
+             }
+-        } else {
+-            None
+-        };
+-        let untouched = match untouched {
+-            Some(untouched) => untouched,
+-            None => match app_server
+-                .thread_read(thread_id, /*include_turns*/ true)
+-                .await
+-            {
+-                Ok(thread) => {
+-                    thread.turns.is_empty()
+-                        && matches!(thread.status, codex_app_server_protocol::ThreadStatus::Idle)
++            codex_app_server_protocol::ThreadHistoryMode::Legacy => {
++                match app_server
++                    .thread_read(thread_id, /*include_turns*/ true)
++                    .await
++                {
++                    Ok(thread) => {
++                        thread.turns.is_empty()
++                            && matches!(
++                                thread.status,
++                                codex_app_server_protocol::ThreadStatus::Idle
++                            )
++                    }
++                    Err(error) => Self::can_fallback_from_include_turns_error(&error),
+                 }
+-                Err(error) => Self::can_fallback_from_include_turns_error(&error),
+-            },
++            }
+         };
+         if !untouched {
+             return None;
+diff --git a/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs b/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
+index c0ffb0290c5a19e6998cda00d1fb2af2c2cd7f83..962b67a921a8abd18a2c61cafb58705176e85ec8 100644
+--- a/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
++++ b/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
+@@ -1784,13 +1784,21 @@ pub(super) async fn start_recording_app_server_with_realtime_speech(
+                         let mut request = serde_json::from_value::<ClientRequest>(
+                             serde_json::to_value(request)?,
+                         )?;
+-                        // Simulate an older store while advertising pagination for the first probe.
+-                        if (legacy_history
+-                            || history_capabilities
+-                                == HistoryCapabilities::FirstTurnPageUnsupported)
+-                            && let ClientRequest::ThreadStart { params, .. } = &mut request
++                        // The proxy records the caller's wire request above. Its current local
++                        // backend can host the simulated old server's legacy sessions in memory.
++                        if legacy_history
++                            || history_capabilities == HistoryCapabilities::FirstTurnPageUnsupported
+                         {
+-                            params.history_mode = Some(ThreadHistoryMode::Legacy);
++                            match &mut request {
++                                ClientRequest::ThreadStart { params, .. } => {
++                                    params.history_mode = Some(ThreadHistoryMode::Legacy);
++                                    params.ephemeral = Some(true);
++                                }
++                                ClientRequest::ThreadFork { params, .. } if legacy_history => {
++                                    params.ephemeral = true
++                                }
++                                _ => {}
++                            }
+                         }
+                         let advertise_paginated = history_capabilities
+                             == HistoryCapabilities::FirstTurnPageUnsupported
+@@ -4285,13 +4293,12 @@ async fn remote_legacy_history_start_negotiates_once_for_resume_and_fork() -> Re
+         Some(&app.config),
+         vec![Arc::new(PlainHistoryCell::new(vec!["visible".into()]))],
+     )
+-    .await
+-    .map_err(|error| color_eyre::eyre::eyre!(error))?;
+-    assert_eq!(exported[0].raw_lines()[0].to_string(), "visible");
++    .await;
++    assert!(exported.is_err());
+     assert!(
+         recorded_params(&requests, "thread/read")[initial_read_count..]
+             .iter()
+-            .any(|params| params["includeTurns"] == true)
++            .all(|params| params["includeTurns"] != true)
+     );
+     assert_eq!(recorded_params(&requests, "thread/turns/list").len(), 1);
+
+@@ -4355,76 +4362,72 @@ async fn remote_legacy_history_start_retries_unsupported_paginated_variant() ->
+ }
+
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+-enum LegacyHistoryRequest {
++enum PaginatedHistoryRequest {
+     Resume,
+     Fork,
+ }
+
+-async fn assert_remote_legacy_history_retry(request: LegacyHistoryRequest) -> Result<()> {
+-    let (app, _codex_home) = make_history_test_app().await?;
+-    let legacy_thread_id =
+-        create_history_rollout(&app.config, ThreadHistoryMode::Legacy, "legacy history")?;
+-    let (mut app_server, requests, proxy) = start_recording_app_server_with_history(
++async fn assert_paginated_request_fails_without_reading_full_history(
++    operation: PaginatedHistoryRequest,
++) -> Result<()> {
++    let (app, _home) = Box::pin(make_history_test_app()).await?;
++    let thread_id =
++        create_history_rollout(&app.config, ThreadHistoryMode::Paginated, "saved page")?;
++    let (mut server, requests, proxy) = start_recording_app_server_with_history(
+         &app.config,
+         HistoryCapabilities::LegacyOnly,
+-        /*blocked_thread_list*/ None,
+-        /*failed_thread_name*/ None,
+-        crate::app_server_session::ThreadParamsMode::Embedded,
++        None,
++        None,
++        crate::app_server_session::ThreadParamsMode::Remote,
+         LoaderOverrides::default(),
+     )
+     .await?;
+
+-    let method = match request {
+-        LegacyHistoryRequest::Resume => {
+-            let resumed = app_server
+-                .resume_thread(
+-                    &app.local_settings,
+-                    app.config.clone(),
+-                    legacy_thread_id,
+-                    crate::app_server_session::ResumeModelSettings::RestoreFromThread,
+-                )
+-                .await?;
+-            assert_eq!(resumed.session.thread_id, legacy_thread_id);
+-            "thread/resume"
+-        }
+-        LegacyHistoryRequest::Fork => {
+-            let forked = app_server
+-                .fork_thread(&app.local_settings, app.config.clone(), legacy_thread_id)
+-                .await?;
+-            assert_ne!(forked.session.thread_id, legacy_thread_id);
+-            "thread/fork"
+-        }
++    let (method, result) = match operation {
++        PaginatedHistoryRequest::Resume => (
++            "thread/resume",
++            Box::pin(server.resume_thread(
++                &app.local_settings,
++                app.config.clone(),
++                thread_id,
++                crate::app_server_session::ResumeModelSettings::RestoreFromThread,
++            ))
++            .await,
++        ),
++        PaginatedHistoryRequest::Fork => (
++            "thread/fork",
++            Box::pin(server.fork_thread(&app.local_settings, app.config.clone(), thread_id)).await,
++        ),
+     };
++    assert!(result.is_err(), "{method} should surface the server error");
+     let attempts = recorded_params(&requests, method);
+-    if request == LegacyHistoryRequest::Resume {
+-        assert_eq!(attempts.len(), 2);
+-        assert_eq!(attempts[0]["excludeTurns"], true);
+-    } else {
+-        assert_eq!(attempts.len(), 1);
+-    }
+-    assert_ne!(
+-        attempts.last().expect("history request")["excludeTurns"],
+-        true
++    assert_eq!(attempts.len(), 1);
++    assert_eq!(attempts[0]["excludeTurns"], true);
++    assert!(
++        recorded_params(&requests, "thread/read")
++            .iter()
++            .all(|params| params["includeTurns"] != true)
+     );
+-    assert!(recorded_params(&requests, "thread/turns/list").is_empty());
+-    assert!(recorded_params(&requests, "thread/items/list").is_empty());
+
+-    app_server.shutdown().await?;
++    server.shutdown().await?;
+     proxy.await??;
+     Ok(())
+ }
+
+ #[tokio::test]
+-async fn remote_legacy_history_resume_retries_generic_method_not_found() -> Result<()> {
+-    Box::pin(assert_remote_legacy_history_retry(
+-        LegacyHistoryRequest::Resume,
++async fn paginated_resume_does_not_retry_with_full_history() -> Result<()> {
++    Box::pin(assert_paginated_request_fails_without_reading_full_history(
++        PaginatedHistoryRequest::Resume,
+     ))
+     .await
+ }
+
+ #[tokio::test]
+-async fn remote_legacy_history_fork_avoids_unsupported_fields() -> Result<()> {
+-    assert_remote_legacy_history_retry(LegacyHistoryRequest::Fork).await
++async fn paginated_fork_does_not_retry_with_full_history() -> Result<()> {
++    Box::pin(assert_paginated_request_fails_without_reading_full_history(
++        PaginatedHistoryRequest::Fork,
++    ))
++    .await
+ }
+
+ #[tokio::test]
+@@ -4910,7 +4913,7 @@ async fn agents_overview_seeds_loaded_threads_when_recent_listing_is_unavailable
+ }
+
+ #[tokio::test]
+-async fn agents_overview_stop_uses_full_history_after_legacy_negotiation() -> Result<()> {
++async fn agents_overview_stop_pages_paginated_threads_after_legacy_negotiation() -> Result<()> {
+     let (mut app, _codex_home) = make_history_test_app().await?;
+     let thread_id = create_history_rollout(
+         &app.config,
+@@ -4935,8 +4938,8 @@ async fn agents_overview_stop_uses_full_history_after_legacy_negotiation() -> Re
+         .into_iter()
+         .map(|params| params["includeTurns"].as_bool().unwrap_or(false))
+         .collect::<Vec<_>>();
+-    assert_eq!(include_turns, vec![false, true]);
+-    assert!(recorded_params(&requests, "thread/turns/list").is_empty());
++    assert_eq!(include_turns, vec![false]);
++    assert_eq!(recorded_params(&requests, "thread/turns/list").len(), 1);
+
+     app_server.shutdown().await?;
+     proxy.await??;
+diff --git a/codex-rs/tui/src/app/transcript_export.rs b/codex-rs/tui/src/app/transcript_export.rs
+index 00775bba50a642025f173fd679f7116b21c81bd9..ff47fc2bf091a0ba488091bd5add2a9e836ce76a 100644
+--- a/codex-rs/tui/src/app/transcript_export.rs
++++ b/codex-rs/tui/src/app/transcript_export.rs
+@@ -5,7 +5,6 @@ use std::path::Path;
+ use std::path::PathBuf;
+ use std::sync::Arc;
+
+-use codex_app_server_client::TypedRequestError;
+ use codex_app_server_protocol::ThreadItemPayload;
+ use codex_app_server_protocol::Turn;
+ use codex_protocol::ThreadId;
+@@ -15,7 +14,6 @@ use super::App;
+ use crate::app_event::TranscriptExportDestination;
+ use crate::app_server_session::AppServerSession;
+ use crate::app_server_session::HistoryHydrationScope;
+-use crate::app_server_session::is_history_pagination_unsupported;
+ use crate::history_cell::AgentMarkdownCell;
+ use crate::history_cell::HistoryCell;
+ use crate::history_cell::PlainHistoryCell;
+@@ -92,7 +90,7 @@ pub(super) async fn load_export_transcript(
+     if thread.ephemeral {
+         return Ok(visible_transcript);
+     }
+-    if let Err(error) = app_server
++    app_server
+         .hydrate_initial_thread_history(
+             &mut thread,
+             /*turn_cursor*/ None,
+@@ -102,23 +100,7 @@ pub(super) async fn load_export_transcript(
+             HistoryHydrationScope::Complete,
+         )
+         .await
+-    {
+-        if matches!(
+-            error.downcast_ref::<TypedRequestError>(),
+-            Some(TypedRequestError::Server { source, .. })
+-                if is_history_pagination_unsupported(source)
+-        ) {
+-            match app_server
+-                .thread_read(thread_id, /*include_turns*/ true)
+-                .await
+-            {
+-                Ok(legacy) if !legacy.turns.is_empty() => thread = legacy,
+-                _ => return Ok(visible_transcript),
+-            }
+-        } else {
+-            return Err(format!("could not load conversation history: {error}"));
+-        }
+-    }
++        .map_err(|error| format!("could not load conversation history: {error}"))?;
+     let mut cells: Vec<Arc<dyn HistoryCell>> = Vec::new();
+     for item in visible_export_items(thread.turns) {
+         if let Some(cell) = export_activity_cell(&item) {
+diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
+index 3c98fb3aaeec70e4d489e09a91fbaa23e4fc76bd..c992f7a8b82bf6c3a61c2b194aff9e9f6b96f983 100644
+--- a/codex-rs/tui/src/app_server_session.rs
++++ b/codex-rs/tui/src/app_server_session.rs
+@@ -1089,10 +1089,6 @@ impl AppServerSession {
+         self.managed_new_thread_defaults.as_ref()
+     }
+
+-    pub(crate) fn supports_paginated_history(&self) -> bool {
+-        self.history_support == ThreadHistorySupport::Paginated
+-    }
+-
+     /// Fetches the current account info without refreshing the auth token.
+     ///
+     /// Used by both `bootstrap` (to populate the initial UI) and `get_login_status`
+@@ -1489,17 +1485,15 @@ impl AppServerSession {
+             .check_namespace(&self.request_handle, &config.cwd)
+             .await?;
+         let fork_parent = match presentation {
+-            ForkPresentation::Regular => self
+-                .thread_read(thread_id, /*include_turns*/ false)
+-                .await
+-                .ok(),
++            ForkPresentation::Regular => {
++                Some(self.thread_read(thread_id, /*include_turns*/ false).await?)
++            }
+             ForkPresentation::SideConversation(_) => None,
+         };
+-        let exclude_turns = self.history_support == ThreadHistorySupport::Paginated
+-            && (fork_parent
+-                .as_ref()
+-                .is_some_and(|thread| thread.history_mode == ThreadHistoryMode::Paginated)
+-                || presentation != ForkPresentation::Regular);
++        let exclude_turns = match &fork_parent {
++            Some(parent) => parent.history_mode == ThreadHistoryMode::Paginated,
++            None => self.history_support == ThreadHistorySupport::Paginated,
++        };
+         let request_id = self.next_request_id();
+         let session_config = if config.model.is_none() {
+             // Avoid inferring a tier from the stale client default model.
+@@ -1562,38 +1556,13 @@ impl AppServerSession {
+         }
+         self.thread_tool_transport()
+             .configure_mcp(&mut params.config);
+-        let response: ThreadForkResponse = match self
++        let mut response: ThreadForkResponse = self
+             .request_handle
+-            .request_typed(ClientRequest::ThreadFork {
+-                request_id,
+-                params: params.clone(),
+-            })
++            .request_typed(ClientRequest::ThreadFork { request_id, params })
+             .await
+-        {
+-            Ok(response) => response,
+-            Err(TypedRequestError::Server { source, .. })
+-                if params.exclude_turns
+-                    && !params.attach_to_source
+-                    && is_history_pagination_unsupported(&source) =>
+-            {
+-                self.history_support = ThreadHistorySupport::LegacyOnly;
+-                params.exclude_turns = false;
+-                let request_id = self.next_request_id();
+-                self.request_handle
+-                    .request_typed(ClientRequest::ThreadFork { request_id, params })
+-                    .await
+-                    .map_err(|err| {
+-                        bootstrap_request_error("thread/fork failed during TUI bootstrap", err)
+-                    })?
+-            }
+-            Err(err) => {
+-                return Err(bootstrap_request_error(
+-                    "thread/fork failed during TUI bootstrap",
+-                    err,
+-                ));
+-            }
+-        };
+-        let mut response = response;
++            .map_err(|err| {
++                bootstrap_request_error("thread/fork failed during TUI bootstrap", err)
++            })?;
+         if presentation == ForkPresentation::Regular
+             && !response.thread.ephemeral
+             && let Err(error) = self
+diff --git a/codex-rs/tui/src/app_server_session/rollout_history.rs b/codex-rs/tui/src/app_server_session/rollout_history.rs
+index ce014c5761b590dcc5ad4d8850109e36033c442f..ebf656e0b93c96aced2d436601a0624ee127b9ad 100644
+--- a/codex-rs/tui/src/app_server_session/rollout_history.rs
++++ b/codex-rs/tui/src/app_server_session/rollout_history.rs
+@@ -4,17 +4,14 @@ use super::AppServerSession;
+ use super::AppServerStartedThread;
+ use super::HistoryHydrationScope;
+ use super::ResumeModelSettings;
+-use super::ThreadHistorySupport;
+ use super::ThreadParamsMode;
+ use super::ThreadSettingsOwner;
+ use super::bootstrap_request_error;
+-use super::is_history_pagination_unsupported;
+ use super::started_thread_from_resume_response;
+ use super::thread_resume_params_from_config;
+ use super::thread_session_state_from_thread_response;
+ use crate::legacy_core::config::Config;
+ use codex_app_server_client::AppServerRequestHandle;
+-use codex_app_server_client::TypedRequestError;
+ use codex_app_server_protocol::AskForApproval;
+ use codex_app_server_protocol::ClientRequest;
+ use codex_app_server_protocol::SortDirection;
+@@ -254,65 +251,34 @@ impl AppServerSession {
+             self.thread_tool_transport()
+                 .configure_mcp(&mut params.config);
+         }
+-        let paginated = self.history_support == ThreadHistorySupport::Paginated;
+-        let cached_legacy = paginated
+-            && self
+-                .history_pagination
+-                .get(&thread_id)
+-                .is_some_and(|state| state.history_mode == ThreadHistoryMode::Legacy);
+-        // Hold the maintenance lock through a full legacy resume to prevent migration.
+-        let mut rollout_maintenance_guard = if cached_legacy && self.uses_embedded_app_server() {
+-            codex_rollout::try_acquire_rollout_maintenance_lock(config.codex_home.as_path())
+-                .ok()
+-                .flatten()
++        self.unread_revisions.remove(&thread_id);
++        let mut metadata = Box::pin(self.thread_read(thread_id, /*include_turns*/ false)).await?;
++        // A migration can finish between observing legacy history and acquiring its lock.
++        let rollout_maintenance_guard = if self.uses_embedded_app_server()
++            && metadata.history_mode == ThreadHistoryMode::Legacy
++        {
++            let guard =
++                codex_rollout::try_acquire_rollout_maintenance_lock(config.codex_home.as_path())?
++                    .ok_or_else(|| {
++                    color_eyre::eyre::eyre!(
++                        "Rollout migration is in progress. Retry resume when it finishes."
++                    )
++                })?;
++            metadata = Box::pin(self.thread_read(thread_id, /*include_turns*/ false)).await?;
++            Some(guard)
+         } else {
+             None
+         };
+-        // Capture the receipt before the resume-time history boundary. Later results are delivered live.
+-        self.unread_revisions.remove(&thread_id);
+-        let metadata = Box::pin(self.thread_read(thread_id, /*include_turns*/ false))
+-            .await
+-            .ok();
+-        let known_legacy = cached_legacy
+-            && (!self.uses_embedded_app_server()
+-                || (rollout_maintenance_guard.is_some()
+-                    && metadata
+-                        .is_some_and(|thread| thread.history_mode == ThreadHistoryMode::Legacy)));
+-        params.exclude_turns = paginated && !known_legacy;
+-        if params.exclude_turns {
+-            rollout_maintenance_guard = None;
+-        }
++        params.exclude_turns = metadata.history_mode == ThreadHistoryMode::Paginated;
+         let request_id = self.next_request_id();
+-        let resume_response = self
++        let response: ThreadResumeResponse = self
+             .request_handle
+-            .request_typed(ClientRequest::ThreadResume {
+-                request_id,
+-                params: params.clone(),
+-            })
+-            .await;
++            .request_typed(ClientRequest::ThreadResume { request_id, params })
++            .await
++            .map_err(|err| {
++                bootstrap_request_error("thread/resume failed during TUI bootstrap", err)
++            })?;
+         drop(rollout_maintenance_guard);
+-        let response: ThreadResumeResponse = match resume_response {
+-            Ok(response) => response,
+-            Err(TypedRequestError::Server { source, .. })
+-                if params.exclude_turns && is_history_pagination_unsupported(&source) =>
+-            {
+-                self.history_support = ThreadHistorySupport::LegacyOnly;
+-                params.exclude_turns = false;
+-                let request_id = self.next_request_id();
+-                self.request_handle
+-                    .request_typed(ClientRequest::ThreadResume { request_id, params })
+-                    .await
+-                    .map_err(|err| {
+-                        bootstrap_request_error("thread/resume failed during TUI bootstrap", err)
+-                    })?
+-            }
+-            Err(err) => {
+-                return Err(bootstrap_request_error(
+-                    "thread/resume failed during TUI bootstrap",
+-                    err,
+-                ));
+-            }
+-        };
+         self.finish_thread_resume(
+             local_settings,
+             &config,
+diff --git a/codex-rs/tui/src/dynamic_tools.rs b/codex-rs/tui/src/dynamic_tools.rs
+index c170df1e111435af7e8fcf3bf415f9da02e3055f..30e814e595fb4fea3f79ef0c61156a60ede81bb7 100644
+--- a/codex-rs/tui/src/dynamic_tools.rs
++++ b/codex-rs/tui/src/dynamic_tools.rs
+@@ -456,7 +456,10 @@ async fn execute_inner(
+                 }
+                 Ok(page) => (page.data, page.next_cursor),
+                 Err(TypedRequestError::Server { source, .. })
+-                    if crate::app_server_session::is_history_pagination_unsupported(&source) =>
++                    if !paginated
++                        && crate::app_server_session::is_history_pagination_unsupported(
++                            &source,
++                        ) =>
+                 {
+                     let response: ThreadReadResponse =
+                         request(&handle, |request_id| ClientRequest::ThreadRead {
+@@ -555,19 +558,16 @@ async fn execute_inner(
+                 == ThreadHistoryMode::Paginated)
+                 .then_some(ThreadHistoryMode::Paginated);
+             let exclude_turns = source_thread.history_mode == ThreadHistoryMode::Paginated;
+-            let source: ThreadResumeResponse = request_with_history_fallback(
+-                &handle,
+-                exclude_turns,
+-                |request_id, exclude_turns| ClientRequest::ThreadResume {
++            let source: ThreadResumeResponse =
++                request(&handle, |request_id| ClientRequest::ThreadResume {
+                     request_id,
+                     params: ThreadResumeParams {
+                         thread_id: params.thread_id.clone(),
+                         exclude_turns,
+                         ..ThreadResumeParams::default()
+                     },
+-                },
+-            )
+-            .await?;
++                })
++                .await?;
+             thread_start_params.model = Some(source.model);
+             thread_start_params.service_tier = Some(source.service_tier);
+             thread_start_params.runtime_workspace_roots = Some(source.runtime_workspace_roots);
+@@ -685,9 +685,10 @@ async fn execute_inner(
+                 let turns = match page {
+                     Ok(page) => page.data,
+                     Err(TypedRequestError::Server { source, .. })
+-                        if crate::app_server_session::is_history_pagination_unsupported(
+-                            &source,
+-                        ) =>
++                        if thread.history_mode == ThreadHistoryMode::Legacy
++                            && crate::app_server_session::is_history_pagination_unsupported(
++                                &source,
++                            ) =>
+                     {
+                         let response: ThreadReadResponse =
+                             request(&handle, |request_id| ClientRequest::ThreadRead {
+@@ -710,10 +711,8 @@ async fn execute_inner(
+                 None
+             };
+             let exclude_turns = thread.history_mode == ThreadHistoryMode::Paginated;
+-            let response: ThreadForkResponse = request_with_history_fallback(
+-                &handle,
+-                exclude_turns,
+-                |request_id, exclude_turns| ClientRequest::ThreadFork {
++            let response: ThreadForkResponse =
++                request(&handle, |request_id| ClientRequest::ThreadFork {
+                     request_id,
+                     params: ThreadForkParams {
+                         thread_id: thread_id.clone(),
+@@ -723,9 +722,8 @@ async fn execute_inner(
+                         config: mcp_config.clone(),
+                         ..ThreadForkParams::default()
+                     },
+-                },
+-            )
+-            .await?;
++                })
++                .await?;
+             let forked_thread_id = response.thread.id.clone();
+             register_background_thread(
+                 app_event_tx,
+@@ -750,10 +748,8 @@ async fn execute_inner(
+             validate_prompt(&prompt, MAX_DELEGATED_INPUT_BYTES)?;
+             let thread = read_thread(&handle, &arguments.thread_id).await?;
+             let exclude_turns = thread.history_mode == ThreadHistoryMode::Paginated;
+-            let resumed: ThreadResumeResponse = request_with_history_fallback(
+-                &handle,
+-                exclude_turns,
+-                |request_id, exclude_turns| ClientRequest::ThreadResume {
++            let resumed: ThreadResumeResponse =
++                request(&handle, |request_id| ClientRequest::ThreadResume {
+                     request_id,
+                     params: ThreadResumeParams {
+                         thread_id: arguments.thread_id.clone(),
+@@ -761,9 +757,8 @@ async fn execute_inner(
+                         config: mcp_config.clone(),
+                         ..ThreadResumeParams::default()
+                     },
+-                },
+-            )
+-            .await?;
++                })
++                .await?;
+             let daybreak_enabled = thread.daybreak_enabled.unwrap_or(false);
+             register_background_thread(
+                 app_event_tx,
+@@ -914,7 +909,7 @@ async fn execute_inner(
+                             let latest_turn = match turns_page {
+                                 Ok(Ok(page)) => page.data.into_iter().next(),
+                                 Ok(Err(TypedRequestError::Server { source, .. }))
+-                                    if crate::app_server_session::is_history_pagination_unsupported(
++                                    if thread.history_mode == ThreadHistoryMode::Legacy && crate::app_server_session::is_history_pagination_unsupported(
+                                         &source,
+                                     ) =>
+                                 {
+@@ -1253,29 +1248,6 @@ async fn request<T: DeserializeOwned>(
+         .map_err(|error| error.to_string())
+ }
+
+-async fn request_with_history_fallback<T: DeserializeOwned>(
+-    handle: &AppServerRequestHandle,
+-    exclude_turns: bool,
+-    mut build: impl FnMut(RequestId, bool) -> ClientRequest,
+-) -> Result<T, String> {
+-    let request_id = || RequestId::String(format!("tui-dynamic-{}", Uuid::new_v4()));
+-    match handle
+-        .request_typed(build(request_id(), exclude_turns))
+-        .await
+-    {
+-        Err(TypedRequestError::Server { source, .. })
+-            if exclude_turns
+-                && crate::app_server_session::is_history_pagination_unsupported(&source) =>
+-        {
+-            handle
+-                .request_typed(build(request_id(), /*exclude_turns*/ false))
+-                .await
+-                .map_err(|error| error.to_string())
+-        }
+-        result => result.map_err(|error| error.to_string()),
+-    }
+-}
+-
+ async fn read_thread(handle: &AppServerRequestHandle, thread_id: &str) -> Result<Thread, String> {
+     let response: ThreadReadResponse = request(handle, |request_id| ClientRequest::ThreadRead {
+         request_id,
