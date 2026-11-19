@@ -24,6 +24,10 @@ pub(crate) struct MigrateRolloutsCommand {
     #[arg(long)]
     apply: bool,
 
+    /// Split one or more unloaded paginated threads at their latest complete checkpoint.
+    #[arg(long, requires = "thread", conflicts_with = "max_mib_per_second")]
+    split: bool,
+
     /// Restrict inspection or migration to one or more thread IDs.
     #[arg(long, value_name = "THREAD_ID", value_parser = ThreadId::from_string)]
     thread: Vec<ThreadId>,
@@ -74,6 +78,41 @@ pub(crate) async fn run(
     };
     let json = command.json;
     let verbose = command.verbose;
+    if command.split {
+        let state = codex_rollout::state_db::get_state_db(&config)
+            .await
+            .context("split requires the local thread index")?;
+        let store =
+            LocalThreadStore::new(LocalThreadStoreConfig::from_config(&config), Some(state));
+        let mut results = Vec::new();
+        for id in command.thread {
+            let outcome = store.split_closed_rollout(id, command.apply).await?;
+            if json {
+                results.push(serde_json::json!({"thread_id":id, "outcome":outcome}));
+            } else {
+                use codex_thread_store::ColdSplitOutcome;
+                match outcome {
+                    ColdSplitOutcome::Ineligible => {
+                        println!("{id} has no eligible checkpoint to split")
+                    }
+                    ColdSplitOutcome::Eligible { retained_bytes } => {
+                        println!("{id} can split with {retained_bytes} retained bytes")
+                    }
+                    ColdSplitOutcome::Split {
+                        rollout_path,
+                        retained_bytes,
+                    } => println!(
+                        "{id} split to {} with {retained_bytes} retained bytes",
+                        rollout_path.display()
+                    ),
+                }
+            }
+        }
+        if json {
+            println!("{}", serde_json::to_string_pretty(&results)?);
+        }
+        return Ok(());
+    }
     let thread_history_db_path = config.sqlite.thread_history_db_path();
     let thread_storage_before = if mode == RolloutMigrationMode::Apply && !json {
         thread_storage_bytes(

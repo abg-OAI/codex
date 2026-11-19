@@ -105,6 +105,11 @@ async fn archive_thread_with_paths(
         let file_name =
             validated_rollout_file_name(canonical_rollout_path.as_path(), rollout_path.as_path())?;
         let destination = archive_folder.join(&file_name);
+        super::cold_split::cache::remove(&canonical_rollout_path).map_err(|err| {
+            ThreadStoreError::Internal {
+                message: format!("could not discard checkpoint copy before archival: {err}"),
+            }
+        })?;
         if rollout_path == selected_rollout_path {
             archived_path = Some(destination.clone());
         }
