@@ -1,0 +1,21 @@
+[vcs]
+commit-msg = """
+Bound thread search reads across indexed rollouts
+
+Walk candidates in catalog order and check the selected rollout's header
+and visible messages through the same reader. Reuse verified hits for
+progress and stop once the next result establishes a page boundary.
+
+Limit each search request to 64 MiB of encoded and decoded rollout input.
+Return an explicit error on exhaustion, including when a discovery helper
+would otherwise suppress the read failure. Resolve normal list paths on
+one blocking worker per page and defer search path checks until use.
+"""
+
+[[operation]]
+[operation.patch]
+file = "patch"
+
+[[operation]]
+[operation.overlay]
+directory = "overlay"
