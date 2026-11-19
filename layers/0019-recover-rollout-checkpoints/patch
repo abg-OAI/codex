@@ -1,0 +1,794 @@
+diff --git a/codex-rs/rollout/src/compression.rs b/codex-rs/rollout/src/compression.rs
+index 12b98375aa4900bc6127feee2f24f13834482928..096dcf248eaea6d9f7178f7bbac9bd30edcfa8a0 100644
+--- a/codex-rs/rollout/src/compression.rs
++++ b/codex-rs/rollout/src/compression.rs
+@@ -91,7 +91,6 @@ pub async fn open_rollout_line_reader(path: &Path) -> io::Result<RolloutLineRead
+ }
+
+ /// Returns the compressed `.jsonl.zst` path for a rollout path.
+-#[cfg(test)]
+ pub(crate) fn compressed_rollout_path(path: &Path) -> PathBuf {
+     path::compressed_rollout_path(path)
+ }
+@@ -968,6 +967,18 @@ mod worker {
+                 /*compressed_bytes*/ None,
+             ));
+         };
++        // A dead writer may have left a partial checkpoint. Its intent records
++        // the identity of the plain file and needs that inode for replay.
++        match crate::ensure_checkpoint_complete(path) {
++            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
++                return Ok(CompressionMeasurement::new(
++                    CompressionOutcome::SkippedBusy,
++                    source_bytes,
++                    /*compressed_bytes*/ None,
++                ));
++            }
++            result => result?,
++        }
+         if !same_file_state(path, &before)
+             .inspect_err(|err| FailureMetric::File(trigger).record("recheck_source", err))?
+         {
+diff --git a/codex-rs/rollout/src/lib.rs b/codex-rs/rollout/src/lib.rs
+index d950c467e99d6cc24c7ca50eb83e3d1c39aa94fe..4fc7b00f740be2b7bf301ae8c4722335ccedded7 100644
+--- a/codex-rs/rollout/src/lib.rs
++++ b/codex-rs/rollout/src/lib.rs
+@@ -159,6 +159,7 @@ pub use policy::should_persist_response_item_for_memories;
+ pub use recorder::RolloutRecorder;
+ pub use recorder::RolloutRecorderParams;
+ pub use recorder::append_rollout_item_to_path;
++pub use recorder::ensure_checkpoint_complete;
+ pub use recorder::thread_item_from_state_metadata;
+ pub use reverse_jsonl_scanner::ReverseJsonlScanner;
+ pub use reverse_jsonl_scanner::ScanOutcome;
+diff --git a/codex-rs/rollout/src/recorder.rs b/codex-rs/rollout/src/recorder.rs
+index 64b3cd41d3bcb7234c76554f77d692a447f7f29b..b8fd9a2b24c3f4d2b6e74c7fc188ebcbbe633acd 100644
+--- a/codex-rs/rollout/src/recorder.rs
++++ b/codex-rs/rollout/src/recorder.rs
+@@ -1,5 +1,8 @@
+ //! Persist Codex session rollouts (.jsonl) so sessions can be replayed or inspected later.
+
++mod checkpoint;
++pub use checkpoint::ensure_checkpoint_complete;
++
+ use std::collections::HashSet;
+ use std::fs;
+ use std::fs::File;
+@@ -128,6 +131,15 @@ pub enum RolloutRecorderParams {
+
+ enum RolloutCmd {
+     AddItems(Vec<RolloutItem>),
++    StageContinuation {
++        items: Vec<RolloutItem>,
++        ack: oneshot::Sender<std::io::Result<()>>,
++    },
++    Checkpoint {
++        items: Vec<RolloutItem>,
++        lock: Arc<crate::WriterLockGuard>,
++        ack: oneshot::Sender<std::io::Result<()>>,
++    },
+     ReadUnpersistedSessionMeta {
+         ack: oneshot::Sender<Option<SessionMeta>>,
+     },
+@@ -149,7 +161,7 @@ enum RolloutCmd {
+ /// Observable state for the background rollout writer task.
+ struct RolloutWriterTask {
+     // The task, not just its caller, owns the lock until queued file writes finish.
+-    _writer_lock: Option<Arc<crate::WriterLockGuard>>,
++    writer_lock: Option<Arc<crate::WriterLockGuard>>,
+     handle: Mutex<Option<JoinHandle<()>>>,
+     terminal_failure: Mutex<Option<Arc<IoError>>>,
+ }
+@@ -158,7 +170,7 @@ impl RolloutWriterTask {
+     /// Create task observability state before spawning the writer.
+     fn new(writer_lock: Option<Arc<crate::WriterLockGuard>>) -> Self {
+         Self {
+-            _writer_lock: writer_lock,
++            writer_lock,
+             handle: Mutex::new(None),
+             terminal_failure: Mutex::new(None),
+         }
+@@ -1131,6 +1143,53 @@ impl RolloutRecorder {
+             })
+     }
+
++    /// Persist one compaction batch under the stable thread's writer lock. An
++    /// interrupted append can be completed from the adjacent durable intent.
++    pub async fn record_checkpoint(&self, items: Vec<RolloutItem>) -> std::io::Result<()> {
++        if !cfg!(unix) {
++            self.record_canonical_items(&items).await?;
++            return self.persist().await;
++        }
++        if items.is_empty() {
++            return Err(IoError::new(
++                std::io::ErrorKind::InvalidInput,
++                "compaction checkpoint has no records",
++            ));
++        }
++        let lock = self
++            .writer_task
++            .writer_lock
++            .clone()
++            .ok_or_else(|| IoError::other("compaction append requires a thread writer lock"))?;
++        let (ack, result) = oneshot::channel();
++        self.tx
++            .send(RolloutCmd::Checkpoint { items, lock, ack })
++            .await
++            .map_err(IoError::other)?;
++        result.await.map_err(IoError::other)?
++    }
++
++    /// Write a new continuation once and sync it before its path can be selected.
++    pub async fn stage_continuation(&self, items: Vec<RolloutItem>) -> std::io::Result<()> {
++        let (ack, result) = oneshot::channel();
++        self.tx
++            .send(RolloutCmd::StageContinuation { items, ack })
++            .await
++            .map_err(IoError::other)?;
++        result.await.map_err(IoError::other)?
++    }
++
++    /// Complete a pending checkpoint before recovering cached history or ordinals.
++    pub async fn recover_checkpoint(
++        path: &Path,
++        lock: Arc<crate::WriterLockGuard>,
++    ) -> std::io::Result<bool> {
++        let path = path.to_owned();
++        tokio::task::spawn_blocking(move || checkpoint::recover(&path, &lock))
++            .await
++            .map_err(IoError::other)?
++    }
++
+     /// Materialize the rollout file and persist all buffered items.
+     ///
+     /// This is idempotent. If materialization fails, the recorder keeps all pending items in memory
+@@ -1177,7 +1236,8 @@ impl RolloutRecorder {
+         path: &Path,
+     ) -> std::io::Result<(Vec<RolloutItem>, Option<ThreadId>, usize)> {
+         trace!("Resuming rollout from {path:?}");
+-        compression::read_rollout_lines(path, |reader| {
++        ensure_checkpoint_complete(path)?;
++        let result = compression::read_rollout_lines(path, |reader| {
+             let mut items: Vec<RolloutItem> = Vec::new();
+             let mut thread_id: Option<ThreadId> = None;
+             let mut parse_errors = 0usize;
+@@ -1238,7 +1298,9 @@ impl RolloutRecorder {
+             );
+             Ok((items, thread_id, parse_errors))
+         })
+-        .await
++        .await?;
++        ensure_checkpoint_complete(path)?;
++        Ok(result)
+     }
+
+     pub async fn get_rollout_history(path: &Path) -> std::io::Result<InitialHistory> {
+@@ -1849,6 +1911,48 @@ impl RolloutWriterState {
+         Ok(())
+     }
+
++    async fn stage_continuation(&mut self, items: Vec<RolloutItem>) -> std::io::Result<()> {
++        if !self.is_deferred() || !self.pending_items.is_empty() {
++            return Err(IoError::other("continuation needs a new deferred recorder"));
++        }
++        self.add_items(items);
++        // A failed candidate remains unpublished. Discard it instead of retrying
++        // a JSON record whose prefix may already have reached the file.
++        self.write_pending_once().await?;
++        self.sync_checkpoint_file().await
++    }
++
++    async fn sync_checkpoint_file(&mut self) -> std::io::Result<()> {
++        let writer = self
++            .writer
++            .as_ref()
++            .ok_or_else(|| IoError::other("checkpoint writer is closed"))?;
++        writer.file.sync_all().await?;
++        #[cfg(unix)]
++        for directory in &self.directories_to_sync {
++            tokio::fs::File::open(directory).await?.sync_all().await?;
++        }
++        #[cfg(unix)]
++        self.directories_to_sync.clear();
++        Ok(())
++    }
++
++    async fn append_checkpoint(
++        &mut self,
++        items: Vec<RolloutItem>,
++        lock: Arc<crate::WriterLockGuard>,
++    ) -> std::io::Result<()> {
++        self.persist().await?;
++        self.sync_checkpoint_file().await?;
++        let ordinals = self.ordinal_state;
++        let path = self.rollout_path.clone();
++        self.ordinal_state =
++            tokio::task::spawn_blocking(move || checkpoint::append(&path, &items, ordinals, &lock))
++                .await
++                .map_err(IoError::other)??;
++        Ok(())
++    }
++
+     async fn shutdown(&mut self) -> std::io::Result<()> {
+         if self.is_deferred() && self.pending_items.is_empty() {
+             return Ok(());
+@@ -1997,6 +2101,21 @@ async fn rollout_writer(
+                 state.add_items(items);
+                 state.flush_if_materialized().await;
+             }
++            RolloutCmd::StageContinuation { items, ack } => {
++                if let Err(err) = state.stage_continuation(items).await {
++                    let _ = ack.send(Err(clone_io_error(&err)));
++                    return Err(err);
++                }
++                let _ = ack.send(Ok(()));
++            }
++            RolloutCmd::Checkpoint { items, lock, ack } => {
++                if let Err(err) = state.append_checkpoint(items, lock).await {
++                    // No later command may append beyond a partial checkpoint.
++                    let _ = ack.send(Err(clone_io_error(&err)));
++                    return Err(err);
++                }
++                let _ = ack.send(Ok(()));
++            }
+             RolloutCmd::Persist { ack } => {
+                 let _ = ack.send(state.persist().await);
+             }
+@@ -2071,6 +2190,11 @@ async fn open_rollout_for_append(
+     path: &Path,
+     writer_lock: Option<Arc<crate::WriterLockGuard>>,
+ ) -> std::io::Result<(PathBuf, tokio::fs::File, RolloutOrdinalState)> {
++    if let Some(lock) = writer_lock.as_ref() {
++        RolloutRecorder::recover_checkpoint(path, Arc::clone(lock)).await?;
++    } else {
++        ensure_checkpoint_complete(path)?;
++    }
+     let refresh_modified_time =
+         !tokio::fs::try_exists(compression::plain_rollout_path(path)).await?;
+     let path = compression::materialize_rollout_for_append(path, writer_lock.clone()).await?;
+@@ -2121,12 +2245,8 @@ struct RolloutLineRef<'a> {
+     item: &'a RolloutItem,
+ }
+
+-impl JsonlWriter {
+-    async fn write_rollout_item(
+-        &mut self,
+-        rollout_item: &RolloutItem,
+-        ordinal: Option<u64>,
+-    ) -> std::io::Result<()> {
++impl<'a> RolloutLineRef<'a> {
++    fn new(item: &'a RolloutItem, ordinal: Option<u64>) -> std::io::Result<Self> {
+         let timestamp_format: &[FormatItem] = format_description!(
+             "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
+         );
+@@ -2134,11 +2254,21 @@ impl JsonlWriter {
+             .format(timestamp_format)
+             .map_err(|e| IoError::other(format!("failed to format timestamp: {e}")))?;
+
+-        let line = RolloutLineRef {
++        Ok(Self {
+             timestamp,
+             ordinal,
+-            item: rollout_item,
+-        };
++            item,
++        })
++    }
++}
++
++impl JsonlWriter {
++    async fn write_rollout_item(
++        &mut self,
++        rollout_item: &RolloutItem,
++        ordinal: Option<u64>,
++    ) -> std::io::Result<()> {
++        let line = RolloutLineRef::new(rollout_item, ordinal)?;
+         self.write_line(&line).await
+     }
+     async fn write_line(&mut self, item: &impl serde::Serialize) -> std::io::Result<()> {
+diff --git a/codex-rs/rollout/src/writer_lock.rs b/codex-rs/rollout/src/writer_lock.rs
+index 7ad0f8e6199a5c73c2f95353ccbe608fa28fc1ec..5f07ec7e77700974315f61795fc80da9025e67b7 100644
+--- a/codex-rs/rollout/src/writer_lock.rs
++++ b/codex-rs/rollout/src/writer_lock.rs
+@@ -205,6 +205,27 @@ impl WriterLockCoordinator {
+     }
+ }
+
++impl WriterLockGuard {
++    pub(crate) fn check_rollout_owner(&self, path: &Path) -> io::Result<()> {
++        let thread_id = crate::thread_id_from_rollout_path(path)
++            .ok_or_else(|| io::Error::other("checkpoint requires a canonical rollout path"))?;
++        let home = self
++            .coordinator
++            .directory
++            .parent()
++            .ok_or_else(|| io::Error::other("thread lock directory has no parent"))?;
++        if self.path != self.coordinator.directory.join(format!("{thread_id}.lock"))
++            || !path.canonicalize()?.starts_with(home.canonicalize()?)
++        {
++            return Err(io::Error::new(
++                io::ErrorKind::PermissionDenied,
++                "checkpoint rollout does not belong to this writer lock",
++            ));
++        }
++        Ok(())
++    }
++}
++
+ impl Drop for WriterLockGuard {
+     fn drop(&mut self) {
+         let coordination_lock = match self.coordinator.open_coordination() {
+diff --git a/codex-rs/thread-store/src/local/archive_thread.rs b/codex-rs/thread-store/src/local/archive_thread.rs
+index 928c8cbdb675e98ab13fafb8d8c3bc722deb79d1..e66eba5d10dbde655abe5f26a61f29e690daf55e 100644
+--- a/codex-rs/thread-store/src/local/archive_thread.rs
++++ b/codex-rs/thread-store/src/local/archive_thread.rs
+@@ -38,7 +38,7 @@ pub(super) async fn archive_threads(
+             });
+         }
+     }
+-    let _writer_guards = store.acquire_writer_locks(&lock_thread_ids).await?;
++    let writer_guards = store.acquire_writer_locks(&lock_thread_ids).await?;
+     // Only inspect active files whose names belong to the threads being archived.
+     let reference_index = RolloutReferenceIndex::scan_unarchived_threads(
+         store.config.codex_home.as_path(),
+@@ -53,7 +53,9 @@ pub(super) async fn archive_threads(
+     let mut archived_thread_ids = Vec::new();
+     for thread_id in thread_ids {
+         let rollout_paths = owned_rollout_paths_from_index(&reference_index, thread_id);
+-        match archive_thread_with_paths(store, thread_id, rollout_paths).await {
++        match archive_thread_with_paths(store, thread_id, rollout_paths, &writer_guards[&thread_id])
++            .await
++        {
+             Ok(()) => archived_thread_ids.push(thread_id),
+             Err(err) if archived_thread_ids.is_empty() => return Err(err),
+             Err(err) => warn!(
+@@ -68,6 +70,7 @@ async fn archive_thread_with_paths(
+     store: &LocalThreadStore,
+     thread_id: codex_protocol::ThreadId,
+     mut rollout_paths: Vec<std::path::PathBuf>,
++    writer: &super::WriterLockGuard,
+ ) -> ThreadStoreResult<()> {
+     let state_db_ctx = store.state_db().await;
+     let selected_rollout_path = thread_rollout_resolver::resolve_current(store, thread_id)
+@@ -98,6 +101,7 @@ async fn archive_thread_with_paths(
+             rollout_path.as_path(),
+             "sessions",
+         )?;
++        super::helpers::recover_checkpoint(&canonical_rollout_path, writer).await?;
+         let file_name =
+             validated_rollout_file_name(canonical_rollout_path.as_path(), rollout_path.as_path())?;
+         let destination = archive_folder.join(&file_name);
+diff --git a/codex-rs/thread-store/src/local/delete_thread.rs b/codex-rs/thread-store/src/local/delete_thread.rs
+index 3a8abfe86f5e79f1851286458fe7b55e82d1fb4a..84f7c9d14af1544418762870890d464496dc7bec 100644
+--- a/codex-rs/thread-store/src/local/delete_thread.rs
++++ b/codex-rs/thread-store/src/local/delete_thread.rs
+@@ -113,7 +113,7 @@ pub(super) async fn delete_thread(
+     let thread_id = params.thread_id;
+     let _lifecycle_guard = store.live_writer_locks.lock_lifecycle(thread_id).await;
+     let _live_writer_guard = store.live_writer_locks.lock(thread_id).await;
+-    let mut writer_guards = store.acquire_writer_locks(&[thread_id]).await?;
++    let writer_guards = store.acquire_writer_locks(&[thread_id]).await?;
+     let reference_index = scan_reference_index(store).await?;
+     let thread_rollouts = ThreadRollouts::from_index(&reference_index, thread_id);
+     check_attached_children(&reference_index, &[thread_id])?;
+@@ -121,13 +121,17 @@ pub(super) async fn delete_thread(
+     if let Some(cleanup) = &store.thread_data_cleanup {
+         cleanup(vec![thread_id]).await?;
+     }
+-    let found_rollout =
+-        match delete_thread_after_reference_check(store, thread_rollouts, &mut writer_guards).await
+-        {
+-            Ok(()) => true,
+-            Err(ThreadStoreError::ThreadNotFound { .. }) => false,
+-            Err(err) => return Err(err),
+-        };
++    let found_rollout = match delete_thread_after_reference_check(
++        store,
++        thread_rollouts,
++        &writer_guards[&thread_id],
++    )
++    .await
++    {
++        Ok(()) => true,
++        Err(ThreadStoreError::ThreadNotFound { .. }) => false,
++        Err(err) => return Err(err),
++    };
+     let deleted_state_rows = delete_state_rows(store, &[thread_id]).await?;
+     if found_rollout || deleted_state_rows > 0 {
+         Ok(())
+@@ -158,7 +162,7 @@ pub(super) async fn delete_threads(
+         _live_writer_guards.push(store.live_writer_locks.lock(thread_id).await);
+     }
+
+-    let mut writer_guards = store.acquire_writer_locks(&lock_thread_ids).await?;
++    let writer_guards = store.acquire_writer_locks(&lock_thread_ids).await?;
+     let reference_index = scan_reference_index(store).await?;
+     let thread_rollouts = thread_ids
+         .iter()
+@@ -170,8 +174,8 @@ pub(super) async fn delete_threads(
+         cleanup(thread_ids.clone()).await?;
+     }
+     for thread_rollouts in thread_rollouts {
+-        match delete_thread_after_reference_check(store, thread_rollouts, &mut writer_guards).await
+-        {
++        let guard = &writer_guards[&thread_rollouts.thread_id];
++        match delete_thread_after_reference_check(store, thread_rollouts, guard).await {
+             Ok(()) | Err(ThreadStoreError::ThreadNotFound { .. }) => {}
+             Err(err) => return Err(err),
+         }
+@@ -248,7 +252,7 @@ fn referenced_thread_error(thread_id: codex_protocol::ThreadId) -> ThreadStoreEr
+ async fn delete_thread_after_reference_check(
+     store: &LocalThreadStore,
+     mut thread_rollouts: ThreadRollouts,
+-    writer_guards: &mut Vec<super::WriterLockGuard>,
++    writer: &super::WriterLockGuard,
+ ) -> ThreadStoreResult<()> {
+     let thread_id = thread_rollouts.thread_id;
+     let thread_id_str = thread_id.to_string();
+@@ -291,11 +295,11 @@ async fn delete_thread_after_reference_check(
+     // Stop queued file work before removing files, retaining ownership until cleanup finishes.
+     let live_entry = store.live_recorders.lock().await.remove(&thread_id);
+     if let Some(entry) = live_entry {
+-        writer_guards.push(entry.writer_lock.clone());
+         super::live_writer::discard_recorders(entry).await?;
+     }
+     let found_rollout_path = !thread_rollouts.paths.is_empty();
+     for rollout_path in thread_rollouts.paths {
++        super::helpers::recover_checkpoint(&rollout_path, writer).await?;
+         delete_rollout_file(store, rollout_path.as_path())?;
+     }
+     remove_thread_name_entries(store.config.codex_home.as_path(), thread_id)
+diff --git a/codex-rs/thread-store/src/local/helpers.rs b/codex-rs/thread-store/src/local/helpers.rs
+index c5b2a05e6ed1b054e872ea794d931c8edf9504c4..57f5122b99cbf012f29ed29e3926757324c287ba 100644
+--- a/codex-rs/thread-store/src/local/helpers.rs
++++ b/codex-rs/thread-store/src/local/helpers.rs
+@@ -30,6 +30,21 @@ use crate::StoredThread;
+ use crate::ThreadStoreError;
+ use crate::ThreadStoreResult;
+
++/// Complete a journaled append before moving, retiring, or deleting its physical rollout.
++pub(super) async fn recover_checkpoint(
++    path: &Path,
++    writer: &super::WriterLockGuard,
++) -> ThreadStoreResult<bool> {
++    codex_rollout::RolloutRecorder::recover_checkpoint(path, writer.clone())
++        .await
++        .map_err(|error| ThreadStoreError::Internal {
++            message: format!(
++                "failed to recover compaction checkpoint at {}: {error}",
++                path.display()
++            ),
++        })
++}
++
+ pub(super) fn scoped_rollout_path(
+     root: PathBuf,
+     rollout_path: &Path,
+diff --git a/codex-rs/thread-store/src/local/history_revision.rs b/codex-rs/thread-store/src/local/history_revision.rs
+index ad241a49a24f5c4eaccda1371f102069f3d1f8bd..cd09bd6c97adc6604f851a19926c90af15402655 100644
+--- a/codex-rs/thread-store/src/local/history_revision.rs
++++ b/codex-rs/thread-store/src/local/history_revision.rs
+@@ -9,6 +9,7 @@ use std::path::Path;
+ pub(super) async fn read(path: &Path) -> Option<String> {
+     let path = codex_rollout::existing_rollout_path(path).await?;
+     let path = tokio::fs::canonicalize(path).await.ok()?;
++    codex_rollout::ensure_checkpoint_complete(&path).ok()?;
+     let metadata = tokio::fs::metadata(&path).await.ok()?;
+     let modified = metadata.modified().ok()?;
+     let created = metadata.created().ok();
+diff --git a/codex-rs/thread-store/src/local/live_writer.rs b/codex-rs/thread-store/src/local/live_writer.rs
+index 32d7e1c4e1973dd4233e67db3e23ca9e27ee08e3..d3ba76e6862dd270ae8cb25c6d5313f7228c8869 100644
+--- a/codex-rs/thread-store/src/local/live_writer.rs
++++ b/codex-rs/thread-store/src/local/live_writer.rs
+@@ -137,7 +137,8 @@ pub(super) async fn resume_thread(
+             message: format!("thread {} is archived", params.thread_id),
+         });
+     }
+-    let history = match params.history {
++    let recovered = super::helpers::recover_checkpoint(&rollout_path, &writer_lock).await?;
++    let history = match params.history.filter(|_| !recovered) {
+         Some(history)
+             if !matches!(
+                 history.first(),
+@@ -495,23 +496,25 @@ async fn write_and_project(
+                 return Ok(());
+             }
+             let next = codex_rollout::stamp_item_ordinals(*cursor, &mut items);
+-            if history_mode == ThreadHistoryMode::Paginated
+-                && segments::is_rotation_checkpoint(&items)
+-                && segments::matches_tail(recorder.rollout_path(), &items).await?
+-            {
+-                return Ok(());
+-            }
+-            recorder
+-                .record_canonical_items(&items)
+-                .await
+-                .map_err(thread_store_io_error)?;
+-            // Once queued, the recorder owns the batch even if flush is cancelled or retried.
+-            *cursor = next;
+-            recorder.flush().await.map_err(thread_store_io_error)?;
+             if history_mode == ThreadHistoryMode::Paginated
+                 && segments::is_rotation_checkpoint(&items)
+             {
++                if segments::matches_tail(recorder.rollout_path(), &items).await? {
++                    return Ok(());
++                }
++                recorder
++                    .record_checkpoint(items.clone())
++                    .await
++                    .map_err(thread_store_io_error)?;
++                *cursor = next;
+                 checkpoint = Some(items);
++            } else {
++                recorder
++                    .record_canonical_items(&items)
++                    .await
++                    .map_err(thread_store_io_error)?;
++                *cursor = next;
++                recorder.flush().await.map_err(thread_store_io_error)?;
+             }
+         }
+         RolloutWriteOp::Persist => recorder.persist().await.map_err(thread_store_io_error)?,
+diff --git a/codex-rs/thread-store/src/local/live_writer/segments.rs b/codex-rs/thread-store/src/local/live_writer/segments.rs
+index 42418e9b09b2c27aeb6e122013ccbe7151ee33fa..dd9de5b458e7447e2918ccb3ec2b64a86f2b9473 100644
+--- a/codex-rs/thread-store/src/local/live_writer/segments.rs
++++ b/codex-rs/thread-store/src/local/live_writer/segments.rs
+@@ -115,11 +115,9 @@ pub(super) async fn rotate(
+     )
+     .await?;
+     let publication = async {
+-        next.record_canonical_items(items)
++        next.stage_continuation(items.to_vec())
+             .await
+             .map_err(thread_store_io_error)?;
+-        next.persist().await.map_err(thread_store_io_error)?;
+-        next.flush().await.map_err(thread_store_io_error)?;
+         state_db
+             .replace_rollout_path_if_current(thread_id, source_path, next.rollout_path())
+             .await
+diff --git a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
+index 0f4649fb88d0eee562a60c117c07d2c3c437b279..77ea445a4dbe91295bb95ac87077a50c4b5a9bfa 100644
+--- a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
++++ b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
+@@ -304,6 +304,21 @@ async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dy
+     ));
+     let (items, _, _) = RolloutRecorder::load_rollout_items(&path).await?;
+     assert!(items.iter().any(|item| matches!(item, RolloutItem::EventMsg(EventMsg::TurnStarted(event)) if event.turn_id == "before")));
++    let fork = store
++        .prepare_fork(crate::PrepareForkParams {
++            thread_id: id,
++            boundary: crate::ForkBoundary::Latest,
++        })
++        .await?;
++    let child = ThreadId::new();
++    let mut params = create_params(&store, child);
++    params.forked_from_id = Some(id);
++    params.history_base = fork.history_base;
++    store.create_thread(params).await?;
++    store
++        .persist_thread(child, crate::PersistContext::Standard)
++        .await?;
++    drop(fork);
+     store
+         .append_items(AppendThreadItemsParams {
+             thread_id: id,
+@@ -348,6 +363,34 @@ async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dy
+         })
+         .await?;
+     assert_native_turn_pages(&store, id).await?;
++    let child_path = store.live_rollout_path(child).await?;
++    codex_rollout::state_db::reconcile_rollout(
++        Some(&state),
++        &child_path,
++        "test-provider",
++        None,
++        &[],
++        Some(false),
++        None,
++    )
++    .await;
++    let child_page = store
++        .list_turns(crate::ListTurnsParams {
++            thread_id: child,
++            include_archived: false,
++            cursor: None,
++            page_size: 4,
++            sort_direction: crate::SortDirection::Asc,
++            items_view: crate::StoredTurnItemsView::Summary,
++        })
++        .await?;
++    let [frozen] = child_page.turns.as_slice() else {
++        panic!("fork should see only the turn present at its cutoff");
++    };
++    assert_eq!(frozen.turn_id, "before");
++    assert_eq!(frozen.items.len(), 1);
++    assert_eq!(frozen.items[0].item_id, "user-before");
++    store.shutdown_thread(child).await?;
+     store.shutdown_thread(id).await?;
+     Ok(())
+ }
+diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
+index 6ba79663254d42150c751b7f3834b3d78733fedc..313bd7a82981952973cb03cc9fab7e6e042c3f03 100644
+--- a/codex-rs/thread-store/src/local/mod.rs
++++ b/codex-rs/thread-store/src/local/mod.rs
+@@ -446,13 +446,20 @@ impl LocalThreadStore {
+     async fn acquire_writer_locks(
+         &self,
+         thread_ids: &[ThreadId],
+-    ) -> ThreadStoreResult<Vec<WriterLockGuard>> {
+-        let mut writer_locks = Vec::with_capacity(thread_ids.len());
++    ) -> ThreadStoreResult<HashMap<ThreadId, WriterLockGuard>> {
++        let mut writer_locks = HashMap::with_capacity(thread_ids.len());
+         for &thread_id in thread_ids {
+-            if self.live_recorders.lock().await.contains_key(&thread_id) {
+-                continue;
+-            }
+-            writer_locks.push(self.acquire_writer_lock(thread_id)?);
++            let active = self
++                .live_recorders
++                .lock()
++                .await
++                .get(&thread_id)
++                .map(|entry| entry.writer_lock.clone());
++            let guard = match active {
++                Some(guard) => guard,
++                None => self.acquire_writer_lock(thread_id)?,
++            };
++            writer_locks.insert(thread_id, guard);
+         }
+         Ok(writer_locks)
+     }
+diff --git a/codex-rs/thread-store/src/local/model_context.rs b/codex-rs/thread-store/src/local/model_context.rs
+index 8f58ed7c6ff38ca68007ac004f8797861d919f01..8032e87dd0063221e557362e11b8e3307dddce9e 100644
+--- a/codex-rs/thread-store/src/local/model_context.rs
++++ b/codex-rs/thread-store/src/local/model_context.rs
+@@ -53,6 +53,19 @@ pub(super) async fn load_latest_model_context(
+                 message: format!("no rollout found for thread id {}", params.thread_id),
+             })?;
+
++    if let Err(error) = codex_rollout::ensure_checkpoint_complete(&path) {
++        if error.kind() != io::ErrorKind::WouldBlock {
++            return Err(checkpoint_error(error));
++        }
++        let _guard = store.live_writer_locks.lock(params.thread_id).await;
++        if let Err(error) = codex_rollout::ensure_checkpoint_complete(&path) {
++            if error.kind() != io::ErrorKind::WouldBlock {
++                return Err(checkpoint_error(error));
++            }
++            let writer = store.acquire_writer_lock(params.thread_id)?;
++            super::helpers::recover_checkpoint(&path, &writer).await?;
++        }
++    }
+     load_from_rollout_path(store, params.thread_id, &path).await
+ }
+
+@@ -61,6 +74,7 @@ pub(super) async fn load_from_rollout_path(
+     thread_id: codex_protocol::ThreadId,
+     path: &Path,
+ ) -> ThreadStoreResult<StoredModelContext> {
++    codex_rollout::ensure_checkpoint_complete(path).map_err(checkpoint_error)?;
+     let before = super::history_revision::read(path).await;
+     let session_meta = codex_rollout::read_session_meta_line(path)
+         .await
+@@ -96,6 +110,16 @@ pub(super) async fn load_from_rollout_path(
+     };
+
+     let after = super::history_revision::read(path).await;
++    codex_rollout::ensure_checkpoint_complete(path).map_err(checkpoint_error)?;
++    if before != after
++        && items
++            .iter()
++            .any(|item| matches!(item, RolloutItem::Compacted(_)))
++    {
++        return Err(ThreadStoreError::Conflict {
++            message: format!("rollout changed while reading a checkpoint for thread {thread_id}"),
++        });
++    }
+     Ok(StoredModelContext {
+         revision: before.filter(|revision| Some(revision) == after.as_ref()),
+         thread_id,
+@@ -103,6 +127,12 @@ pub(super) async fn load_from_rollout_path(
+     })
+ }
+
++fn checkpoint_error(error: io::Error) -> ThreadStoreError {
++    ThreadStoreError::Internal {
++        message: error.to_string(),
++    }
++}
++
+ /// Loads startup context from a fork's frozen inherited prefix.
+ pub(super) async fn load_for_fork(
+     lineage: RolloutLineage,
+diff --git a/codex-rs/thread-store/src/local/revert_thread.rs b/codex-rs/thread-store/src/local/revert_thread.rs
+index 4f170d818b501a90fe8cf4108c417f49d037480d..949d008ed60b5813f53f6b2148c34e83ac4f7fe4 100644
+--- a/codex-rs/thread-store/src/local/revert_thread.rs
++++ b/codex-rs/thread-store/src/local/revert_thread.rs
+@@ -46,6 +46,7 @@ pub(super) async fn revert(
+         .await?
+         .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?;
+     let source_path = current_rollout.path;
++    super::helpers::recover_checkpoint(&source_path, &writer_lock).await?;
+     let mut source_meta = codex_rollout::read_session_meta_line(source_path.as_path())
+         .await
+         .map_err(|err| ThreadStoreError::Internal {
+@@ -153,7 +154,6 @@ pub(super) async fn revert(
+     Ok(())
+ }
+
+-
+ fn thread_store_io_error(err: std::io::Error) -> ThreadStoreError {
+     ThreadStoreError::Internal {
+         message: err.to_string(),
+diff --git a/codex-rs/thread-store/src/local/unarchive_thread.rs b/codex-rs/thread-store/src/local/unarchive_thread.rs
+index 2a4976a2081f2ef0bdf0f1783983288e18046b2f..ff9921f0abd071e098f8aff3b3146d1ba6a2cca8 100644
+--- a/codex-rs/thread-store/src/local/unarchive_thread.rs
++++ b/codex-rs/thread-store/src/local/unarchive_thread.rs
+@@ -38,11 +38,11 @@ pub(super) async fn unarchive_threads(
+     // Hold ownership while discovering and moving rollouts, as archive does. A busy
+     // descendant remains a best-effort failure rather than blocking the parent's restore.
+     let mut thread_ids = Vec::new();
+-    let mut _writer_guards = Vec::new();
++    let mut writer_guards = std::collections::HashMap::new();
+     for (index, thread_id) in requested_ids.into_iter().enumerate() {
+         match store.acquire_writer_lock(thread_id) {
+             Ok(guard) => {
+-                _writer_guards.push(guard);
++                writer_guards.insert(thread_id, guard);
+                 thread_ids.push(thread_id);
+             }
+             Err(err) if index == 0 => return Err(err),
+@@ -58,11 +58,16 @@ pub(super) async fn unarchive_threads(
+     .map_err(|err| ThreadStoreError::Internal {
+         message: format!("failed to scan thread rollout files: {err}"),
+     })?;
+-    unarchive_thread_with_index(store, parent_thread_id, &reference_index)
+-        .await?
+-        .ok_or_else(|| ThreadStoreError::InvalidRequest {
+-            message: format!("no archived rollout found for thread id {parent_thread_id}"),
+-        })?;
++    unarchive_thread_with_index(
++        store,
++        parent_thread_id,
++        &reference_index,
++        &writer_guards[&parent_thread_id],
++    )
++    .await?
++    .ok_or_else(|| ThreadStoreError::InvalidRequest {
++        message: format!("no archived rollout found for thread id {parent_thread_id}"),
++    })?;
+     let root = super::read_thread::read_thread(
+         store,
+         ReadThreadParams {
+@@ -74,7 +79,14 @@ pub(super) async fn unarchive_threads(
+     .await?;
+     let mut restored = vec![parent_thread_id];
+     for thread_id in thread_ids.into_iter().skip(1) {
+-        match unarchive_thread_with_index(store, thread_id, &reference_index).await {
++        match unarchive_thread_with_index(
++            store,
++            thread_id,
++            &reference_index,
++            &writer_guards[&thread_id],
++        )
++        .await
++        {
+             Ok(Some(thread_id)) => restored.push(thread_id),
+             Ok(None) => {}
+             Err(err) => warn!("failed to unarchive spawned descendant thread {thread_id}: {err}"),
+@@ -87,6 +99,7 @@ async fn unarchive_thread_with_index(
+     store: &LocalThreadStore,
+     thread_id: ThreadId,
+     reference_index: &RolloutReferenceIndex,
++    writer: &super::WriterLockGuard,
+ ) -> ThreadStoreResult<Option<ThreadId>> {
+     let state_db_ctx = store.state_db().await;
+     let Some(selected_archived_path) =
+@@ -116,6 +129,7 @@ async fn unarchive_thread_with_index(
+             rollout_path.as_path(),
+             "archived",
+         )?;
++        super::helpers::recover_checkpoint(&canonical_archived_path, writer).await?;
+         let file_name =
+             validated_rollout_file_name(canonical_archived_path.as_path(), rollout_path.as_path())?;
+         let Some((year, month, day)) = rollout_date_parts(&file_name) else {

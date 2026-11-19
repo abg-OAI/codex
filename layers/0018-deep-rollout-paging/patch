@@ -1,0 +1,218 @@
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index 02f6ebe62ced9cca0b219171a3952322904355c7..525d57f5b8d90f7db515033f89e9e45f1c1eb9eb 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -3637,9 +3637,11 @@ impl ThreadRequestProcessor {
+         for turn in page.turns {
+             let mut turn = stored_turn_to_api_turn(turn, items_view)?;
+             if matches!(items_view, TurnItemsView::Full) {
+-                turn.items = self
+-                    .paginated_turn_full_items(thread_id, turn.id.as_str())
+-                    .await?;
++                self.visit_paginated_items(thread_id, Some(turn.id.clone()), |item| {
++                    turn.items.push(stored_thread_item_to_api_item(item)?);
++                    Ok(())
++                })
++                .await?;
+             }
+             turns.push(turn);
+         }
+@@ -3664,20 +3666,20 @@ impl ThreadRequestProcessor {
+
+     // Older clients still request `itemsView: "full"` from turn pages. Keep this
+     // app-server-only hydration path until those clients use `thread/items/list`.
+-    async fn paginated_turn_full_items(
++    async fn visit_paginated_items(
+         &self,
+         thread_id: ThreadId,
+-        turn_id: &str,
+-    ) -> Result<Vec<ThreadItem>, JSONRPCErrorError> {
++        turn_id: Option<String>,
++        mut visit: impl FnMut(&codex_thread_store::StoredThreadItem) -> Result<(), JSONRPCErrorError>,
++    ) -> Result<(), JSONRPCErrorError> {
+         let mut cursor = None;
+-        let mut items = Vec::new();
+         loop {
+             let page = self
+                 .thread_store
+                 .list_items(StoreListItemsParams {
+                     item_ids: None,
+                     thread_id,
+-                    turn_id: Some(turn_id.to_string()),
++                    turn_id: turn_id.clone(),
+                     include_archived: true,
+                     position: cursor.clone().map(StoreListItemsPosition::Cursor),
+                     page_size: THREAD_ITEMS_MAX_LIMIT,
+@@ -3689,14 +3691,14 @@ impl ThreadRequestProcessor {
+                 .await
+                 .map_err(paginated_history_list_error)?;
+             for item in &page.items {
+-                items.push(stored_thread_item_to_api_item(item)?);
++                visit(item)?;
+             }
+             let Some(next_cursor) = page.next_cursor else {
+-                return Ok(items);
++                return Ok(());
+             };
+             if cursor.as_ref() == Some(&next_cursor) {
+                 return Err(internal_error(format!(
+-                    "failed to load full turn items for {turn_id}: thread store returned a repeated cursor"
++                    "failed to load full items for thread {thread_id}: thread store returned a repeated cursor"
+                 )));
+             }
+             cursor = Some(next_cursor);
+@@ -3718,12 +3720,12 @@ impl ThreadRequestProcessor {
+                     cursor.clone(),
+                     Some(THREAD_TURNS_MAX_LIMIT as u32),
+                     Some(SortDirection::Asc),
+-                    Some(TurnItemsView::Full),
++                    Some(TurnItemsView::NotLoaded),
+                 )
+                 .await?;
+             turns.extend(page.data);
+             let Some(next_cursor) = page.next_cursor else {
+-                return Ok(turns);
++                break;
+             };
+             if cursor.as_ref() == Some(&next_cursor) {
+                 return Err(internal_error(format!(
+@@ -3732,6 +3734,23 @@ impl ThreadRequestProcessor {
+             }
+             cursor = Some(next_cursor);
+         }
++        // The whole transcript is requested. Traverse its item pages once rather
++        // than reopening the same ancestry for every individual turn.
++        let mut items_by_turn = std::collections::HashMap::with_capacity(turns.len());
++        for turn in &mut turns {
++            turn.items_view = TurnItemsView::Full;
++            items_by_turn.insert(turn.id.as_str(), &mut turn.items);
++        }
++        if !items_by_turn.is_empty() {
++            self.visit_paginated_items(thread_id, None, |item| {
++                if let Some(items) = items_by_turn.get_mut(item.turn_id.as_str()) {
++                    items.push(stored_thread_item_to_api_item(item)?);
++                }
++                Ok(())
++            })
++            .await?;
++        }
++        Ok(turns)
+     }
+
+     async fn paginated_resume_initial_turns_page(
+diff --git a/codex-rs/thread-store/src/local/thread_history/read_tests.rs b/codex-rs/thread-store/src/local/thread_history/read_tests.rs
+index b01646791fd422f3abd9fdb9c4853ea126a4091d..ae660c3690bbc5119a2e2ba73be1a6e678d6aa4f 100644
+--- a/codex-rs/thread-store/src/local/thread_history/read_tests.rs
++++ b/codex-rs/thread-store/src/local/thread_history/read_tests.rs
+@@ -31,6 +31,59 @@ use crate::StoredTurnError;
+ use crate::StoredTurnStatus;
+ use crate::local::test_support::test_config;
+
++#[tokio::test]
++async fn oldest_first_cursor_pages_across_1024_rollouts() {
++    let (home, store, leaf) = store_with_mode(ThreadHistoryMode::Paginated).await;
++    let db = history_db(&store).await;
++    let root = ThreadId::new();
++    let mut parent = None;
++    for index in 0..1024 {
++        let id = match index {
++            0 => root,
++            1023 => leaf,
++            _ => ThreadId::new(),
++        };
++        let path = rollout_path(home.path(), id);
++        write_rollout_with_end(&path, id, parent, 5);
++        parent = Some(HistoryPosition {
++            thread_id: id,
++            end_ordinal_exclusive: (index + 1) * 5,
++            end_byte_offset: fs::metadata(path).unwrap().len(),
++        });
++    }
++    for (id, turn, ordinal) in [
++        (root, "shadowed", 1),
++        (root, "first", 2),
++        (root, "second", 3),
++        (root, "third", 4),
++        (leaf, "near-head", 5116),
++        (leaf, "shadowed", 5117),
++        (leaf, "last", 5118),
++    ] {
++        insert_turn(db, id, turn, ordinal, "completed", None, None, None).await;
++    }
++    for (direction, expected) in [
++        (SortDirection::Asc, ["first", "second"]),
++        (SortDirection::Desc, ["last", "shadowed"]),
++    ] {
++        let mut cursor = None;
++        for wanted in expected {
++            let page = store
++                .list_turns(turn_params(
++                    leaf,
++                    cursor,
++                    1,
++                    direction,
++                    StoredTurnItemsView::NotLoaded,
++                ))
++                .await
++                .unwrap();
++            assert_eq!(turn_ids(&page), [wanted]);
++            cursor = Some(page.next_cursor.expect("another turn follows"));
++        }
++    }
++}
++
+ #[tokio::test]
+ async fn newest_indexed_pages_do_not_read_unused_ancestors() {
+     let (home, store, child_id) = store_with_mode(ThreadHistoryMode::Paginated).await;
+diff --git a/codex-rs/thread-store/src/local/thread_history/segment_paging.rs b/codex-rs/thread-store/src/local/thread_history/segment_paging.rs
+index 92ba61ea6ca12398cc01342f9e670223c9fdc239..82846639a366e2bf2e832edf696b0834fca75fc9 100644
+--- a/codex-rs/thread-store/src/local/thread_history/segment_paging.rs
++++ b/codex-rs/thread-store/src/local/thread_history/segment_paging.rs
+@@ -124,18 +124,36 @@ WHERE thread_id =
+         );
+         query.push_bind(segment.rollout_id().to_string());
+         push_segment_range(&mut query, segment, ordinal_column)?;
+-        for newer_segment in range.newer {
++        if !range.newer.is_empty() {
++            // Bind only the newer ranges the lazy walk already visited. A single
++            // anti-join shadows older turn rows without nesting an expression per file.
++            let ranges = range
++                .newer
++                .iter()
++                .map(|segment| {
++                    Ok((
++                        segment.rollout_id().to_string(),
++                        sqlite_integer(segment.start_ordinal())?,
++                        segment.end_ordinal().map(sqlite_integer).transpose()?,
++                    ))
++                })
++                .collect::<ThreadStoreResult<Vec<_>>>()?;
++            let ranges = serde_json::to_string(&ranges).map_err(thread_history_error)?;
+             query
+-                .push(" AND NOT EXISTS (SELECT 1 FROM thread_turns AS newer_turn WHERE newer_turn.thread_id = ")
+-                .push_bind(newer_segment.rollout_id().to_string())
+-                .push(" AND newer_turn.turn_id = thread_turns.turn_id AND newer_turn.rollout_ordinal >= ")
+-                .push_bind(sqlite_integer(newer_segment.start_ordinal())?);
+-            if let Some(end_ordinal) = newer_segment.end_ordinal() {
+-                query
+-                    .push(" AND newer_turn.rollout_ordinal < ")
+-                    .push_bind(sqlite_integer(end_ordinal)?);
+-            }
+-            query.push(")");
++                .push(
++                    " AND NOT EXISTS (
++                SELECT 1 FROM json_each(",
++                )
++                .push_bind(ranges)
++                .push(
++                    ") AS span CROSS JOIN thread_turns AS newer_turn
++                WHERE newer_turn.thread_id = json_extract(span.value, '$[0]')
++                  AND newer_turn.turn_id = thread_turns.turn_id
++                  AND newer_turn.rollout_ordinal >= json_extract(span.value, '$[1]')
++                  AND (json_extract(span.value, '$[2]') IS NULL
++                       OR newer_turn.rollout_ordinal < json_extract(span.value, '$[2]'))
++            )",
++                );
+         }
+         push_cursor_clause(&mut query, direction, range.cursor.as_ref(), ordinal_column)?;
+         push_order_and_limit(&mut query, direction, remaining, ordinal_column);
