@@ -1432,6 +1432,20 @@ mod reader {
         let path = path::existing_rollout_path(path)
             .await
             .unwrap_or_else(|| path.to_path_buf());
+        if let Some(budget) = crate::search::read_budget::SearchReadBudget::current() {
+            let compressed = path::is_compressed_rollout_path(&path);
+            metrics.format = if compressed { "zstd" } else { "plain" };
+            let lines = tokio::task::spawn_blocking(move || {
+                let file = File::open(path)?;
+                budget
+                    .reader(file, compressed)
+                    .map(|reader| io::BufReader::new(reader).lines())
+            })
+            .await
+            .map_err(io::Error::other)
+            .inspect_err(|err| metrics.failed("open", ReadFailureSource::TaskJoin, err))??;
+            return Ok(RolloutLineReaderInner::Blocking(Some(lines)));
+        }
         if path::is_compressed_rollout_path(path.as_path()) {
             metrics.format = "zstd";
             let reader = tokio::task::spawn_blocking(move || {

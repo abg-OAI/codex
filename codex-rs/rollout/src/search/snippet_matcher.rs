@@ -43,6 +43,14 @@ impl<'a> RolloutSnippetMatcher<'a> {
     /// Opens the file before compiling so per-file I/O errors retain their priority.
     pub async fn first_match(&mut self, path: &Path) -> io::Result<Option<String>> {
         let lines = compression::open_rollout_line_reader(path).await?;
+        self.first_match_in(lines).await
+    }
+
+    /// Searches the remaining records of the rollout whose header the caller verified.
+    pub async fn first_match_in(
+        &mut self,
+        lines: compression::RolloutLineReader,
+    ) -> io::Result<Option<String>> {
         // Share the regexes across file scans to reuse their scratch caches.
         let patterns = Arc::clone(self.compiled_patterns()?);
         lines

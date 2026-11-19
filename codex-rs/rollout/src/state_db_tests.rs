@@ -87,6 +87,7 @@ async fn list_threads_db_rejects_mismatched_sqlite_config_without_cleanup() -> a
         /*section*/ None,
         /*project_id*/ None,
         /*search_term*/ None,
+        crate::state_db::RolloutPathCheck::DuringListing,
     )
     .await;
 
