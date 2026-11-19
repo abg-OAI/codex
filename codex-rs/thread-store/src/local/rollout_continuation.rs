@@ -19,6 +19,7 @@ pub(super) async fn create(
     history_base: Option<codex_protocol::protocol::HistoryPosition>,
     forked_from_ordinal_exclusive: Option<u64>,
     writer_lock: super::WriterLockGuard,
+    session_timestamp: Option<String>,
 ) -> ThreadStoreResult<RolloutRecorder> {
     let config = RolloutConfig {
         codex_home: store.config.codex_home.clone(),
@@ -55,13 +56,15 @@ pub(super) async fn create(
     .with_history_base(history_base)
     .with_forked_from_ordinal_exclusive(forked_from_ordinal_exclusive)
     .with_subagent_history_start_ordinal(source_meta.subagent_history_start_ordinal);
+    if let Some(timestamp) = session_timestamp {
+        params = params.with_session_timestamp(timestamp);
+    }
     if let Some(context_window) = source_meta.context_window {
         params = params.with_initial_window_id(context_window.window_id);
     }
     RolloutRecorder::new_with_writer_lock(&config, params, writer_lock)
         .await
         .map_err(|err| ThreadStoreError::Internal {
-            message: format!("failed to create reverted rollout: {err}"),
+            message: format!("failed to create continuation rollout: {err}"),
         })
 }
-
