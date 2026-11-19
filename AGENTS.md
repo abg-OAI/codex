@@ -56,6 +56,8 @@ changes.
   schemas, exposure, and routing.
 - Put every Saffrodex-owned model-visible tool under `saffron.*`.
   Do not extend a namespace owned by Codex, an MCP server, or a plugin.
+  Update [TOOLS.md](TOOLS.md) in the same change when adding, changing, or
+  removing a Saffrodex tool.
 - Never change a Codex-owned database schema or migration ledger.
   Saffrodex may use isolated `saffron_*.sqlite` databases with Saffron-owned
   schemas and migration ledgers that cannot collide with upstream.
