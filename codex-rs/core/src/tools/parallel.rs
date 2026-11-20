@@ -367,6 +367,7 @@ impl ToolCallRuntime {
                     record_result_ready(&turn.sub_id, &dispatch_tool_name, &dispatch_call_id);
                     return Err(ToolDispatchError::Aborted(ToolAbort::BeforeDispatch));
                 }
+                crate::saffron::archive_self::terminal::admit_tool(&turn)?;
                 // Publish the completed path before releasing the admission lock,
                 // including when cancellation drops the handler future.
                 let _admitted_timing = work_timing.map(|(gate, work)| {
