@@ -200,6 +200,7 @@ async fn turn_extension_data_is_captured_for_automatic_turns() -> anyhow::Result
                 /*trigger_turn*/ true,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await?;
     let automatic_id = wait_for_event_match(&thread, |event| match event {
@@ -326,6 +327,7 @@ async fn host_drain_rejects_turn_start_paths_without_recording_input() -> anyhow
                 /*trigger_turn*/ false,
             ),
             start_options: TurnStartOptions::default(),
+            accepted: None,
         })
         .await?;
     // Fence the mailbox dispatch so the first wake has already been rejected.
@@ -638,6 +640,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()> 
                 /*trigger_turn*/ true,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await?;
     wait_for_event(&test.codex, |event| {
@@ -1910,5 +1913,55 @@ async fn tool_output_retention_is_submission_metadata() -> anyhow::Result<()> {
         }
     }
     server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn deferred_mail_precedes_the_next_submission_and_its_context() -> anyhow::Result<()> {
+    let server = responses::start_mock_server().await;
+    let response = responses::mount_sse_once(&server, responses::sse_completed("done")).await;
+    let test = test_codex().build_with_auto_env(&server).await?;
+    test.codex
+        .submit(Op::InterAgentCommunication {
+            communication: InterAgentCommunication::new(
+                AgentPath::root().join("worker").unwrap(),
+                AgentPath::root(),
+                Vec::new(),
+                "queued worker result".to_owned(),
+                /*trigger_turn*/ false,
+            ),
+            start_options: TurnStartOptions::default(),
+            accepted: None,
+        })
+        .await?;
+    test.codex
+        .update_thread_settings(ThreadSettingsOverrides::default())
+        .await?;
+    test.codex
+        .start_or_steer_turn(
+            user_message_request("explicit user request").with_additional_context(BTreeMap::from(
+                [(
+                    "active_tab".to_owned(),
+                    AdditionalContextEntry::new(
+                        "context for this submission".to_owned(),
+                        AdditionalContextKind::Untrusted,
+                    ),
+                )],
+            )),
+        )
+        .await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+    let items = response.single_request().input();
+    let position = |text: &str| {
+        items
+            .iter()
+            .position(|item| item.to_string().contains(text))
+            .unwrap_or_else(|| panic!("missing {text} in request"))
+    };
+    assert!(position("queued worker result") < position("context for this submission"));
+    assert!(position("context for this submission") < position("explicit user request"));
     Ok(())
 }

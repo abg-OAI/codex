@@ -1197,6 +1197,7 @@ pub(crate) async fn run_hooks_and_record_input_entries(
     let mut input_error = None;
     for input_item in recordable_inputs(
         sess,
+        turn_context,
         model_info,
         initial_input,
         pending_input,
@@ -1289,16 +1290,21 @@ pub(crate) async fn merge_submitted_context(
 /// Yields usable input with its context in order, then reports unsupported audio after valid siblings can be recorded.
 pub(crate) fn recordable_inputs<'a>(
     sess: &Session,
+    turn_context: &TurnContext,
     model_info: &ModelInfo,
     initial_input: &'a [TurnInput],
     pending_input: &'a [InputQueueEntry],
     initial_context: Option<&'a SubmittedAdditionalContext>,
 ) -> impl Iterator<Item = CodexResult<(Cow<'a, TurnInput>, Option<&'a SubmittedAdditionalContext>)>>
 {
+    let submission_index = turn_context
+        .extension_data
+        .get::<crate::tasks::InitialMailboxPrefix>()
+        .map_or(0, |prefix| prefix.0);
     let input = initial_input
         .iter()
         .enumerate()
-        .map(move |(index, item)| (item, initial_context.filter(|_| index == 0)))
+        .map(move |(index, item)| (item, initial_context.filter(|_| index == submission_index)))
         .chain(pending_input.iter().map(InputQueueEntry::input_and_context));
     let rejected_audio = !model_info.input_modalities.contains(&InputModality::Audio)
         && input
