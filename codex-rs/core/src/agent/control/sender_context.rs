@@ -103,6 +103,11 @@ impl LocalAgentRuntime {
                         if meta.meta.id != source_thread_id || meta.meta.source.is_internal() {
                             return None;
                         }
+                        let agent_path = meta
+                            .meta
+                            .source
+                            .get_agent_path()
+                            .unwrap_or_else(codex_protocol::AgentPath::root);
                         let history_mode = meta.meta.history_mode;
                         let referenced_agent_fork = meta.meta.history_base.is_some()
                             && meta.meta.session_id != SessionId::from(source_thread_id)
@@ -129,6 +134,7 @@ impl LocalAgentRuntime {
                         let context = ContextManager::reconstruct_rollout(
                             &history,
                             history_mode,
+                            &agent_path,
                             ContextManager::new,
                             // Tool bodies are not sender authorization evidence.
                             TruncationPolicy::Bytes(0),
