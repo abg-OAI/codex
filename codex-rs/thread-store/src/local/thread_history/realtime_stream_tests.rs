@@ -7,6 +7,29 @@ use codex_protocol::realtime::RealtimeItemContent;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
+async fn single_segment_page(
+    pool: &sqlx::SqlitePool,
+    params: ListRealtimeParams,
+    head: ThreadId,
+    start: u64,
+    projected_end: u64,
+) -> ThreadStoreResult<RealtimePage> {
+    read_page(
+        pool,
+        params,
+        &RealtimeSnapshot {
+            head,
+            projected_end,
+            ranges: vec![RealtimeRange {
+                rollout: head,
+                start,
+                end: None,
+            }],
+        },
+    )
+    .await
+}
+
 async fn database() -> (TempDir, sqlx::SqlitePool) {
     let home = TempDir::new().unwrap();
     let config = crate::local::test_support::test_config(home.path());
@@ -51,7 +74,7 @@ async fn snapshot_stays_fixed_while_position_catchup_finds_a_late_seal() {
     insert(&pool, thread, /*position*/ 0, Some(200)).await;
     insert(&pool, thread, /*position*/ 1, Some(200)).await;
     insert(&pool, thread, /*position*/ 2, Some(100)).await;
-    let first = read_page(
+    let first = single_segment_page(
         &pool,
         params(thread),
         thread,
@@ -64,7 +87,7 @@ async fn snapshot_stays_fixed_while_position_catchup_finds_a_late_seal() {
     assert_eq!(first.snapshot_end, 3);
 
     insert(&pool, thread, /*position*/ 3, Some(50)).await;
-    let next = read_page(
+    let next = single_segment_page(
         &pool,
         ListRealtimeParams {
             cursor: first.next_cursor.clone(),
@@ -85,7 +108,7 @@ async fn snapshot_stays_fixed_while_position_catchup_finds_a_late_seal() {
     );
     assert_eq!(next.snapshot_end, 3);
     // Equal observation times on opposite sides of a page boundary use rollout position.
-    let last = read_page(
+    let last = single_segment_page(
         &pool,
         ListRealtimeParams {
             cursor: next.next_cursor,
@@ -106,7 +129,7 @@ async fn snapshot_stays_fixed_while_position_catchup_finds_a_late_seal() {
     );
     assert!(last.next_cursor.is_none());
 
-    let catchup = read_page(
+    let catchup = single_segment_page(
         &pool,
         ListRealtimeParams {
             order: ThreadRealtimeOrder::Position,
@@ -121,7 +144,7 @@ async fn snapshot_stays_fixed_while_position_catchup_finds_a_late_seal() {
     .unwrap();
     assert_eq!(catchup.data[0].position, 3);
 
-    let error = read_page(
+    let error = single_segment_page(
         &pool,
         ListRealtimeParams {
             cursor: first.next_cursor,
@@ -142,7 +165,7 @@ async fn projection_lag_is_explicit_and_descendants_hide_parent_positions() {
     let (_home, pool) = database().await;
     let thread = ThreadId::default();
     insert(&pool, thread, /*position*/ 1, Some(100)).await;
-    let pending = read_page(
+    let pending = single_segment_page(
         &pool,
         ListRealtimeParams {
             required_through_position: Some(2),
@@ -156,7 +179,7 @@ async fn projection_lag_is_explicit_and_descendants_hide_parent_positions() {
     .unwrap();
     assert_eq!(pending.coverage, ThreadRealtimeCoverage::Pending);
     assert!(pending.data.is_empty());
-    let hidden = read_page(
+    let hidden = single_segment_page(
         &pool,
         ListRealtimeParams {
             order: ThreadRealtimeOrder::Position,
@@ -179,7 +202,7 @@ async fn exact_event_id_waits_for_the_acknowledged_seal_to_be_projected() {
         event_id: Some("event-1".into()),
         ..params(thread)
     };
-    let pending = read_page(
+    let pending = single_segment_page(
         &pool,
         query.clone(),
         thread,
@@ -198,7 +221,7 @@ async fn exact_event_id_waits_for_the_acknowledged_seal_to_be_projected() {
     );
 
     insert(&pool, thread, /*position*/ 1, Some(100)).await;
-    let stale = read_page(
+    let stale = single_segment_page(
         &pool,
         query.clone(),
         thread,
@@ -225,7 +248,7 @@ async fn exact_event_id_waits_for_the_acknowledged_seal_to_be_projected() {
             ..query.clone()
         },
     ] {
-        let page = read_page(
+        let page = single_segment_page(
             &pool, excluded, thread, /*first_position*/ 0, /*projected_end*/ 1,
         )
         .await
@@ -239,7 +262,7 @@ async fn exact_event_id_waits_for_the_acknowledged_seal_to_be_projected() {
             )
         );
     }
-    let ready = read_page(
+    let ready = single_segment_page(
         &pool, query, thread, /*first_position*/ 0, /*projected_end*/ 2,
     )
     .await

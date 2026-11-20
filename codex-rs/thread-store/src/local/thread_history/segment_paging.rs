@@ -109,6 +109,7 @@ pub(super) async fn page_turn_rows(
             r#"SELECT
     turn_id,
     root_turn_id,
+    rollout_end_ordinal,
     rollout_ordinal,
     status,
     error_json,
