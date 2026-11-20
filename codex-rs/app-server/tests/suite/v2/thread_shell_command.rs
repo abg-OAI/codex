@@ -2,6 +2,7 @@ use anyhow::Result;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
 use app_test_support::create_escalated_command_execution_sse_response;
+use app_test_support::create_fake_rollout;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence;
 use app_test_support::format_with_current_shell_display;
@@ -19,10 +20,11 @@ use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::SortDirection;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
-use codex_app_server_protocol::ThreadHistoryMode;
 use codex_app_server_protocol::ThreadItemPayload;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
+use codex_app_server_protocol::ThreadResumeParams;
+use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadShellCommandParams;
 use codex_app_server_protocol::ThreadShellCommandResponse;
 use codex_app_server_protocol::ThreadStartParams;
@@ -63,15 +65,8 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
         .without_auto_env()
         .build_initialized()
         .await?;
-    let ThreadStartResponse { thread, .. } = mcp
-        .request(|request_id| ClientRequest::ThreadStart {
-            request_id,
-            params: ThreadStartParams {
-                history_mode: Some(ThreadHistoryMode::Legacy),
-                ..Default::default()
-            },
-        })
-        .await?;
+    let thread = resume_saved_shell_thread(&mut mcp, &codex_home).await?;
+    assert_eq!(thread.turns.len(), 1);
     let (shell_command, expected_output) = current_shell_output_command("hello from bang")?;
 
     let _: ThreadShellCommandResponse = mcp
@@ -135,8 +130,8 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
             },
         })
         .await?;
-    assert_eq!(thread.turns.len(), 1);
-    assert_no_command_executions(&thread.turns[0].items, "thread/read");
+    assert_eq!(thread.turns.len(), 2);
+    assert_no_command_executions(&thread.turns[1].items, "thread/read");
 
     let ThreadTurnsListResponse { data, .. } = mcp
         .request(|request_id| ClientRequest::ThreadTurnsList {
@@ -150,20 +145,21 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
             },
         })
         .await?;
-    assert_eq!(data.len(), 1);
-    assert_no_command_executions(&data[0].items, "thread/turns/list");
+    assert_eq!(data.len(), 2);
+    assert_no_command_executions(&data[1].items, "thread/turns/list");
 
     let ThreadForkResponse { thread, .. } = mcp
         .request(|request_id| ClientRequest::ThreadFork {
             request_id,
             params: ThreadForkParams {
                 thread_id: thread.id,
+                ephemeral: true,
                 ..Default::default()
             },
         })
         .await?;
-    assert_eq!(thread.turns.len(), 1);
-    assert_no_command_executions(&thread.turns[0].items, "thread/fork");
+    assert_eq!(thread.turns.len(), 2);
+    assert_no_command_executions(&thread.turns[1].items, "thread/fork");
 
     Ok(())
 }
@@ -245,15 +241,8 @@ async fn check_thread_shell_command_in_active_turn(timeout_ms: Option<i64>) -> R
         .without_auto_env()
         .build_initialized()
         .await?;
-    let ThreadStartResponse { thread, .. } = mcp
-        .request(|request_id| ClientRequest::ThreadStart {
-            request_id,
-            params: ThreadStartParams {
-                history_mode: Some(ThreadHistoryMode::Legacy),
-                ..Default::default()
-            },
-        })
-        .await?;
+    let thread = resume_saved_shell_thread(&mut mcp, &codex_home).await?;
+    assert_eq!(thread.turns.len(), 1);
     let (shell_command, expected_output) = if timeout_ms.is_some() {
         current_shell_slow_command()?
     } else {
@@ -356,9 +345,9 @@ async fn check_thread_shell_command_in_active_turn(timeout_ms: Option<i64>) -> R
             },
         })
         .await?;
-    assert_eq!(active_thread.turns.len(), 1);
-    assert_eq!(active_thread.turns[0].id, turn.id);
-    assert_eq!(active_thread.turns[0].status, TurnStatus::InProgress);
+    assert_eq!(active_thread.turns.len(), 2);
+    assert_eq!(active_thread.turns[1].id, turn.id);
+    assert_eq!(active_thread.turns[1].status, TurnStatus::InProgress);
     assert!(
         mcp.pending_notification_methods()
             .iter()
@@ -388,8 +377,8 @@ async fn check_thread_shell_command_in_active_turn(timeout_ms: Option<i64>) -> R
             },
         })
         .await?;
-    assert_eq!(thread.turns.len(), 1);
-    assert_no_command_executions(&thread.turns[0].items, "thread/read");
+    assert_eq!(thread.turns.len(), 2);
+    assert_no_command_executions(&thread.turns[1].items, "thread/read");
     assert!(
         mcp.pending_notification_methods()
             .iter()
@@ -532,6 +521,30 @@ async fn thread_shell_command_rejects_invalid_timeouts_before_execution() -> Res
             .all(|method| { method != "turn/started" && method != "item/started" })
     );
     Ok(())
+}
+
+async fn resume_saved_shell_thread(
+    mcp: &mut TestAppServer,
+    codex_home: &std::path::Path,
+) -> Result<codex_app_server_protocol::Thread> {
+    let saved = create_fake_rollout(
+        codex_home,
+        "2025-01-05T12-00-00",
+        "2025-01-05T12:00:00Z",
+        "Earlier user message",
+        Some("mock_provider"),
+        None,
+    )?;
+    let response: ThreadResumeResponse = mcp
+        .request(|request_id| ClientRequest::ThreadResume {
+            request_id,
+            params: ThreadResumeParams {
+                thread_id: saved,
+                ..Default::default()
+            },
+        })
+        .await?;
+    Ok(response.thread)
 }
 
 fn current_shell_slow_command() -> Result<(String, String)> {

@@ -513,7 +513,7 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_start_history_mode_accepts_legacy_and_paginated() -> Result<()> {
+async fn persistent_local_start_requires_paginated_history() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
@@ -523,8 +523,26 @@ async fn thread_start_history_mode_accepts_legacy_and_paginated() -> Result<()> 
         .build_initialized()
         .await?;
 
+    let request_id = mcp
+        .send_thread_start_request_with_auto_env(ThreadStartParams {
+            history_mode: Some(ThreadHistoryMode::Legacy),
+            ..Default::default()
+        })
+        .await?;
+    let error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    assert_eq!(error.error.code, INVALID_REQUEST_ERROR_CODE);
+    assert_eq!(
+        error.error.message,
+        "Persistent local threads use paginated history"
+    );
+
     let ThreadStartResponse { thread, .. } = mcp
         .start_thread(ThreadStartParams {
+            ephemeral: Some(true),
             history_mode: Some(ThreadHistoryMode::Legacy),
             ..Default::default()
         })

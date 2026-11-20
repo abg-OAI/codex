@@ -294,7 +294,7 @@ async fn git_attribution_follows_authenticated_workspace_policy() -> Result<()> 
                 "chatgpt_base_url".to_string(),
                 json!(format!("{}/backend-api", settings_server.uri())),
             )])),
-            history_mode: Some(ThreadHistoryMode::Legacy),
+            history_mode: Some(ThreadHistoryMode::Paginated),
             ..Default::default()
         })
         .await?;

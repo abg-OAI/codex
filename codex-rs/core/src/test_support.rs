@@ -41,6 +41,54 @@ use crate::responses_metadata::subagent_metadata_kind;
 use crate::thread_manager;
 use crate::unified_exec;
 
+/// Opens a legacy rollout written before paginated admission became the local default.
+pub async fn start_saved_legacy_thread(
+    manager: &ThreadManager,
+    mut options: crate::StartThreadOptions,
+) -> anyhow::Result<crate::NewThread> {
+    use codex_history::{RolloutItem, RolloutLine};
+    use codex_protocol::protocol::{SessionMeta, SessionMetaLine};
+    use std::io::Write;
+
+    let id = manager.reserve_thread_id();
+    let timestamp = "2025-01-05T12:00:00.000Z";
+    let directory = options.config.codex_home.join("sessions/2025/01/05");
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join(format!("rollout-2025-01-05T12-00-00-{id}.jsonl"));
+    let source = options.session_source.clone().unwrap_or(SessionSource::Exec);
+    let meta = SessionMeta {
+        id,
+        session_id: source.parent_thread_id().unwrap_or(id).into(),
+        parent_thread_id: source.parent_thread_id(),
+        agent_path: source.get_agent_path().map(|path| path.to_string()),
+        timestamp: timestamp.into(),
+        cwd: options.config.cwd.to_path_buf(),
+        source,
+        thread_source: options.thread_source.clone(),
+        model_provider: Some(options.config.model_provider_id.clone()),
+        ..SessionMeta::default()
+    };
+    {
+        let header = RolloutItem::SessionMeta(Box::new(SessionMetaLine { meta, git: None }));
+        let mut file = std::fs::File::create_new(&path)?;
+        for item in std::iter::once(header)
+            .chain(options.initial_history.get_rollout_items().iter().cloned())
+        {
+            serde_json::to_writer(
+                &mut file,
+                &RolloutLine {
+                    timestamp: timestamp.into(),
+                    ordinal: None,
+                    item,
+                },
+            )?;
+            file.write_all(b"\n")?;
+        }
+    }
+    options.initial_history = crate::rollout::RolloutRecorder::get_rollout_history(&path).await?;
+    Ok(manager.start_thread(options).await?)
+}
+
 /// Supply fixed model metadata to tests without implementing a provider.
 pub fn fixed_model_catalog(
     manager: SharedModelsManager,

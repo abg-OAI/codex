@@ -279,6 +279,18 @@ async fn cold_exact_prefix_appends_suffix_to_same_task_and_checkpoints() -> Resu
     let mut fixture = ImportFixture::new().await?;
     let original = fixture.import_one().await?;
 
+    let initial = fixture.read(&original).await?.thread;
+    assert_eq!(
+        initial.history_mode,
+        codex_app_server_protocol::ThreadHistoryMode::Paginated
+    );
+    let initial_ids: Vec<_> = initial
+        .turns
+        .iter()
+        .flat_map(Turn::item_payloads)
+        .map(|item| item.id().to_string())
+        .collect();
+
     fixture.append(&[("assistant", LATE_ASSISTANT)])?;
     assert_eq!(fixture.import_detected().await?, vec![original.clone()]);
 
@@ -287,6 +299,26 @@ async fn cold_exact_prefix_appends_suffix_to_same_task_and_checkpoints() -> Resu
         &fixture.read(&original).await?,
         &[("user", FIRST_USER), ("assistant", LATE_ASSISTANT)],
     );
+    fixture.append(&[("user", LATER_USER)])?;
+    assert_eq!(fixture.import_detected().await?, vec![original.clone()]);
+    let after = fixture.read(&original).await?;
+    assert_history(
+        &after,
+        &[
+            ("user", FIRST_USER),
+            ("assistant", LATE_ASSISTANT),
+            ("user", LATER_USER),
+        ],
+    );
+    let ids: std::collections::HashSet<_> = after
+        .thread
+        .turns
+        .iter()
+        .flat_map(Turn::item_payloads)
+        .map(|item| item.id())
+        .collect();
+    assert_eq!(ids.len(), 4);
+    assert!(initial_ids.iter().all(|id| ids.contains(id.as_str())));
     assert!(fixture.detect().await?.items.is_empty());
     Ok(())
 }

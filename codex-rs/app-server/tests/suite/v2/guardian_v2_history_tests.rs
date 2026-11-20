@@ -305,7 +305,7 @@ async fn guardians_retain_evidence_after_compaction_and_resume(
         .start_thread(ThreadStartParams {
             approval_policy: Some(AskForApproval::OnRequest),
             approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
-            history_mode: Some(ThreadHistoryMode::Legacy),
+            history_mode: Some(ThreadHistoryMode::Paginated),
             ..Default::default()
         })
         .await?
