@@ -61,7 +61,7 @@ pub struct ThreadsPage {
 }
 
 /// Summary information for a thread rollout file.
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ThreadItem {
     /// Originator recorded at creation, if available.
     pub originator: Option<String>,
@@ -1189,6 +1189,14 @@ impl std::error::Error for MetadataReadError {
 /// callers that need the session metadata (e.g. to derive a cwd for config).
 pub async fn read_session_meta_line(path: &Path) -> io::Result<SessionMetaLine> {
     let mut lines = compression::open_rollout_line_reader(path).await?;
+    read_session_meta_from_reader(path, &mut lines).await
+}
+
+/// Reads the header from an open rollout, leaving the reader positioned after it.
+pub async fn read_session_meta_from_reader(
+    path: &Path,
+    lines: &mut compression::RolloutLineReader,
+) -> io::Result<SessionMetaLine> {
     while let Some(line) = lines.next_line().await? {
         let trimmed = line.trim();
         if trimmed.is_empty() {
