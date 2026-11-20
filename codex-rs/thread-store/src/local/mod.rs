@@ -14,6 +14,7 @@ mod pending_thread_metadata;
 mod projects;
 mod read_thread;
 mod revert_thread;
+mod rollout_archive;
 mod rollout_continuation;
 mod rollout_migration;
 // This lands before the reader PRs that consume the shared lineage resolver.
@@ -181,6 +182,9 @@ struct LiveRecorderEntry {
     recorder: RolloutRecorder,
     // Keep both writers owned until SQLite resolves an uncertain path publication.
     pending_continuation: Option<PendingContinuation>,
+    // On the first rotation after resume, discover the depth from durable history.
+    // Advance the countdown only when the selected continuation is installed.
+    rotations_until_archive: Option<usize>,
     // Synchronous legacy consumers follow the installed physical writer across rotations.
     rollout_path: tokio::sync::watch::Sender<PathBuf>,
     // Rollout projection rows are keyed by immutable rollout ID, not the stable thread ID used
@@ -202,6 +206,8 @@ struct RealtimeSeals {
 
 #[derive(Clone)]
 struct PendingContinuation {
+    archive: Option<rollout_archive::RolloutArchive>,
+    rotations_until_archive: Option<usize>,
     recorder: RolloutRecorder,
     rollout_id: ThreadId,
 }
@@ -502,6 +508,7 @@ impl LocalThreadStore {
             Entry::Vacant(entry) => {
                 entry.insert(LiveRecorderEntry {
                     pending_continuation: None,
+                    rotations_until_archive: None,
                     rollout_path: tokio::sync::watch::channel(
                         recorder.rollout_path().to_path_buf(),
                     )
