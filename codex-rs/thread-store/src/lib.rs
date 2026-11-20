@@ -36,6 +36,7 @@ pub use in_memory::InMemoryThreadStore;
 pub use in_memory::InMemoryThreadStoreCalls;
 pub use live_thread::LiveThread;
 pub use live_thread::LiveThreadInitGuard;
+pub use local::ColdSplitOutcome;
 pub use local::LocalThreadStore;
 pub use local::LocalThreadStoreConfig;
 pub use local::RolloutMigrationFailureReason;
