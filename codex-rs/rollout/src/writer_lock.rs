@@ -205,6 +205,27 @@ impl WriterLockCoordinator {
     }
 }
 
+impl WriterLockGuard {
+    pub(crate) fn check_rollout_owner(&self, path: &Path) -> io::Result<()> {
+        let thread_id = crate::thread_id_from_rollout_path(path)
+            .ok_or_else(|| io::Error::other("checkpoint requires a canonical rollout path"))?;
+        let home = self
+            .coordinator
+            .directory
+            .parent()
+            .ok_or_else(|| io::Error::other("thread lock directory has no parent"))?;
+        if self.path != self.coordinator.directory.join(format!("{thread_id}.lock"))
+            || !path.canonicalize()?.starts_with(home.canonicalize()?)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "checkpoint rollout does not belong to this writer lock",
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl Drop for WriterLockGuard {
     fn drop(&mut self) {
         let coordination_lock = match self.coordinator.open_coordination() {

@@ -115,11 +115,9 @@ pub(super) async fn rotate(
     )
     .await?;
     let publication = async {
-        next.record_canonical_items(items)
+        next.stage_continuation(items.to_vec())
             .await
             .map_err(thread_store_io_error)?;
-        next.persist().await.map_err(thread_store_io_error)?;
-        next.flush().await.map_err(thread_store_io_error)?;
         state_db
             .replace_rollout_path_if_current(thread_id, source_path, next.rollout_path())
             .await
