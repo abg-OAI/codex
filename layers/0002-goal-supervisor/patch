@@ -730,10 +730,32 @@ index b22f68fcedf4ca6315093f9d0b18f1cb61d96b88..b9d35d366399b8467d34a0c84240afe4
          .await
          .expect_err("fork requires a parent spawn call id");
 diff --git a/codex-rs/core/src/agent/history.rs b/codex-rs/core/src/agent/history.rs
-index da2153852615b860e019119dde54e01e8faa8744..3a2ff1ec56f7ef33289e5686cba5263f7ef2b051 100644
+index 1a2b6381804e5c43ed41dd04549024f1cedac4f5..8c4d998d40426a5ea16059a78268b21e5f7ee415 100644
 --- a/codex-rs/core/src/agent/history.rs
 +++ b/codex-rs/core/src/agent/history.rs
-@@ -330,7 +330,9 @@ pub(super) async fn prepare_forked_history(
+@@ -50,10 +50,12 @@ fn sanitize_forked_rollout_item(
+     preserve_context_baselines: bool,
+     preserve_fork_prefix: bool,
+     history_mode: ThreadHistoryMode,
++    retain_for_supervisor: bool,
+     mut retain_response: impl FnMut(&mut ResponseItemEnvelope) -> bool,
+ ) -> bool {
+     if !((preserve_fork_prefix && matches!(item, RolloutItem::ResponseItem(_)))
+-        || keep_forked_rollout_item(item, preserve_context_baselines))
++        || keep_forked_rollout_item(item, preserve_context_baselines)
++        || retain_for_supervisor)
+         || history_mode == ThreadHistoryMode::Paginated
+             && matches!(
+                 item,
+@@ -131,6 +133,7 @@ pub(crate) fn sanitize_agent_fork_prefix(
+                 /*preserve_context_baselines*/ true,
+                 /*preserve_fork_prefix*/ true,
+                 ThreadHistoryMode::Paginated,
++                /*retain_for_supervisor*/ false,
+                 |_| true,
+             )
+         })
+@@ -456,7 +459,9 @@ pub(super) async fn prepare_forked_history(
          if matches!(response_item, ResponseItem::AdditionalTools { .. }) {
              return preserve_context_baselines;
          }
@@ -744,16 +766,21 @@ index da2153852615b860e019119dde54e01e8faa8744..3a2ff1ec56f7ef33289e5686cba5263f
              return false;
          }
          if !retain_forked_developer_message(
-@@ -390,7 +392,8 @@ pub(super) async fn prepare_forked_history(
-     };
-     forked_rollout_items.retain_mut(|item| {
-         let keep = (preserve_fork_prefix && matches!(item, RolloutItem::ResponseItem(_)))
--            || keep_forked_rollout_item(item, preserve_context_baselines);
-+            || keep_forked_rollout_item(item, preserve_context_baselines)
-+            || crate::saffron::goal_supervisor::preserves_fork_item(session_source, item);
-         if !keep
-             || destination_history_mode == Some(ThreadHistoryMode::Paginated)
-                 && matches!(
+@@ -519,12 +524,14 @@ pub(super) async fn prepare_forked_history(
+             // Matches before this checkpoint cannot survive its replacement history.
+             replaced_parent_developer_instructions = false;
+         }
++        let retain_for_supervisor = crate::saffron::goal_supervisor::preserves_fork_item(session_source, item);
+         sanitize_forked_rollout_item(
+             item,
+             multi_agent_version,
+             preserve_context_baselines,
+             preserve_fork_prefix,
+             parent_history_mode,
++            retain_for_supervisor,
+             |response| retain_forked_item(response, &mut replaced_parent_developer_instructions),
+         )
+     });
 diff --git a/codex-rs/core/src/agent/host/spawn.rs b/codex-rs/core/src/agent/host/spawn.rs
 index 40e96627e38e660af4e3b76af59d6d60f1215ff6..efd77c07f9db40fb939ee3d1bf676b04aff87c4a 100644
 --- a/codex-rs/core/src/agent/host/spawn.rs
@@ -1159,10 +1186,10 @@ index a21c2c95c932e6c15d169167b38e043fa02e8755..41fb97a037c9645fb87d744bb6db0d72
      #[instrument(name = "turn_context.make", level = "trace", skip_all)]
      pub(crate) fn make_turn_context(
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index f4371358565af3ecf3ed7c8efa8d57c909a1aa7c..a505bf4eb35e2b33ece530af6c8cf1c4cee83a12 100644
+index c87b40f1112123dc83e111536ee8c37a676e1b6c..b1c4e80f2d619743910e58eea9a0df89f8f060ef 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -304,6 +304,11 @@ impl Session {
+@@ -306,6 +306,11 @@ impl Session {
          input: Vec<TurnInput>,
          task: T,
      ) -> TurnInputSubmission {
@@ -1174,7 +1201,7 @@ index f4371358565af3ecf3ed7c8efa8d57c909a1aa7c..a505bf4eb35e2b33ece530af6c8cf1c4
          self.abort_all_tasks(TurnAbortReason::Replaced).await;
          self.clear_connector_selection().await;
          self.start_task(turn_context, input, task).await
-@@ -421,6 +426,7 @@ impl Session {
+@@ -430,6 +435,7 @@ impl Session {
              Some(_) => (None, Vec::new(), Some(input)),
              None => (
                  self.services.agent_control.admit_turn(
@@ -1182,19 +1209,19 @@ index f4371358565af3ecf3ed7c8efa8d57c909a1aa7c..a505bf4eb35e2b33ece530af6c8cf1c4
                      turn_context.multi_agent_version,
                      &turn_context.session_source,
                  ),
-@@ -585,6 +591,11 @@ impl Session {
-         let Some((turn_state, previous_options)) = self.reserve_pending_work_turn().await else {
-             return;
-         };
+@@ -613,6 +619,11 @@ impl Session {
+         let _admission = reservation.admission;
+         let turn_state = reservation.turn_state;
+         let previous_options = reservation.previous_options;
 +        crate::saffron::goal_supervisor::claim_root_continuation(
 +            self,
 +            crate::saffron::goal_supervisor::ContinuationOwner::RootTurn,
 +        )
 +        .await;
-
+ 
          let helper_admission = HelperTurnAdmission::capture(self);
          self.services
-@@ -612,7 +623,11 @@ impl Session {
+@@ -625,7 +636,11 @@ impl Session {
          // Read the routing options now and leave the mail queued until task registration.
          let wake_options = self.input_queue.pending_wake_options().await;
          let triggered = wake_options.is_some();

@@ -587,22 +587,22 @@ index 5cd4a4b9755e8252bd27efb88b6b4b8b8b336d94..0f5743496116d2f25160e30b2ad6b74b
                      context,
                      start_options,
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index b9d35d366399b8467d34a0c84240afe44207981e..77f168c4e3c80835abf480c1acd33e16571aaa52 100644
+index 9b213bb72fa29e1422441790d15774c41d98ed1f..e3452ea14058fc1ad3c5787e133aa3bf138f33d1 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -31,9 +31,11 @@ use crate::context::world_state::IncrementalToolsUpdate;
+@@ -30,9 +30,11 @@ use crate::context::SubagentNotification;
+ use crate::context::world_state::IncrementalToolsUpdate;
  use crate::init_state_db;
- use crate::responses_metadata::CodexResponsesRequestKind;
  use crate::session::SessionSettingsUpdate;
 +use crate::session::session::Session;
  use crate::session::step_context::StepContext;
  use crate::session::step_settings::StepSettingsUpdate;
  use crate::session::tests::update_selected_settings_for_test;
 +use crate::tasks::completion_test_support::CompletingTask;
- use crate::thread_manager::ForkSnapshot;
  use crate::thread_manager::StartThreadOptions;
  use crate::tools::context::ToolCallSource;
-@@ -127,6 +129,7 @@ use std::task::Context;
+ use crate::tools::context::ToolInvocation;
+@@ -121,6 +123,7 @@ use std::task::Context;
  use std::task::Poll;
  use std::task::Waker;
  use tempfile::TempDir;
@@ -610,10 +610,10 @@ index b9d35d366399b8467d34a0c84240afe44207981e..77f168c4e3c80835abf480c1acd33e16
  use tokio::time::Duration;
  use tokio::time::sleep;
  use tokio::time::timeout;
-@@ -285,6 +288,13 @@ struct AgentControlHarness {
+@@ -279,6 +282,13 @@ struct AgentControlHarness {
      control: LocalAgentControl,
  }
-
+ 
 +#[derive(Clone, Copy)]
 +enum ActiveRecipientEnd {
 +    Complete,
@@ -624,7 +624,7 @@ index b9d35d366399b8467d34a0c84240afe44207981e..77f168c4e3c80835abf480c1acd33e16
  impl AgentControlHarness {
      async fn new() -> Self {
          let (home, config) = test_config().await;
-@@ -1093,6 +1103,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
+@@ -1041,6 +1051,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
          Op::InterAgentCommunication {
              communication: communication.clone(),
              start_options: Default::default(),
@@ -632,10 +632,10 @@ index b9d35d366399b8467d34a0c84240afe44207981e..77f168c4e3c80835abf480c1acd33e16
          },
      );
      let captured = harness
-@@ -1125,6 +1136,315 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
+@@ -1073,6 +1084,315 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
      ));
  }
-
+ 
 +#[tokio::test]
 +// Holding this lock stalls recipient acceptance so the test can inspect the
 +// retention bridge between the queued message and the recipient task.
@@ -948,7 +948,7 @@ index b9d35d366399b8467d34a0c84240afe44207981e..77f168c4e3c80835abf480c1acd33e16
  #[tokio::test]
  async fn ensure_v2_agent_loaded_reloads_registered_unloaded_agent() {
      check_v2_agent_reload(V2ReloadRoute::Sender).await;
-@@ -1572,6 +1892,7 @@ async fn check_v2_agent_reload(route: V2ReloadRoute) {
+@@ -1520,6 +1840,7 @@ async fn check_v2_agent_reload(route: V2ReloadRoute) {
          Op::InterAgentCommunication {
              communication,
              start_options: Default::default(),
@@ -956,10 +956,10 @@ index b9d35d366399b8467d34a0c84240afe44207981e..77f168c4e3c80835abf480c1acd33e16
          },
      );
      let captured = harness
-@@ -4693,6 +5014,448 @@ fn terminal_result_writes_require_confirmation_after_the_parent_claims_mail() {
+@@ -4513,6 +4834,448 @@ fn terminal_result_writes_require_confirmation_after_the_parent_claims_mail() {
      assert_eq!(count.load(std::sync::atomic::Ordering::Acquire), 1);
  }
-
+ 
 +#[tokio::test]
 +async fn multi_agent_v2_completion_starts_idle_parent_turn() {
 +    let harness = AgentControlHarness::new().await;
@@ -1405,14 +1405,14 @@ index b9d35d366399b8467d34a0c84240afe44207981e..77f168c4e3c80835abf480c1acd33e16
  #[tokio::test]
  async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
      let harness = AgentControlHarness::new().await;
-@@ -4760,6 +5523,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
+@@ -4580,6 +5343,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
 +            accepted: None,
          },
      );
-
+ 
 diff --git a/codex-rs/core/src/agent/registry.rs b/codex-rs/core/src/agent/registry.rs
 index d11aae4c041090711ee7e2392d4ca694ec50b574..5298178fd597ef68bd4a3ce68e369ac505e72466 100644
 --- a/codex-rs/core/src/agent/registry.rs
@@ -1670,7 +1670,7 @@ index 465f6a806708501ae18b85981bef4b174937dfc4..061c5026714e4c8b933cf98d8b7e1c0f
                      review(&sess, &config, sub.id.clone(), review_request).await;
                      false
 diff --git a/codex-rs/core/src/session/input_queue.rs b/codex-rs/core/src/session/input_queue.rs
-index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0422642f1 100644
+index 015936ab76bf2d1bdfd89146210051b0015b12ed..ddbb26f7e42df72b5d83e3a3f5ca1e16b462e90e 100644
 --- a/codex-rs/core/src/session/input_queue.rs
 +++ b/codex-rs/core/src/session/input_queue.rs
 @@ -1,5 +1,6 @@
@@ -1680,7 +1680,7 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
  use crate::state::ActiveTurn;
  use crate::state::MailboxDeliveryPhase;
  use crate::state::TurnState;
-@@ -141,6 +142,7 @@ pub(crate) struct InputQueue {
+@@ -170,6 +171,7 @@ pub(crate) struct InputQueue {
  pub(crate) struct PendingMailboxCommunication {
      pub(crate) communication: crate::PendingAgentMessage,
      start_options: TurnStartOptions,
@@ -1688,7 +1688,7 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
      _diagnostics_guard: GaugeGuard,
  }
  
-@@ -181,6 +183,7 @@ impl InputQueue {
+@@ -211,6 +213,7 @@ impl InputQueue {
                      .map(|communication| PendingMailboxCommunication {
                          communication,
                          start_options: TurnStartOptions::default(),
@@ -1696,7 +1696,7 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
                          _diagnostics_guard: PENDING_MAILBOX_MESSAGES.track(),
                      }),
              );
-@@ -214,6 +217,32 @@ impl InputQueue {
+@@ -244,6 +247,32 @@ impl InputQueue {
          &self,
          communication: crate::PendingAgentMessage,
          start_options: TurnStartOptions,
@@ -1729,7 +1729,7 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
      ) {
          let mut pending = self.mailbox_pending_mails.lock().await;
          // Mail retained while unloaded precedes new submissions to the loaded session.
-@@ -221,6 +250,7 @@ impl InputQueue {
+@@ -251,6 +280,7 @@ impl InputQueue {
          pending.push_back(PendingMailboxCommunication {
              communication,
              start_options,
@@ -1737,7 +1737,7 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
              _diagnostics_guard: PENDING_MAILBOX_MESSAGES.track(),
          });
          self.activity_tx.send_replace(InputQueueActivity::Mailbox);
-@@ -258,6 +288,14 @@ impl InputQueue {
+@@ -288,6 +318,14 @@ impl InputQueue {
                  }))
      }
  
@@ -1750,9 +1750,9 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
 +    }
 +
      pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
-         self.mailbox_pending_mails
-             .lock()
-@@ -272,6 +310,26 @@ impl InputQueue {
+         self.has_mailbox_items_matching(|mail| mail.trigger_turn)
+             .await
+@@ -310,6 +348,26 @@ impl InputQueue {
          pending.drain(..).collect()
      }
  
@@ -1779,15 +1779,7 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
      pub(crate) async fn pending_wake_options(&self) -> Option<TurnStartOptions> {
          let mut mails = self.mailbox_pending_mails.lock().await;
          self.read_mailbox(&mut mails);
-@@ -285,6 +343,7 @@ impl InputQueue {
-     fn trigger_turn_options(
-         pending_mails: &VecDeque<PendingMailboxCommunication>,
-     ) -> Option<TurnStartOptions> {
-+
-         // A later follow-up supersedes the earlier choice, including an omitted choice.
-         let mut start_options = pending_mails
-             .iter()
-@@ -313,11 +372,35 @@ impl InputQueue {
+@@ -351,11 +409,35 @@ impl InputQueue {
      }
  
      pub(crate) async fn drain_mailbox_input_items(&self) -> (Vec<TurnInput>, TurnStartOptions) {
@@ -1826,7 +1818,7 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
              .map(|mail| TurnInput::InterAgentCommunication(mail.communication))
              .collect();
          (items, start_options)
-@@ -367,6 +450,7 @@ impl InputQueue {
+@@ -405,6 +487,7 @@ impl InputQueue {
          let pending_input = {
              let mut turn_state = active_turn.turn_state.lock().await;
              turn_state.clear_pending_waiters();
@@ -1834,7 +1826,7 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
              std::mem::take(&mut turn_state.pending_input)
          };
          // A terminal result still in the queue has no writer yet. Keep it available
-@@ -387,6 +471,7 @@ impl InputQueue {
+@@ -425,6 +508,7 @@ impl InputQueue {
                  pending.push_front(PendingMailboxCommunication {
                      communication,
                      start_options: TurnStartOptions::default(),
@@ -1842,16 +1834,16 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
                      _diagnostics_guard: PENDING_MAILBOX_MESSAGES.track(),
                  });
              }
-@@ -482,7 +567,7 @@ impl InputQueue {
+@@ -523,7 +607,7 @@ impl InputQueue {
          &self,
          active_turn: &Mutex<Option<ActiveTurn>>,
-     ) -> (Vec<TurnInput>, TurnStartOptions) {
+     ) -> (Vec<InputQueueEntry>, TurnStartOptions) {
 -        let (pending_input, accepts_mailbox_delivery) = {
 +        let (pending_input, accepts_mailbox_delivery, turn_state) = {
              let mut active = active_turn.lock().await;
              match active.as_mut() {
                  Some(active_turn) => {
-@@ -494,15 +579,25 @@ impl InputQueue {
+@@ -535,15 +619,25 @@ impl InputQueue {
                      } else {
                          Vec::new()
                      };
@@ -1877,10 +1869,10 @@ index 3e76288c90c4c4f82fa6b1498fb7d971601ae36f..5a1edd961ce4f6e6d447694e7ce367d0
 +            }
 +            None => self.drain_mailbox_input_items().await,
 +        };
-         if pending_input.is_empty() {
-             (mailbox_items, start_options)
-         } else {
-@@ -832,6 +927,68 @@ mod tests {
+         let mut pending_input = pending_input;
+         pending_input.extend(mailbox_items.into_iter().map(InputQueueEntry::from));
+         (pending_input, start_options)
+@@ -869,6 +963,68 @@ mod tests {
          assert!(!input_queue.has_pending_mailbox_items().await);
      }
  
@@ -1997,36 +1989,6 @@ index c8d6395de3434c0cda9784c6cf732104fb137ca7..fb737de5be64306d709efecf44a920c8
      pub(crate) async fn originator(&self) -> String {
          let state = self.state.lock().await;
          state.session_configuration.originator.clone()
-diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 8f9eb5e600984a336021dc43fbaedd8ceaa299fb..91770001730448465a89f5e180baff5b9e05e45b 100644
---- a/codex-rs/core/src/session/turn_input.rs
-+++ b/codex-rs/core/src/session/turn_input.rs
-@@ -515,6 +515,12 @@ async fn start_or_steer(
-                 .await;
-             let mut task_input =
-                 merge_additional_context_input(session, &turn_context, additional_context).await;
-+            task_input.extend(
-+                session
-+                    .input_queue
-+                    .drain_queue_only_mailbox_input_items()
-+                    .await,
-+            );
-             if has_explicit_input {
-                 task_input.push(
-                     pending_turn_input(
-@@ -675,6 +681,12 @@ async fn start_if_idle(
-     let mut task_input =
-         merge_additional_context_input(session, &turn_context, additional_context).await;
-     let sender_messages = capture_sender_user_messages(session, &mut input).await;
-+    task_input.extend(
-+        session
-+            .input_queue
-+            .drain_queue_only_mailbox_input_items()
-+            .await,
-+    );
-     match kind {
-         TurnStartKind::User => {
-             session.clear_connector_selection().await;
 diff --git a/codex-rs/core/src/session/turn_input_agent.rs b/codex-rs/core/src/session/turn_input_agent.rs
 index ad871395687a5a0d577ff978ceb5e8ce06b3c75b..f33041fa60c794385e49dc3e40152cbc60f58cc5 100644
 --- a/codex-rs/core/src/session/turn_input_agent.rs
@@ -2076,20 +2038,28 @@ index dc7d916b253cae2ab982ab5cbcc4fe2bc9403863..3cad33d0a78e9f16d2bda1e40618b8a4
      pub(crate) tool_calls: u64,
      pub(crate) has_memory_citation: bool,
 diff --git a/codex-rs/core/src/tasks/admission.rs b/codex-rs/core/src/tasks/admission.rs
-index 40baba5f700f513eeb5e3563183dca211a46b152..12b11047ebd30a33539eb452b7ae63718eca7569 100644
+index 14b91b39042ae4a7cd41ef6c76d82dac2992dbcc..df0061d472650471d5ea74135c3180180a41b2bf 100644
 --- a/codex-rs/core/src/tasks/admission.rs
 +++ b/codex-rs/core/src/tasks/admission.rs
-@@ -60,7 +60,7 @@ pub(super) async fn admit(
-         .filter(|task| Arc::ptr_eq(&task.turn_context, context))
-         .filter(|_| !cancellation.is_cancelled())
-         .ok_or_else(|| CodexErr::new(CodexErrorDetails::TurnAborted))?;
+@@ -69,7 +69,7 @@ pub(super) async fn admit(
+     let input = task.pending_initial_input.take().ok_or_else(|| {
+         CodexErr::Fatal("initial input missing from the task awaiting host admission".into())
+     })?;
 -    task._agent_execution_guard = Some(guard);
 +    task.agent_execution_guard = Some(guard);
-     task.pending_initial_input.take().ok_or_else(|| {
-         CodexErr::Fatal("initial input missing from the task awaiting host admission".into())
-     })
+     turn.admitted = true;
+     Ok(input)
+ }
+@@ -130,6 +130,7 @@ impl Session {
+             .remove::<SubmittedAdditionalContext>();
+         for item in recordable_inputs(
+             self,
++            context,
+             &model_info,
+             &input,
+             &pending_input,
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee56650d53bc2 100644
+index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a42d8f1f36 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -1,5 +1,7 @@
@@ -2100,10 +2070,10 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
  mod lifecycle;
  mod regular;
  mod review;
-@@ -102,6 +104,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
+@@ -104,6 +106,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
      Developer,
  }
-
+ 
 +#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 +enum PendingWorkAfterAbort {
 +    Restart,
@@ -2113,9 +2083,37 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
  impl InterruptedTurnHistoryMarker {
      pub(crate) fn from_config_and_version(
          config: &Config,
-@@ -411,7 +419,10 @@ impl Session {
+@@ -299,6 +307,9 @@ where
+     }
+ }
+ 
++/// Number of queued messages delivered before the task's original submission.
++pub(crate) struct InitialMailboxPrefix(pub(crate) usize);
++
+ impl Session {
+     pub async fn spawn_task<T: SessionTask>(
+         self: &Arc<Self>,
+@@ -417,8 +428,28 @@ impl Session {
+             };
          };
          debug_assert!(turn.task.is_none());
++        let input = if task_kind == TaskKind::Regular && !input.is_empty() {
++            let mut mail = self
++                .input_queue
++                .drain_queue_only_mailbox_input_items()
++                .await;
++            if !mail.is_empty() {
++                turn_context
++                    .extension_data
++                    .insert(InitialMailboxPrefix(mail.len()));
++                mail.extend(input);
++                mail
++            } else {
++                input
++            }
++        } else {
++            input
++        };
          // Keep mail in its queue until a task owns it. Suspension can save it if it wins this lock.
 -        let (pending_items, _) = self.input_queue.drain_mailbox_input_items().await;
 +        let (pending_items, _) = self
@@ -2125,10 +2123,10 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
          self.input_queue
              .extend_pending_input_for_turn_state(&turn_state, pending_items)
              .await;
-@@ -434,6 +445,12 @@ impl Session {
-                 None,
-             ),
+@@ -445,6 +476,12 @@ impl Session {
          };
+         // Native admission is synchronous, including unrestricted turns that have no guard.
+         turn.admitted = host_admission.is_none();
 +        let ancestor_turn_retention_guard = crate::saffron::subagent_completion::retain_ancestors(
 +            self,
 +            turn_context.multi_agent_version,
@@ -2138,7 +2136,7 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
          let done_clone = Arc::clone(&done);
          let session = Arc::clone(self);
          let ctx = Arc::clone(&turn_context);
-@@ -539,9 +556,10 @@ impl Session {
+@@ -564,9 +601,10 @@ impl Session {
              },
              cancellation_token,
              turn_context: Arc::clone(&turn_context),
@@ -2150,7 +2148,7 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
              _diagnostics_guard: ACTIVE_TURNS.track(),
              _timer: timer,
          };
-@@ -692,7 +710,11 @@ impl Session {
+@@ -701,7 +739,11 @@ impl Session {
          async move {
              let had_active_turn = turn.is_some();
              session
@@ -2163,9 +2161,9 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
                  .await;
              if !had_active_turn {
                  session.cancel_mcp_startup();
-@@ -701,14 +723,33 @@ impl Session {
+@@ -710,14 +752,33 @@ impl Session {
      }
-
+ 
      pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
 +        self.abort_all_tasks_with_pending_work(reason, PendingWorkAfterAbort::Restart)
 +            .await;
@@ -2189,7 +2187,7 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
 -        self.abort_taken_tasks(active, reason).await;
 +        self.abort_taken_tasks(active, reason, pending_work).await;
      }
-
+ 
      async fn abort_taken_tasks(
          self: &Arc<Self>,
          active: Option<ActiveTurn>,
@@ -2198,7 +2196,7 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
      ) {
          let mut aborted_turn = false;
          let mut active_turn_to_clear = None;
-@@ -734,8 +775,16 @@ impl Session {
+@@ -743,8 +804,16 @@ impl Session {
              // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
              self.input_queue.clear_pending(&active_turn).await;
          }
@@ -2216,16 +2214,16 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
 +            PendingWorkAfterAbort::Restart => {}
          }
      }
-
-@@ -820,7 +869,15 @@ impl Session {
+ 
+@@ -829,7 +898,15 @@ impl Session {
              && !self.work_budget().is_exhausted();
          let finishing = CancellationToken::new();
          let finish_recording = finishing.clone().drop_guard();
--        let (turn_state, unadmitted_task, mut pending_input, outcome_handoff, sampling_interrupted) = {
+-        let (turn_state, unadmitted_task, initial_input, outcome_handoff, sampling_interrupted) = {
 +        let (
 +            turn_state,
 +            unadmitted_task,
-+            mut pending_input,
++            initial_input,
 +            outcome_handoff,
 +            sampling_interrupted,
 +            agent_execution_guard,
@@ -2234,14 +2232,14 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
              let mut active = self.active_turn.lock().await;
              let active_turn = active.as_mut()?;
              if !Arc::ptr_eq(&active_turn.task.as_ref()?.turn_context, &turn_context) {
-@@ -843,11 +900,13 @@ impl Session {
+@@ -852,11 +929,13 @@ impl Session {
              active_turn.finishing = Some(finishing);
              (
                  Arc::clone(&active_turn.turn_state),
 -                (task._agent_execution_guard.is_none() && task.pending_initial_input.is_some())
 +                (task.agent_execution_guard.is_none() && task.pending_initial_input.is_some())
                      .then_some(task.task),
-                 task.pending_initial_input.unwrap_or_default(),
+                 task.pending_initial_input,
                  task.outcome_handoff,
                  sampling_interrupted,
 +                task.agent_execution_guard,
@@ -2249,7 +2247,7 @@ index a505bf4eb35e2b33ece530af6c8cf1c4cee83a12..b74c988780b39f8b3af61d31692ee566
              )
          };
          turn_context
-@@ -1117,6 +1176,8 @@ impl Session {
+@@ -1127,6 +1206,8 @@ impl Session {
              self.send_event(turn_context.as_ref(), event).await;
          }
          drop(outcome_handoff);
@@ -2835,10 +2833,10 @@ index 3573c017d5f8f2784684b0ba5bd3644d5190f388..143f85cdb4969911a73ce3b0de460643
      Ok(())
  }
 diff --git a/codex-rs/core/tests/suite/turn_input_submission.rs b/codex-rs/core/tests/suite/turn_input_submission.rs
-index 59168fec8b024d1283ca12349bf749e781ae6b52..2db84163fdb5991e16364608c1633ce9904d3ff0 100644
+index b44462328393987a50a69f5e766fa915b02ef686..fc7b1a71a144ff2a803b46043073f9571263b096 100644
 --- a/codex-rs/core/tests/suite/turn_input_submission.rs
 +++ b/codex-rs/core/tests/suite/turn_input_submission.rs
-@@ -198,6 +198,7 @@ async fn turn_extension_data_is_captured_for_automatic_turns() -> anyhow::Result
+@@ -200,6 +200,7 @@ async fn turn_extension_data_is_captured_for_automatic_turns() -> anyhow::Result
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2846,7 +2844,15 @@ index 59168fec8b024d1283ca12349bf749e781ae6b52..2db84163fdb5991e16364608c1633ce9
          })
          .await?;
      let automatic_id = wait_for_event_match(&thread, |event| match event {
-@@ -567,6 +568,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()>
+@@ -326,6 +327,7 @@ async fn host_drain_rejects_turn_start_paths_without_recording_input() -> anyhow
+                 /*trigger_turn*/ false,
+             ),
+             start_options: TurnStartOptions::default(),
++            accepted: None,
+         })
+         .await?;
+     // Fence the mailbox dispatch so the first wake has already been rejected.
+@@ -638,6 +640,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()>
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2854,11 +2860,65 @@ index 59168fec8b024d1283ca12349bf749e781ae6b52..2db84163fdb5991e16364608c1633ce9
          })
          .await?;
      wait_for_event(&test.codex, |event| {
+@@ -1912,3 +1915,53 @@ async fn tool_output_retention_is_submission_metadata() -> anyhow::Result<()> {
+     server.shutdown().await;
+     Ok(())
+ }
++
++#[tokio::test]
++async fn deferred_mail_precedes_the_next_submission_and_its_context() -> anyhow::Result<()> {
++    let server = responses::start_mock_server().await;
++    let response = responses::mount_sse_once(&server, responses::sse_completed("done")).await;
++    let test = test_codex().build_with_auto_env(&server).await?;
++    test.codex
++        .submit(Op::InterAgentCommunication {
++            communication: InterAgentCommunication::new(
++                AgentPath::root().join("worker").unwrap(),
++                AgentPath::root(),
++                Vec::new(),
++                "queued worker result".to_owned(),
++                /*trigger_turn*/ false,
++            ),
++            start_options: TurnStartOptions::default(),
++            accepted: None,
++        })
++        .await?;
++    test.codex
++        .update_thread_settings(ThreadSettingsOverrides::default())
++        .await?;
++    test.codex
++        .start_or_steer_turn(
++            user_message_request("explicit user request").with_additional_context(BTreeMap::from(
++                [(
++                    "active_tab".to_owned(),
++                    AdditionalContextEntry::new(
++                        "context for this submission".to_owned(),
++                        AdditionalContextKind::Untrusted,
++                    ),
++                )],
++            )),
++        )
++        .await?;
++    wait_for_event(&test.codex, |event| {
++        matches!(event, EventMsg::TurnComplete(_))
++    })
++    .await;
++    let items = response.single_request().input();
++    let position = |text: &str| {
++        items
++            .iter()
++            .position(|item| item.to_string().contains(text))
++            .unwrap_or_else(|| panic!("missing {text} in request"))
++    };
++    assert!(position("queued worker result") < position("context for this submission"));
++    assert!(position("context for this submission") < position("explicit user request"));
++    Ok(())
++}
 diff --git a/codex-rs/core/tests/suite/wake_reservation.rs b/codex-rs/core/tests/suite/wake_reservation.rs
-index f24b30c550552216ac094c4fe45293361508f579..d4ba9ae2123d842f157e3e7d8606f1618b9cb259 100644
+index 4fe477245c45daec6d3142f8396735534c2e0832..116530c6114ec33d6e883ba3b54d466a55bd54a2 100644
 --- a/codex-rs/core/tests/suite/wake_reservation.rs
 +++ b/codex-rs/core/tests/suite/wake_reservation.rs
-@@ -185,6 +185,7 @@ async fn interrupt_during_wake_context_construction_does_not_start_turn() -> any
+@@ -256,6 +256,7 @@ async fn interrupt_during_wake_context_construction_does_not_start_turn() -> any
                  /*trigger_turn*/ false,
              ),
              start_options: Default::default(),
@@ -2866,6 +2926,14 @@ index f24b30c550552216ac094c4fe45293361508f579..d4ba9ae2123d842f157e3e7d8606f161
          })
          .await?;
      codex.submit(Op::RealtimeConversationListVoices).await?;
+@@ -339,6 +340,7 @@ async fn guardian_policy_refresh_blocks_turns_and_resumes_queued_work() -> anyho
+                 /*trigger_turn*/ true,
+             ),
+             start_options: Default::default(),
++            accepted: None,
+         })
+         .await?;
+     // This acknowledgement is processed after the blocked wake attempt.
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
 index 6218afce134eb6a109a8b68af45dafc57d825eeb..b1d4371958b21a84c1bb2a3d1606194adc4e4086 100644
 --- a/codex-rs/protocol/src/protocol.rs
@@ -2904,3 +2972,55 @@ index 6218afce134eb6a109a8b68af45dafc57d825eeb..b1d4371958b21a84c1bb2a3d1606194a
              Self::RunUserShellCommand { .. } => "run_user_shell_command",
          }
      }
+diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
+index d76ba7ac3163d80577ca585bda55486fb63ba9ad..6967f3a41bd676c179543d529fcc5776f1ae8f3f 100644
+--- a/codex-rs/core/src/session/turn.rs
++++ b/codex-rs/core/src/session/turn.rs
+@@ -1197,6 +1197,7 @@ pub(crate) async fn run_hooks_and_record_input_entries(
+     let mut input_error = None;
+     for input_item in recordable_inputs(
+         sess,
++        turn_context,
+         model_info,
+         initial_input,
+         pending_input,
+@@ -1289,16 +1290,21 @@ pub(crate) async fn merge_submitted_context(
+ /// Yields usable input with its context in order, then reports unsupported audio after valid siblings can be recorded.
+ pub(crate) fn recordable_inputs<'a>(
+     sess: &Session,
++    turn_context: &TurnContext,
+     model_info: &ModelInfo,
+     initial_input: &'a [TurnInput],
+     pending_input: &'a [InputQueueEntry],
+     initial_context: Option<&'a SubmittedAdditionalContext>,
+ ) -> impl Iterator<Item = CodexResult<(Cow<'a, TurnInput>, Option<&'a SubmittedAdditionalContext>)>>
+ {
++    let submission_index = turn_context
++        .extension_data
++        .get::<crate::tasks::InitialMailboxPrefix>()
++        .map_or(0, |prefix| prefix.0);
+     let input = initial_input
+         .iter()
+         .enumerate()
+-        .map(move |(index, item)| (item, initial_context.filter(|_| index == 0)))
++        .map(move |(index, item)| (item, initial_context.filter(|_| index == submission_index)))
+         .chain(pending_input.iter().map(InputQueueEntry::input_and_context));
+     let rejected_audio = !model_info.input_modalities.contains(&InputModality::Audio)
+         && input
+diff --git a/codex-rs/core/src/tasks/mod_tests.rs b/codex-rs/core/src/tasks/mod_tests.rs
+index bfae5c87a790ca8a0ce5b9d6fa56fe5767f9806b..02841e6dd80e7333853d46b4aec348d5998981a9 100644
+--- a/codex-rs/core/src/tasks/mod_tests.rs
++++ b/codex-rs/core/src/tasks/mod_tests.rs
+@@ -819,7 +819,11 @@ async fn abort_drops_timing_guards_before_profile_completion(finished_before_wai
+         done.await;
+     }
+     session
+-        .abort_taken_tasks(Some(turn), TurnAbortReason::Interrupted)
++        .abort_taken_tasks(
++            Some(turn),
++            TurnAbortReason::Interrupted,
++            super::PendingWorkAfterAbort::Restart,
++        )
+         .await;
+ 
+     let timing = &context.turn_timing_state;

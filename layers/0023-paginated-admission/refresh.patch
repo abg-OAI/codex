@@ -964,10 +964,10 @@ index 5419761db51f659a22408c4f1927e5897a416459..a61d7fc2c4a9ebf274037b137ae1487c
          })
          .await?;
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 6ed45fd30dec3061eda14ac6fe473a18f25a12aa..ca02780939a2f1fe0d46d2981c75154bf876c25f 100644
+index ca18bbd8ef08bbe0b8205a18b55f726f5f04447a..6d2d91d9680c4db6ddd1bc3699381fdd022d4baa 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -2073,19 +2073,19 @@ async fn cold_resume_with_thread_instructions_preserves_lazy_v2_child_inheritanc
+@@ -2021,19 +2021,19 @@ async fn cold_resume_with_thread_instructions_preserves_lazy_v2_child_inheritanc
      let _ = config.features.enable(Feature::Sqlite);
      let admitted_country = RequestCountry::from_iso_code("DE").unwrap();
      let harness = AgentControlHarness::new_with_config(home, config).await;
@@ -994,7 +994,7 @@ index 6ed45fd30dec3061eda14ac6fe473a18f25a12aa..ca02780939a2f1fe0d46d2981c75154b
      let parent_thread_id = parent.thread_id;
      let control = &parent
          .thread
-@@ -3383,7 +3383,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
+@@ -3331,7 +3331,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
      let new_thread = harness
          .manager
          .start_thread(StartThreadOptions {
@@ -1003,7 +1003,7 @@ index 6ed45fd30dec3061eda14ac6fe473a18f25a12aa..ca02780939a2f1fe0d46d2981c75154b
              ..StartThreadOptions::new(parent_config.clone())
          })
          .await
-@@ -3573,7 +3573,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
+@@ -3521,7 +3521,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
      assert_ne!(child_thread_id, parent_thread_id);
      assert_eq!(
          child_thread.config_snapshot().await.history_mode,
@@ -1012,40 +1012,6 @@ index 6ed45fd30dec3061eda14ac6fe473a18f25a12aa..ca02780939a2f1fe0d46d2981c75154b
      );
      let history = child_thread.session.clone_history().await;
      let history_items = history.raw_items().cloned().collect::<Vec<_>>();
-@@ -4568,14 +4568,14 @@ async fn resume_and_cold_fork_restore_mcp_attribution_in_constructed_requests(
-     record_invalid_source: bool,
- ) {
-     let harness = AgentControlHarness::new().await;
--    let source = harness
--        .manager
--        .start_thread(StartThreadOptions {
--            history_mode: Some(ThreadHistoryMode::Legacy),
-+    let source = crate::test_support::start_saved_legacy_thread(
-+        &harness.manager,
-+        StartThreadOptions {
-             ..StartThreadOptions::new(harness.config.clone())
--        })
--        .await
--        .expect("start legacy source");
-+        },
-+    )
-+    .await
-+    .expect("start legacy source");
-     let source_thread_id = source.thread_id;
-     let source_thread = source.thread;
-     let turn_context = source_thread.session.new_default_turn().await;
-@@ -4640,7 +4640,10 @@ async fn resume_and_cold_fork_restore_mcp_attribution_in_constructed_requests(
-         .manager
-         .fork_legacy_thread(
-             ForkSnapshot::Interrupted,
--            StartThreadOptions::new(harness.config.clone()),
-+            StartThreadOptions::new(crate::config::Config {
-+                ephemeral: true,
-+                ..harness.config.clone()
-+            }),
-             rollout_path.clone(),
-         )
-         .await
 diff --git a/codex-rs/core/src/saffron/fork_thread.rs b/codex-rs/core/src/saffron/fork_thread.rs
 index c4a05e3a04114199ebd3f989ec7fceaef5041bb9..f9a2e0ba10137d745a74b158669cd3487b43f48b 100644
 --- a/codex-rs/core/src/saffron/fork_thread.rs

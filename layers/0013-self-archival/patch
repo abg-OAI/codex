@@ -315,10 +315,10 @@ index 32fc11c5c8f3415e67911a69f34547d2cd56abda..9de6f0f83cab84186a6f5f62924c0656
  
                  let SamplingRequestResult {
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 91770001730448465a89f5e180baff5b9e05e45b..26115b759817821a8896fc97233f43c6ffda7826 100644
+index ca8bbe6c66accbac63958245797477ee0015f85b..2eb73c26e60ccc425a7be9449e72f1cf3ecbb8fd 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
-@@ -844,6 +844,8 @@ impl Session {
+@@ -911,6 +911,8 @@ impl Session {
      ) {
          let mut state = self.state.lock().await;
          state.last_started_turn_id = Some(turn_id.to_owned());
@@ -327,8 +327,8 @@ index 91770001730448465a89f5e180baff5b9e05e45b..26115b759817821a8896fc97233f43c6
          if let Some(attribution) = attribution {
              state.turn_attribution = Some(attribution);
          }
-@@ -1118,6 +1120,7 @@ impl Session {
-                 pending_input,
+@@ -1154,6 +1156,7 @@ impl Session {
+                 }],
              )
              .await;
 +        crate::saffron::archive_self::cancel(self);

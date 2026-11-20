@@ -554,18 +554,18 @@ index 0372bf0b84c815aed2cb28275992e438e0171e76..3ef627516007b4ebdae46f858bb05768
          startup_prewarm.abort().await;
      }
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a911ff35ad6 100644
+index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0de8b47ce 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -277,6 +277,7 @@ mod mcp_runtime;
+@@ -277,6 +277,7 @@ mod mcp_refresh;
+ mod mcp_runtime;
  mod model_catalog_settings;
- mod model_ids;
  pub(crate) mod multi_agents;
 +mod persistence_repair;
  mod plugin_selection;
  mod realtime_handoff;
  mod realtime_history;
-@@ -1634,7 +1635,12 @@ impl Session {
+@@ -1650,7 +1651,12 @@ impl Session {
      }
  
      pub(crate) fn state_db(&self) -> Option<state_db::StateDbHandle> {
@@ -579,7 +579,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
      }
  
      pub(crate) fn live_thread_for_persistence(
-@@ -1646,7 +1652,12 @@ impl Session {
+@@ -1662,7 +1668,12 @@ impl Session {
      }
  
      pub(crate) fn live_thread(&self) -> Option<&LiveThread> {
@@ -593,14 +593,14 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
      }
  
      pub(crate) async fn set_thread_memory_mode(
-@@ -4171,20 +4182,26 @@ impl Session {
-                 }
-                 Some(revision)
-             });
+@@ -4165,20 +4176,26 @@ impl Session {
+         let has_user_turn_boundary = items
+             .iter()
+             .any(|envelope| crate::context_manager::is_user_turn_boundary(&envelope.item));
 -        // Thread settings precede the first accepted input. Keep the persistence lock
 -        // through its seal, and clear the pending flag only after the seal succeeds.
 -        let realtime_settings_guard = if realtime.is_some()
--            && force_mcp_checkpoint
+-            && has_user_turn_boundary
 -            && self.reference_context_item().await.is_none()
 -        {
 -            Some(thread_settings::acquire_persistence_lock(self).await)
@@ -614,7 +614,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
 +        // Thread settings precede the first accepted input. Realtime inputs clear the
 +        // pending flag after the seal succeeds so that a failed seal can be retried.
 +        let settings_guard =
-+            if force_mcp_checkpoint && self.reference_context_item().await.is_none() {
++            if has_user_turn_boundary && self.reference_context_item().await.is_none() {
 +                Some(thread_settings::acquire_persistence_lock(self).await)
 +            } else {
 +                None
@@ -634,7 +634,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
              Some(thread_settings::applied_event(self).await)
          } else {
              None
-@@ -4193,8 +4210,13 @@ impl Session {
+@@ -4187,8 +4204,13 @@ impl Session {
              .iter()
              .map(|envelope| envelope.item.clone())
              .collect::<Vec<_>>();
@@ -649,7 +649,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
              let pending_orders = turn_context
                  .extension_data
                  .get::<retained_context::PendingAssistantMessageOrders>();
-@@ -4245,11 +4267,11 @@ impl Session {
+@@ -4239,11 +4261,11 @@ impl Session {
                          &turn_context.sub_id,
                          envelope,
                          prepared,
@@ -663,7 +663,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
                      state.take_initial_settings_pending();
                  }
                  response_items = vec![envelope.item.clone()];
-@@ -4264,11 +4286,11 @@ impl Session {
+@@ -4258,11 +4280,11 @@ impl Session {
                      .record_realtime_chunk_input(
                          &mut state,
                          envelope.clone(),
@@ -677,7 +677,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
                      state.take_initial_settings_pending();
                  }
                  response_items = vec![envelope.item];
-@@ -4281,7 +4303,8 @@ impl Session {
+@@ -4275,7 +4297,8 @@ impl Session {
              state
                  .current_time_reminder
                  .note_recorded_items(&response_items);
@@ -687,12 +687,12 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
          for image in image_preparations {
              self.services
                  .analytics_events_client
-@@ -4296,28 +4319,15 @@ impl Session {
-         } else if matches!(&realtime, Some(RealtimeRecord::Chunk)) {
-             true
-         } else {
+@@ -4287,29 +4310,15 @@ impl Session {
+         if let Some(RealtimeRecord::Handoff(prepared)) = &realtime {
+             self.finish_realtime_handoff(prepared, &items[0]).await;
+         } else if !matches!(&realtime, Some(RealtimeRecord::Chunk)) {
 -            let settings_guard =
--                if force_mcp_checkpoint && self.reference_context_item().await.is_none() {
+-                if has_user_turn_boundary && self.reference_context_item().await.is_none() {
 -                    Some(thread_settings::acquire_persistence_lock(self).await)
 -                } else {
 -                    None
@@ -711,16 +711,17 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
                  .map(RolloutItem::EventMsg)
                  .chain(items.into_iter().map(RolloutItem::ResponseItem))
                  .collect::<Vec<_>>();
--            self.persist_rollout_items(&rollout_items).await
-+            self.persist_rollout_items_locked(&rollout_items).await
-         };
+-            self.persist_rollout_items(&rollout_items).await;
+-            drop(settings_guard);
++            self.persist_rollout_items_locked(&rollout_items).await;
+         }
 -        drop(realtime_settings_guard);
 +        drop(persistence);
 +        drop(settings_guard);
-         if persisted && let Some(revision) = mcp_revision {
-             self.services
-                 .executed_tool_calls
-@@ -4869,19 +4879,21 @@ impl Session {
+         if turn_context.config.memories.disable_on_external_context
+             && let Some(item) = response_items
+                 .iter()
+@@ -4857,19 +4866,21 @@ impl Session {
          }
          let mut delivery = communication.delivery.as_ref();
          let mut result_write = None;
@@ -745,7 +746,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
                  RolloutItem::InterAgentCommunicationMetadata {
                      trigger_turn: communication.trigger_turn,
                  },
-@@ -4894,6 +4906,7 @@ impl Session {
+@@ -4882,6 +4893,7 @@ impl Session {
          {
              write.confirm();
          }
@@ -753,7 +754,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
          drop(boundary);
          self.send_raw_response_items(turn_context, &items).await;
      }
-@@ -5016,8 +5029,10 @@ impl Session {
+@@ -4994,8 +5006,10 @@ impl Session {
              Some(history) => history.lock().await.observation_clock.floor_ms(),
              None => None,
          };
@@ -765,7 +766,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
              let complete_replacement =
                  matches!(&installation, CompactedHistoryInstallation::Complete(..));
              let replacement = match installation {
-@@ -5113,7 +5128,7 @@ impl Session {
+@@ -5102,7 +5116,7 @@ impl Session {
                  latest_token_usage_record: state.latest_token_usage_record.clone(),
                  resume_metadata: Some(resume_metadata),
              };
@@ -774,7 +775,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
          };
  
          // Use the replacement captured under the state lock, including goal edits retained
-@@ -5127,25 +5142,26 @@ impl Session {
+@@ -5116,19 +5130,20 @@ impl Session {
              );
          }
  
@@ -791,14 +792,8 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
 -            RolloutItem::EventMsg(thread_settings::applied_event(self).await),
 +            RolloutItem::EventMsg(settings_event),
          ];
--        if self.persist_rollout_items(&rollout_items).await
-+        if self.persist_rollout_items_locked(&rollout_items).await
-             && let Some(revision) = mcp_revision
-         {
-             self.services
-                 .executed_tool_calls
-                 .mark_mcp_attribution_persisted(revision);
-         }
+-        self.persist_rollout_items(&rollout_items).await;
++        self.persist_rollout_items_locked(&rollout_items).await;
 +        drop(persistence);
 +        if let Some((turn_context, item)) = started_item {
 +            // Event delivery can persist records, so release the checkpoint lock first.
@@ -807,7 +802,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
          {
              let mut state = self.state.lock().await;
              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
-@@ -5529,6 +5545,11 @@ impl Session {
+@@ -5519,6 +5534,11 @@ impl Session {
  
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
@@ -819,7 +814,7 @@ index c69650e89465b0817ee847631dcf8253dd514295..afe6200425a532b730ba8653dea29a91
          if let Some(live_thread) = self.live_thread()
              && let Err(e) = live_thread.append_items(items).await
          {
-@@ -5809,11 +5830,12 @@ impl Session {
+@@ -5802,11 +5822,12 @@ impl Session {
                  thread_settings::applied_event(self).await,
              ));
          }
@@ -877,38 +872,46 @@ index 14a1905d1c62e14eb164c63222ed973ee399fc6e..87e5b92b6c4f9eb89d6447aa3a1ff693
          services,
          git_enrichment_policy: GitEnrichmentPolicy::Fresh,
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index e19041e2a7af2eaac70417ca2716a9fb49b3ba1b..f726e9443116707d78584d344ef277ad6b28d1bc 100644
+index 45acfab09b2f498d58253e36e7d34377ad88ef74..f6caa30794444f716689b206fac52255194609cf 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -601,6 +601,9 @@ pub(crate) struct ResumeThreadWithHistoryOptions {
- pub(crate) struct ThreadManagerState {
+@@ -129,6 +129,7 @@ use codex_utils_git_discovery::GitRootDiscovery;
+ use futures::StreamExt;
+ use futures::future::BoxFuture;
+ use futures::stream::FuturesUnordered;
++use std::collections::HashMap;
+ use std::collections::HashSet;
+ use std::future::Future;
+ use std::path::PathBuf;
+@@ -605,6 +606,9 @@ pub(crate) struct ThreadManagerState {
      // Eviction updates this registry and residency together, locking the registry first.
-     pub(crate) threads: Arc<RwLock<HashMap<ThreadId, Arc<CodexThread>>>>,
+     pub(crate) threads: ThreadRegistry,
+     guardian_policy_loader: Option<Arc<dyn GuardianPolicyLoader>>,
 +    /// The first registered persistence mode belongs to the target and
 +    /// survives later reloads driven by another thread's configuration.
 +    thread_ephemeral_intent: std::sync::Mutex<HashMap<ThreadId, bool>>,
      shared_thread_instructions: shared_instructions::SharedThreadInstructionsProviders,
      thread_created_tx: broadcast::Sender<ThreadId>,
      thread_id_generator: ThreadIdGenerator,
-@@ -704,6 +707,7 @@ impl ThreadManager {
-         Self {
+@@ -709,6 +713,7 @@ impl ThreadManager {
              state: Arc::new(ThreadManagerState {
-                 threads: Arc::new(RwLock::new(HashMap::new())),
+                 threads: ThreadRegistry::default(),
+                 guardian_policy_loader: None,
 +                thread_ephemeral_intent: std::sync::Mutex::new(HashMap::new()),
                  shared_thread_instructions: Default::default(),
                  thread_created_tx,
                  thread_id_generator: default_thread_id_generator(),
-@@ -917,6 +921,7 @@ impl ThreadManager {
-             state: Arc::new(ThreadManagerState {
+@@ -923,6 +928,7 @@ impl ThreadManager {
                  runtime_auth,
-                 threads: Arc::new(RwLock::new(HashMap::new())),
+                 threads: ThreadRegistry::default(),
+                 guardian_policy_loader: None,
 +                thread_ephemeral_intent: std::sync::Mutex::new(HashMap::new()),
                  shared_thread_instructions: Default::default(),
                  thread_created_tx,
                  thread_id_generator: default_thread_id_generator(),
-@@ -1247,7 +1252,14 @@ impl ThreadManager {
+@@ -1277,7 +1283,14 @@ impl ThreadManager {
      }
-
+ 
      pub async fn get_thread(&self, thread_id: ThreadId) -> CodexResult<Arc<CodexThread>> {
 -        self.state.get_thread(thread_id).await
 +        let thread = self.state.get_thread(thread_id).await?;
@@ -920,12 +923,12 @@ index e19041e2a7af2eaac70417ca2716a9fb49b3ba1b..f726e9443116707d78584d344ef277ad
 +        }
 +        Ok(thread)
      }
-
+ 
      /// Checks the full registry without exposing any replacement runtime.
-@@ -2030,6 +2042,13 @@ impl ThreadManagerState {
-             .await
+@@ -2102,6 +2115,13 @@ impl ThreadManagerState {
+         }
      }
-
+ 
 +    pub(crate) fn is_saved_target(&self, thread_id: ThreadId) -> bool {
 +        self.thread_ephemeral_intent
 +            .lock()
@@ -936,24 +939,24 @@ index e19041e2a7af2eaac70417ca2716a9fb49b3ba1b..f726e9443116707d78584d344ef277ad
      pub(crate) fn shared_thread_instructions_provider(
          &self,
          root_thread_id: ThreadId,
-@@ -3064,6 +3083,7 @@ impl ThreadManagerState {
+@@ -3210,6 +3230,7 @@ impl ThreadManagerState {
          registered: &AtomicBool,
      ) -> CodexResult<(NewThread, Option<ServiceTierAcceptance>)> {
          let thread_id = session.thread_id();
 +        let ephemeral = session.get_config().await.ephemeral;
          let event = io.next_event().await?;
-         let session_configured = match event {
+         let mut session_configured = match event {
              Event {
-@@ -3094,6 +3114,11 @@ impl ThreadManagerState {
-             };
-             let mut threads = self.threads.write().await;
-             if let std::collections::hash_map::Entry::Vacant(e) = threads.entry(thread_id) {
+@@ -3286,6 +3307,11 @@ impl ThreadManagerState {
+                 }) {
+                     break policy_changed.to_owned();
+                 }
 +                self.thread_ephemeral_intent
 +                    .lock()
 +                    .unwrap_or_else(std::sync::PoisonError::into_inner)
 +                    .entry(thread_id)
 +                    .or_insert(ephemeral);
-                 ema_cancellation.publish();
+                 mcp_ema_cancellation.publish();
                  let thread = Arc::new(CodexThread::new(
                      Arc::clone(&session),
 diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs

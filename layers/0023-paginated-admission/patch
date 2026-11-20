@@ -1024,10 +1024,10 @@ index ce014c5761b590dcc5ad4d8850109e36033c442f..ebf656e0b93c96aced2d436601a0624e
              local_settings,
              &config,
 diff --git a/codex-rs/tui/src/dynamic_tools.rs b/codex-rs/tui/src/dynamic_tools.rs
-index c170df1e111435af7e8fcf3bf415f9da02e3055f..30e814e595fb4fea3f79ef0c61156a60ede81bb7 100644
+index 8b112de7239272d238499c5ff79a6f9cc04292ce..aa821155d00d67e3fce2f4e6b93e6b367fd7f834 100644
 --- a/codex-rs/tui/src/dynamic_tools.rs
 +++ b/codex-rs/tui/src/dynamic_tools.rs
-@@ -456,7 +456,10 @@ async fn execute_inner(
+@@ -460,7 +460,10 @@ async fn execute_inner(
                  }
                  Ok(page) => (page.data, page.next_cursor),
                  Err(TypedRequestError::Server { source, .. })
@@ -1039,7 +1039,7 @@ index c170df1e111435af7e8fcf3bf415f9da02e3055f..30e814e595fb4fea3f79ef0c61156a60
                  {
                      let response: ThreadReadResponse =
                          request(&handle, |request_id| ClientRequest::ThreadRead {
-@@ -555,19 +558,16 @@ async fn execute_inner(
+@@ -559,19 +562,16 @@ async fn execute_inner(
                  == ThreadHistoryMode::Paginated)
                  .then_some(ThreadHistoryMode::Paginated);
              let exclude_turns = source_thread.history_mode == ThreadHistoryMode::Paginated;
@@ -1060,10 +1060,10 @@ index c170df1e111435af7e8fcf3bf415f9da02e3055f..30e814e595fb4fea3f79ef0c61156a60
 -            .await?;
 +                })
 +                .await?;
-             thread_start_params.model = Some(source.model);
-             thread_start_params.service_tier = Some(source.service_tier);
-             thread_start_params.runtime_workspace_roots = Some(source.runtime_workspace_roots);
-@@ -685,9 +685,10 @@ async fn execute_inner(
+             let turn_start_params = crate::app_server_session::inherit_thread_start_settings(
+                 &mut thread_start_params,
+                 source,
+@@ -656,9 +656,10 @@ async fn execute_inner(
                  let turns = match page {
                      Ok(page) => page.data,
                      Err(TypedRequestError::Server { source, .. })
@@ -1077,7 +1077,7 @@ index c170df1e111435af7e8fcf3bf415f9da02e3055f..30e814e595fb4fea3f79ef0c61156a60
                      {
                          let response: ThreadReadResponse =
                              request(&handle, |request_id| ClientRequest::ThreadRead {
-@@ -710,10 +711,8 @@ async fn execute_inner(
+@@ -681,10 +682,8 @@ async fn execute_inner(
                  None
              };
              let exclude_turns = thread.history_mode == ThreadHistoryMode::Paginated;
@@ -1090,7 +1090,7 @@ index c170df1e111435af7e8fcf3bf415f9da02e3055f..30e814e595fb4fea3f79ef0c61156a60
                      request_id,
                      params: ThreadForkParams {
                          thread_id: thread_id.clone(),
-@@ -723,9 +722,8 @@ async fn execute_inner(
+@@ -694,9 +693,8 @@ async fn execute_inner(
                          config: mcp_config.clone(),
                          ..ThreadForkParams::default()
                      },
@@ -1102,7 +1102,7 @@ index c170df1e111435af7e8fcf3bf415f9da02e3055f..30e814e595fb4fea3f79ef0c61156a60
              let forked_thread_id = response.thread.id.clone();
              register_background_thread(
                  app_event_tx,
-@@ -750,10 +748,8 @@ async fn execute_inner(
+@@ -721,10 +719,8 @@ async fn execute_inner(
              validate_prompt(&prompt, MAX_DELEGATED_INPUT_BYTES)?;
              let thread = read_thread(&handle, &arguments.thread_id).await?;
              let exclude_turns = thread.history_mode == ThreadHistoryMode::Paginated;
@@ -1115,7 +1115,7 @@ index c170df1e111435af7e8fcf3bf415f9da02e3055f..30e814e595fb4fea3f79ef0c61156a60
                      request_id,
                      params: ThreadResumeParams {
                          thread_id: arguments.thread_id.clone(),
-@@ -761,9 +757,8 @@ async fn execute_inner(
+@@ -732,9 +728,8 @@ async fn execute_inner(
                          config: mcp_config.clone(),
                          ..ThreadResumeParams::default()
                      },
@@ -1127,7 +1127,7 @@ index c170df1e111435af7e8fcf3bf415f9da02e3055f..30e814e595fb4fea3f79ef0c61156a60
              let daybreak_enabled = thread.daybreak_enabled.unwrap_or(false);
              register_background_thread(
                  app_event_tx,
-@@ -914,7 +909,7 @@ async fn execute_inner(
+@@ -885,7 +880,7 @@ async fn execute_inner(
                              let latest_turn = match turns_page {
                                  Ok(Ok(page)) => page.data.into_iter().next(),
                                  Ok(Err(TypedRequestError::Server { source, .. }))
@@ -1136,10 +1136,10 @@ index c170df1e111435af7e8fcf3bf415f9da02e3055f..30e814e595fb4fea3f79ef0c61156a60
                                          &source,
                                      ) =>
                                  {
-@@ -1253,29 +1248,6 @@ async fn request<T: DeserializeOwned>(
+@@ -1224,29 +1219,6 @@ async fn request<T: DeserializeOwned>(
          .map_err(|error| error.to_string())
  }
-
+ 
 -async fn request_with_history_fallback<T: DeserializeOwned>(
 -    handle: &AppServerRequestHandle,
 -    exclude_turns: bool,
