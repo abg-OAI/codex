@@ -145,7 +145,7 @@ pub(crate) async fn complete(
                 ResponseItem::Message {
                     encrypted_content: None,
                     status: None,
-                    id: Some((session.item_id_generator)("msg")),
+                    id: Some(session.context_ids.next_item("msg")),
                     role: "assistant".into(),
                     content: vec![ContentItem::OutputText {
                         text: text.clone(),

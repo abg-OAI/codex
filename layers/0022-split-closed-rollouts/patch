@@ -68,12 +68,12 @@ index f7f695b73260fb661dcb4906e3bf38a805475022..6d823d6ee7ec11a1ddaaa4fe8d908326
      let thread_storage_before = if mode == RolloutMigrationMode::Apply && !json {
          thread_storage_bytes(
 diff --git a/codex-rs/thread-store/Cargo.toml b/codex-rs/thread-store/Cargo.toml
-index e88567275248b3f50903b071a86c11cad4b775d4..f84859adf01c58fd804a7b71e93d5b731fc25699 100644
+index 3d59035b44005d4bea4d33ec0e3737d54b9c9209..a9f2bae4a21863d8461e3dae2a7d24d48d7d06a4 100644
 --- a/codex-rs/thread-store/Cargo.toml
 +++ b/codex-rs/thread-store/Cargo.toml
 @@ -13,6 +13,7 @@ doctest = false
  workspace = true
-
+ 
  [dependencies]
 +blake3 = { workspace = true }
  caseless = { workspace = true }
@@ -88,7 +88,7 @@ index e88567275248b3f50903b071a86c11cad4b775d4..f84859adf01c58fd804a7b71e93d5b73
  tokio = { workspace = true }
  tracing = { workspace = true }
 @@ -41,6 +43,5 @@ zstd = { workspace = true }
- codex-protocol-test-support = { workspace = true }
+ codex-thread-context-ids-test-support = { workspace = true }
  codex-utils-absolute-path = { workspace = true }
  pretty_assertions = { workspace = true }
 -tempfile = { workspace = true }

@@ -1,31 +1,15 @@
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index ca02780939a2f1fe0d46d2981c75154bf876c25f..4cccedb59fd2c41e0ce7bb4f12f6cb26f4a59a42 100644
+index 6d2d91d9680c4db6ddd1bc3699381fdd022d4baa..c94de3e4e16263a23206a018b87f536b8a576118 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -31,7 +31,6 @@ use crate::context::world_state::IncrementalToolsUpdate;
+@@ -30,7 +30,6 @@ use crate::context::SubagentNotification;
+ use crate::context::world_state::IncrementalToolsUpdate;
  use crate::init_state_db;
- use crate::responses_metadata::CodexResponsesRequestKind;
  use crate::session::SessionSettingsUpdate;
 -use crate::session::session::Session;
  use crate::session::step_context::StepContext;
  use crate::session::step_settings::StepSettingsUpdate;
  use crate::session::tests::update_selected_settings_for_test;
-@@ -4571,6 +4570,15 @@ async fn resume_and_cold_fork_restore_mcp_attribution_in_constructed_requests(
-     let source = crate::test_support::start_saved_legacy_thread(
-         &harness.manager,
-         StartThreadOptions {
-+            initial_history: codex_history::InitialHistory::Forked(vec![
-+                codex_history::RolloutItem::ResponseItem(codex_history::ResponseItemEnvelope {
-+                    item: user_message("saved conversation"),
-+                    metadata: Some(codex_history::CodexHarnessMetadata {
-+                        mcp_attribution: Some(McpAttribution::default()),
-+                        ..Default::default()
-+                    }),
-+                }),
-+            ]),
-             ..StartThreadOptions::new(harness.config.clone())
-         },
-     )
 diff --git a/codex-rs/core/src/saffron/fork_thread/tests.rs b/codex-rs/core/src/saffron/fork_thread/tests.rs
 index 005979d1c8e5931e0360e972e3ef1b28da1c8400..c0df1d514c3f7d980326b1965b0a49a0ce4e921c 100644
 --- a/codex-rs/core/src/saffron/fork_thread/tests.rs

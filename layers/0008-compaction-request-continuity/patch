@@ -1,18 +1,27 @@
 diff --git a/codex-rs/core/src/agent/control/sender_context.rs b/codex-rs/core/src/agent/control/sender_context.rs
-index b84082fff7c4ea1a113a6169bc0a1ec90d2c0507..b401f382d03b3945a97f138451e5b0d28a07c0e9 100644
+index 3ed658abf848902d920520865fe7fd187b53dcc1..6e26452f6fcf3505ede2a3b60509c01d318e9ccc 100644
 --- a/codex-rs/core/src/agent/control/sender_context.rs
 +++ b/codex-rs/core/src/agent/control/sender_context.rs
-@@ -104,6 +104,10 @@ impl LocalAgentRuntime {
-                                 ContextManager::reconstruct_rollout(
-                                     &stored.items,
-                                     meta.history_mode,
-+                                    &meta
-+                                        .source
-+                                        .get_agent_path()
-+                                        .unwrap_or_else(codex_protocol::AgentPath::root),
-                                     ContextManager::new(Session::new_item_id_generator()),
-                                     // Tool bodies are not sender authorization evidence.
-                                     TruncationPolicy::Bytes(0),
+@@ -103,6 +103,11 @@ impl LocalAgentRuntime {
+                         if meta.meta.id != source_thread_id || meta.meta.source.is_internal() {
+                             return None;
+                         }
++                        let agent_path = meta
++                            .meta
++                            .source
++                            .get_agent_path()
++                            .unwrap_or_else(codex_protocol::AgentPath::root);
+                         let history_mode = meta.meta.history_mode;
+                         let referenced_agent_fork = meta.meta.history_base.is_some()
+                             && meta.meta.session_id != SessionId::from(source_thread_id)
+@@ -129,6 +134,7 @@ impl LocalAgentRuntime {
+                         let context = ContextManager::reconstruct_rollout(
+                             &history,
+                             history_mode,
++                            &agent_path,
+                             ContextManager::new,
+                             // Tool bodies are not sender authorization evidence.
+                             TruncationPolicy::Bytes(0),
 diff --git a/codex-rs/core/src/compact.rs b/codex-rs/core/src/compact.rs
 index 497a8f5fa011789219f2636e079d2f16858eb0ae..fd00eef1c8a765f97b8dcf5babfb77741cdc718b 100644
 --- a/codex-rs/core/src/compact.rs
@@ -960,7 +969,7 @@ index ce13be03f1986a62708aa751fef7e5d35d633a67..0e5b94605cafe76a6c7fe66b8627aa90
  pub(crate) mod goal_resume;
  pub(crate) mod goal_scheduler;
 diff --git a/codex-rs/core/src/session/rollout_reconstruction.rs b/codex-rs/core/src/session/rollout_reconstruction.rs
-index dc5e73aa93715632b80aaaee8753bc244a17827d..fef9e6e252da8b9bd02a5162c8b2d3842863e11f 100644
+index bf282d1d23eeeb1d9928ec94de0a79b5f5daf6f0..f9e041c305ec9c82cae87cc22ba54900b0737206 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction.rs
 @@ -196,6 +196,10 @@ impl Session {
@@ -971,18 +980,18 @@ index dc5e73aa93715632b80aaaee8753bc244a17827d..fef9e6e252da8b9bd02a5162c8b2d384
 +                .session_source
 +                .get_agent_path()
 +                .unwrap_or_else(codex_protocol::AgentPath::root),
-             ContextManager::for_session(
-                 turn_context.root_capabilities_restricted,
-                 &turn_context.config.features,
-@@ -214,6 +218,7 @@ impl ContextManager {
+             |ids| {
+                 ContextManager::for_session(
+                     turn_context.root_capabilities_restricted,
+@@ -215,6 +219,7 @@ impl ContextManager {
      pub(crate) fn reconstruct_rollout(
          rollout_items: &[RolloutItem],
          history_mode: ThreadHistoryMode,
 +        agent_path: &codex_protocol::AgentPath,
-         mut history: Self,
+         create_history: impl FnOnce(codex_thread_context_ids::ThreadContextIds) -> Self,
          truncation_policy: TruncationPolicy,
      ) -> RolloutReconstruction {
-@@ -561,8 +566,11 @@ impl ContextManager {
+@@ -599,8 +604,11 @@ impl ContextManager {
                          // prompt shape.
                          // TODO(ccunningham): if we drop support for None replacement_history compaction items,
                          // we can get rid of this second loop entirely and just build `history` directly in the first loop.
@@ -997,13 +1006,13 @@ index dc5e73aa93715632b80aaaee8753bc244a17827d..fef9e6e252da8b9bd02a5162c8b2d384
                          history.replace_annotated(rebuilt);
                          history.restore_retained_context(Some(&retained_context));
 diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-index fc36c4ccfed4469659d1565425824c2536cdf9c5..b1a627911a44860eb31a81988dfc23ae83ab4151 100644
+index a8aaa7b520deb5242077e03303ab54c10f36e0f8..d10f97a3c6c654c1e3ef18fe640ceef2ea8c4e65 100644
 --- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
 +++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
-@@ -1481,6 +1481,129 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
+@@ -1482,6 +1482,129 @@ async fn reconstruct_history_restores_initial_window_from_session_meta() {
      assert_eq!(reconstructed.window_id, Some(initial_window_id));
  }
-
+ 
 +/// Legacy replay retains an ancestor assignment only for its receiving agent.
 +#[test_case("/root/fruit", true; "receiving child")]
 +#[test_case("/root/vegetables", false; "sibling child")]
@@ -1041,7 +1050,7 @@ index fc36c4ccfed4469659d1565425824c2536cdf9c5..b1a627911a44860eb31a81988dfc23ae
 +        &rollout,
 +        ThreadHistoryMode::Legacy,
 +        &AgentPath::try_from(agent_path).unwrap(),
-+        ContextManager::default(),
++        ContextManager::new,
 +        codex_utils_output_truncation::TruncationPolicy::Bytes(10_000),
 +    );
 +    assert_eq!(
