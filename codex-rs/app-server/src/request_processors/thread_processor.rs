@@ -3665,9 +3665,11 @@ impl ThreadRequestProcessor {
         for turn in page.turns {
             let mut turn = stored_turn_to_api_turn(turn, items_view)?;
             if matches!(items_view, TurnItemsView::Full) {
-                turn.items = self
-                    .paginated_turn_full_items(thread_id, turn.id.as_str())
-                    .await?;
+                self.visit_paginated_items(thread_id, Some(turn.id.clone()), |item| {
+                    turn.items.push(stored_thread_item_to_api_item(item)?);
+                    Ok(())
+                })
+                .await?;
             }
             turns.push(turn);
         }
@@ -3692,20 +3694,20 @@ impl ThreadRequestProcessor {
 
     // Older clients still request `itemsView: "full"` from turn pages. Keep this
     // app-server-only hydration path until those clients use `thread/items/list`.
-    async fn paginated_turn_full_items(
+    async fn visit_paginated_items(
         &self,
         thread_id: ThreadId,
-        turn_id: &str,
-    ) -> Result<Vec<ThreadItem>, JSONRPCErrorError> {
+        turn_id: Option<String>,
+        mut visit: impl FnMut(&codex_thread_store::StoredThreadItem) -> Result<(), JSONRPCErrorError>,
+    ) -> Result<(), JSONRPCErrorError> {
         let mut cursor = None;
-        let mut items = Vec::new();
         loop {
             let page = self
                 .thread_store
                 .list_items(StoreListItemsParams {
                     item_ids: None,
                     thread_id,
-                    turn_id: Some(turn_id.to_string()),
+                    turn_id: turn_id.clone(),
                     include_archived: true,
                     position: cursor.clone().map(StoreListItemsPosition::Cursor),
                     page_size: THREAD_ITEMS_MAX_LIMIT,
@@ -3717,14 +3719,14 @@ impl ThreadRequestProcessor {
                 .await
                 .map_err(paginated_history_list_error)?;
             for item in &page.items {
-                items.push(stored_thread_item_to_api_item(item)?);
+                visit(item)?;
             }
             let Some(next_cursor) = page.next_cursor else {
-                return Ok(items);
+                return Ok(());
             };
             if cursor.as_ref() == Some(&next_cursor) {
                 return Err(internal_error(format!(
-                    "failed to load full turn items for {turn_id}: thread store returned a repeated cursor"
+                    "failed to load full items for thread {thread_id}: thread store returned a repeated cursor"
                 )));
             }
             cursor = Some(next_cursor);
@@ -3746,12 +3748,12 @@ impl ThreadRequestProcessor {
                     cursor.clone(),
                     Some(THREAD_TURNS_MAX_LIMIT as u32),
                     Some(SortDirection::Asc),
-                    Some(TurnItemsView::Full),
+                    Some(TurnItemsView::NotLoaded),
                 )
                 .await?;
             turns.extend(page.data);
             let Some(next_cursor) = page.next_cursor else {
-                return Ok(turns);
+                break;
             };
             if cursor.as_ref() == Some(&next_cursor) {
                 return Err(internal_error(format!(
@@ -3760,6 +3762,23 @@ impl ThreadRequestProcessor {
             }
             cursor = Some(next_cursor);
         }
+        // The whole transcript is requested. Traverse its item pages once rather
+        // than reopening the same ancestry for every individual turn.
+        let mut items_by_turn = std::collections::HashMap::with_capacity(turns.len());
+        for turn in &mut turns {
+            turn.items_view = TurnItemsView::Full;
+            items_by_turn.insert(turn.id.as_str(), &mut turn.items);
+        }
+        if !items_by_turn.is_empty() {
+            self.visit_paginated_items(thread_id, None, |item| {
+                if let Some(items) = items_by_turn.get_mut(item.turn_id.as_str()) {
+                    items.push(stored_thread_item_to_api_item(item)?);
+                }
+                Ok(())
+            })
+            .await?;
+        }
+        Ok(turns)
     }
 
     async fn paginated_resume_initial_turns_page(
