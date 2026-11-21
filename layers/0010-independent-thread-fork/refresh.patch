@@ -1,0 +1,23 @@
+diff --git a/codex-rs/core/src/saffron/fork_thread.rs b/codex-rs/core/src/saffron/fork_thread.rs
+index cd7482b0161535753a71f8f62d7b9360dd03d2f0..4dac4fb77207d0d2f16037e5e59f30eb374ccfe8 100644
+--- a/codex-rs/core/src/saffron/fork_thread.rs
++++ b/codex-rs/core/src/saffron/fork_thread.rs
+@@ -24,6 +24,7 @@ use codex_protocol::models::ResponseItem;
+ use codex_protocol::openai_models::ReasoningEffort;
+ use codex_protocol::protocol::ThreadHistoryMode;
+ use codex_thread_store::ForkBoundary;
++use codex_thread_store::InheritedHistoryVisibility;
+ use codex_thread_store::PrepareForkParams;
+ use codex_thread_store::ThreadMetadataPatch;
+ use codex_tools::JsonSchema;
+@@ -250,7 +251,9 @@ impl Handler {
+                     })
+                     .await
+                     .map_err(invalid)?;
+-                manager.fork_prepared_thread(options, prepared).await
++                manager
++                    .fork_prepared_thread(options, prepared, InheritedHistoryVisibility::Full)
++                    .await
+             }
+             ThreadHistoryMode::Legacy => {
+                 let stored = source.read_thread(true, true).await.map_err(invalid)?;

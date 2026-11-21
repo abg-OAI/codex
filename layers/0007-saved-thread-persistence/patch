@@ -554,10 +554,10 @@ index 0372bf0b84c815aed2cb28275992e438e0171e76..3ef627516007b4ebdae46f858bb05768
          startup_prewarm.abort().await;
      }
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0de8b47ce 100644
+index 1db0c80d19731ea880848b6f7f01d7f56c514aa2..ff0a22074e9580304825c9ebd15473c7fdec60c8 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -277,6 +277,7 @@ mod mcp_refresh;
+@@ -280,6 +280,7 @@ mod mcp_refresh;
  mod mcp_runtime;
  mod model_catalog_settings;
  pub(crate) mod multi_agents;
@@ -565,7 +565,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
  mod plugin_selection;
  mod realtime_handoff;
  mod realtime_history;
-@@ -1650,7 +1651,12 @@ impl Session {
+@@ -1655,7 +1656,12 @@ impl Session {
      }
  
      pub(crate) fn state_db(&self) -> Option<state_db::StateDbHandle> {
@@ -579,7 +579,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
      }
  
      pub(crate) fn live_thread_for_persistence(
-@@ -1662,7 +1668,12 @@ impl Session {
+@@ -1667,7 +1673,12 @@ impl Session {
      }
  
      pub(crate) fn live_thread(&self) -> Option<&LiveThread> {
@@ -593,7 +593,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
      }
  
      pub(crate) async fn set_thread_memory_mode(
-@@ -4165,20 +4176,26 @@ impl Session {
+@@ -4148,20 +4159,26 @@ impl Session {
          let has_user_turn_boundary = items
              .iter()
              .any(|envelope| crate::context_manager::is_user_turn_boundary(&envelope.item));
@@ -634,7 +634,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
              Some(thread_settings::applied_event(self).await)
          } else {
              None
-@@ -4187,8 +4204,13 @@ impl Session {
+@@ -4170,8 +4187,13 @@ impl Session {
              .iter()
              .map(|envelope| envelope.item.clone())
              .collect::<Vec<_>>();
@@ -649,7 +649,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
              let pending_orders = turn_context
                  .extension_data
                  .get::<retained_context::PendingAssistantMessageOrders>();
-@@ -4239,11 +4261,11 @@ impl Session {
+@@ -4222,11 +4244,11 @@ impl Session {
                          &turn_context.sub_id,
                          envelope,
                          prepared,
@@ -663,7 +663,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
                      state.take_initial_settings_pending();
                  }
                  response_items = vec![envelope.item.clone()];
-@@ -4258,11 +4280,11 @@ impl Session {
+@@ -4241,11 +4263,11 @@ impl Session {
                      .record_realtime_chunk_input(
                          &mut state,
                          envelope.clone(),
@@ -677,7 +677,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
                      state.take_initial_settings_pending();
                  }
                  response_items = vec![envelope.item];
-@@ -4275,7 +4297,8 @@ impl Session {
+@@ -4258,7 +4280,8 @@ impl Session {
              state
                  .current_time_reminder
                  .note_recorded_items(&response_items);
@@ -687,7 +687,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
          for image in image_preparations {
              self.services
                  .analytics_events_client
-@@ -4287,29 +4310,15 @@ impl Session {
+@@ -4270,29 +4293,15 @@ impl Session {
          if let Some(RealtimeRecord::Handoff(prepared)) = &realtime {
              self.finish_realtime_handoff(prepared, &items[0]).await;
          } else if !matches!(&realtime, Some(RealtimeRecord::Chunk)) {
@@ -721,7 +721,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
          if turn_context.config.memories.disable_on_external_context
              && let Some(item) = response_items
                  .iter()
-@@ -4857,19 +4866,21 @@ impl Session {
+@@ -4819,8 +4828,9 @@ impl Session {
          }
          let mut delivery = communication.delivery.as_ref();
          let mut result_write = None;
@@ -732,8 +732,10 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
              state.current_time_reminder.note_recorded_items(&items);
              state.history.record_annotated_items(
                  std::slice::from_mut(&mut response_item),
-                 model_info.truncation_policy.into(),
-             );
+@@ -4837,12 +4847,13 @@ impl Session {
+                         .as_ref()
+                         .and_then(|d| d.source_tool_call_id.as_deref()),
+                 );
 -        }
 +            persistence
 +        };
@@ -746,15 +748,15 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
                  RolloutItem::InterAgentCommunicationMetadata {
                      trigger_turn: communication.trigger_turn,
                  },
-@@ -4882,6 +4893,7 @@ impl Session {
+@@ -4855,6 +4866,7 @@ impl Session {
          {
              write.confirm();
          }
 +        drop(persistence);
          drop(boundary);
-         self.send_raw_response_items(turn_context, &items).await;
-     }
-@@ -4994,8 +5006,10 @@ impl Session {
+         let [item] = items;
+         self.send_event(
+@@ -4968,8 +4980,10 @@ impl Session {
              Some(history) => history.lock().await.observation_clock.floor_ms(),
              None => None,
          };
@@ -766,7 +768,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
              let complete_replacement =
                  matches!(&installation, CompactedHistoryInstallation::Complete(..));
              let replacement = match installation {
-@@ -5102,7 +5116,7 @@ impl Session {
+@@ -5076,7 +5090,7 @@ impl Session {
                  latest_token_usage_record: state.latest_token_usage_record.clone(),
                  resume_metadata: Some(resume_metadata),
              };
@@ -775,7 +777,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
          };
  
          // Use the replacement captured under the state lock, including goal edits retained
-@@ -5116,19 +5130,20 @@ impl Session {
+@@ -5090,19 +5104,20 @@ impl Session {
              );
          }
  
@@ -802,7 +804,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
          {
              let mut state = self.state.lock().await;
              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
-@@ -5519,6 +5534,11 @@ impl Session {
+@@ -5500,6 +5515,11 @@ impl Session {
  
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
@@ -814,7 +816,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
          if let Some(live_thread) = self.live_thread()
              && let Err(e) = live_thread.append_items(items).await
          {
-@@ -5802,11 +5822,12 @@ impl Session {
+@@ -5779,11 +5799,12 @@ impl Session {
                  thread_settings::applied_event(self).await,
              ));
          }

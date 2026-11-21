@@ -1,0 +1,12 @@
+diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
+index 8c5a2b787ac037328266603e232036502cdbe5a4..c569a9b10534644a2ec25d059fd21174d5529282 100644
+--- a/codex-rs/core/src/agent/control_tests.rs
++++ b/codex-rs/core/src/agent/control_tests.rs
+@@ -2426,6 +2426,7 @@ async fn ephemeral_sender_does_not_strip_saved_target_persistence() {
+             input: crate::AgentInput::Message {
+                 message: AgentMessage::Plaintext("wake the saved target".to_string()),
+                 mode: MessageDeliveryMode::QueueOnly,
++                source_tool_call_id: None,
+             },
+             start_options: TurnStartOptions {
+                 root_turn_id: sender_turn.turn_metadata_state.root_turn_id(),

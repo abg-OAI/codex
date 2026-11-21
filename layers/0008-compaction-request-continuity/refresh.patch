@@ -1,0 +1,25 @@
+diff --git a/codex-rs/core/src/compact_tests.rs b/codex-rs/core/src/compact_tests.rs
+index 75b18a4730b9668413a51b195dc811005bde6579..bb39bc53ddd07012818e756c0a0cb203a8c2d4f0 100644
+--- a/codex-rs/core/src/compact_tests.rs
++++ b/codex-rs/core/src/compact_tests.rs
+@@ -816,6 +816,7 @@ fn local_compaction_keeps_an_ordinary_user_beside_a_pinned_user() {
+         "summary",
+         /*max_tokens*/ 1,
+         &FileAudioDurations::default(),
++        &codex_protocol::AgentPath::root(),
+     );
+     assert_eq!(&compacted[..2], &[ordinary, pin]);
+ }
+diff --git a/codex-rs/core/src/session/rollout_reconstruction_tests.rs b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
+index 7a0a6c87aeae556346c5520954ac66ddb2fb98b9..63e7d9b5e135558108e07889db963bae917dfb33 100644
+--- a/codex-rs/core/src/session/rollout_reconstruction_tests.rs
++++ b/codex-rs/core/src/session/rollout_reconstruction_tests.rs
+@@ -1520,7 +1520,7 @@ fn legacy_replay_scopes_assignments_to_receiver(agent_path: &str, retained: bool
+         &rollout,
+         ThreadHistoryMode::Legacy,
+         &AgentPath::try_from(agent_path).unwrap(),
+-        ContextManager::new,
++        |ids| ContextManager::new(ids, /*retention*/ None),
+         codex_utils_output_truncation::TruncationPolicy::Bytes(10_000),
+     );
+     assert_eq!(
