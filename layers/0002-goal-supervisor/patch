@@ -23,10 +23,10 @@ index caa9b4da77c8ae870e08b573d90ffad14c0450d0..14a266fafd1902a792fe51c4c246cb15
      codex_git_attribution::install(
          &mut builder,
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index c07afd284dd71479e2e27104c42916c9fea07543..05a23c2b42c07f44a9d302623f5092b36c27cfee 100644
+index 503c41365f8ea116d8e0ff5540a1c5fe25fe9f76..9b3185230d01d0a555c20054c13f48d8a6f6430c 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
-@@ -82,6 +82,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
+@@ -83,6 +83,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
  use codex_app_server_protocol::experimental_required_message;
  use codex_arg0::Arg0DispatchPaths;
  use codex_code_mode::CodeModeSessionProvider;
@@ -35,7 +35,7 @@ index c07afd284dd71479e2e27104c42916c9fea07543..05a23c2b42c07f44a9d302623f5092b3
  use codex_core::ThreadManager;
  use codex_core::ThreadStoreBuilder;
  use codex_core::config::Config;
-@@ -177,6 +179,7 @@ pub(crate) struct MessageProcessor {
+@@ -178,6 +180,7 @@ pub(crate) struct MessageProcessor {
      project_processor: ProjectRequestProcessor,
      pub(super) remote_control_processor: RemoteControlRequestProcessor,
      search_processor: SearchRequestProcessor,
@@ -43,7 +43,7 @@ index c07afd284dd71479e2e27104c42916c9fea07543..05a23c2b42c07f44a9d302623f5092b3
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -576,6 +579,24 @@ impl MessageProcessor {
+@@ -578,6 +581,24 @@ impl MessageProcessor {
              config_warnings.clone(),
              sample_responses,
          );
@@ -67,8 +67,8 @@ index c07afd284dd71479e2e27104c42916c9fea07543..05a23c2b42c07f44a9d302623f5092b3
 +        };
          let turn_processor = TurnRequestProcessor::new(
              Arc::clone(&thread_manager),
-             outgoing.clone(),
-@@ -668,6 +689,7 @@ impl MessageProcessor {
+             Arc::clone(&thread_store),
+@@ -671,6 +692,7 @@ impl MessageProcessor {
              project_processor,
              remote_control_processor,
              search_processor,
@@ -76,7 +76,7 @@ index c07afd284dd71479e2e27104c42916c9fea07543..05a23c2b42c07f44a9d302623f5092b3
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -682,6 +704,9 @@ impl MessageProcessor {
+@@ -685,6 +707,9 @@ impl MessageProcessor {
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
          self.skills_watcher.shutdown();

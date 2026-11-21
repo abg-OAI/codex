@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/external_agent_migration/session_importer.rs b/codex-rs/app-server/src/external_agent_migration/session_importer.rs
-index 1a3613b43457761db733818e75afececcf080a7b..997ae267c92846c292e9aa08b6830d1572ebb72a 100644
+index 069db425899e1c876a59d92b3a57e3ecf4e1c939..da856f608dd6e648591f46b1a88ba22310867ae2 100644
 --- a/codex-rs/app-server/src/external_agent_migration/session_importer.rs
 +++ b/codex-rs/app-server/src/external_agent_migration/session_importer.rs
 @@ -37,6 +37,7 @@ use codex_rollout::RolloutItem;
@@ -46,9 +46,9 @@ index 1a3613b43457761db733818e75afececcf080a7b..997ae267c92846c292e9aa08b6830d15
 -            history_mode: ThreadHistoryMode::Legacy,
 +            history_mode,
              history_base: None,
+             inherited_history_visibility: Default::default(),
              subagent_history_start_ordinal: None,
-             initial_window_id: codex_protocol::ContextWindowId::new_uuid_v7(),
-@@ -508,7 +522,7 @@ impl ExternalAgentSessionImporter {
+@@ -509,7 +523,7 @@ impl ExternalAgentSessionImporter {
                  memory_mode,
              },
          };
