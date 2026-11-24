@@ -431,21 +431,7 @@ impl SqliteConfig {
             if matches!(spec.kind, DbKind::State) {
                 repair_legacy_recency_migration_version(&pool, migrator).await?;
             }
-            // SQLx's SQLite migration lock is a no-op. Keep version checks and changes in
-            // one transaction, retrying from a fresh snapshot after a concurrent migration.
-            // A current schema needs only a read lock, including when opened on NFS.
-            retry_on_busy(|| async {
-                let mut transaction = pool.begin().await?;
-                if let Err(error) = migrator
-                    .run_direct(/*target*/ None, &mut *transaction, /*skip*/ false)
-                    .await
-                {
-                    transaction.rollback().await?;
-                    return Err(error.into());
-                }
-                transaction.commit().await.map_err(anyhow::Error::from)
-            })
-            .await
+            Self::run_migrations(&pool, migrator).await
         }
         .await;
         telemetry::record_init_result(
@@ -462,6 +448,25 @@ impl SqliteConfig {
             );
         }
         Ok(pool)
+    }
+
+    /// Apply migrations in a consistent snapshot when several callers open the database.
+    pub async fn run_migrations(pool: &SqlitePool, migrator: &Migrator) -> anyhow::Result<()> {
+        // SQLx's SQLite migration lock is a no-op. Keep version checks and changes in
+        // one transaction, retrying from a fresh snapshot after a concurrent migration.
+        // A current schema needs only a read lock, including when opened on NFS.
+        retry_on_busy(|| async {
+            let mut transaction = pool.begin().await?;
+            if let Err(error) = migrator
+                .run_direct(/*target*/ None, &mut *transaction, /*skip*/ false)
+                .await
+            {
+                transaction.rollback().await?;
+                return Err(error.into());
+            }
+            transaction.commit().await.map_err(anyhow::Error::from)
+        })
+        .await
     }
 
     /// Open a private database that lasts for the lifetime of this pool.

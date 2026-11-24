@@ -50,10 +50,12 @@ fn sanitize_forked_rollout_item(
     preserve_context_baselines: bool,
     preserve_fork_prefix: bool,
     history_mode: ThreadHistoryMode,
+    retain_for_supervisor: bool,
     mut retain_response: impl FnMut(&mut ResponseItemEnvelope) -> bool,
 ) -> bool {
     if !((preserve_fork_prefix && matches!(item, RolloutItem::ResponseItem(_)))
-        || keep_forked_rollout_item(item, preserve_context_baselines))
+        || keep_forked_rollout_item(item, preserve_context_baselines)
+        || retain_for_supervisor)
         || history_mode == ThreadHistoryMode::Paginated
             && matches!(
                 item,
@@ -135,6 +137,7 @@ pub(crate) fn sanitize_agent_fork_prefix(
                 /*preserve_context_baselines*/ true,
                 /*preserve_fork_prefix*/ true,
                 ThreadHistoryMode::Paginated,
+                /*retain_for_supervisor*/ false,
                 |_| true,
             )
         })
@@ -462,7 +465,9 @@ pub(super) async fn prepare_forked_history(
         if matches!(response_item, ResponseItem::AdditionalTools { .. }) {
             return preserve_context_baselines;
         }
-        if matches!(response_item, ResponseItem::AgentMessage { .. }) {
+        if matches!(response_item, ResponseItem::AgentMessage { .. })
+            && !crate::saffron::goal_supervisor::is_helper_source(session_source)
+        {
             return false;
         }
         if !retain_forked_developer_message(
@@ -525,12 +530,14 @@ pub(super) async fn prepare_forked_history(
             // Matches before this checkpoint cannot survive its replacement history.
             replaced_parent_developer_instructions = false;
         }
+        let retain_for_supervisor = crate::saffron::goal_supervisor::preserves_fork_item(session_source, item);
         sanitize_forked_rollout_item(
             item,
             multi_agent_version,
             preserve_context_baselines,
             preserve_fork_prefix,
             parent_history_mode,
+            retain_for_supervisor,
             |response| retain_forked_item(response, &mut replaced_parent_developer_instructions),
         )
     });
