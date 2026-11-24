@@ -199,6 +199,15 @@ impl Session {
             .await
             .session_configuration
             .guardian_retention;
+        self.reconstruct_history_with_retention(turn_context, rollout_items, policy)
+    }
+
+    pub(super) fn reconstruct_history_with_retention(
+        &self,
+        turn_context: &TurnContext,
+        rollout_items: &[RolloutItem],
+        policy: Option<codex_protocol::protocol::GuardianRetentionPolicy>,
+    ) -> RolloutReconstruction {
         let retention = policy.map(|policy| codex_history::MessageRetention {
             thread_id: self.thread_id(),
             policy,
