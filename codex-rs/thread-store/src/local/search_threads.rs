@@ -2,12 +2,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
-use codex_install_context::InstallContext;
 use codex_rollout::RolloutConfig;
 use codex_rollout::RolloutSnippetMatcher;
 use codex_rollout::parse_cursor;
-use codex_rollout::search_rollout_matches_with_progress;
-use codex_utils_absolute_path::normalize_windows_device_path;
 use futures::FutureExt;
 use futures::future::pending;
 use tokio::sync::mpsc;
@@ -32,9 +29,7 @@ use crate::ThreadStoreResult;
 #[path = "search_threads_tests.rs"]
 mod tests;
 
-#[path = "search_progress.rs"]
-mod progress;
-
+#[derive(Clone)]
 struct ThreadSearchItem {
     item: codex_rollout::ThreadItem,
     snippet: String,
@@ -60,8 +55,25 @@ pub(super) async fn search_threads_observed(
     params: SearchThreadsParams,
     observer: ThreadSearchObserver,
 ) -> ThreadStoreResult<ThreadSearchPage> {
+    codex_rollout::with_thread_search_read_limit(search_catalog(store, params, observer))
+        .await
+        .map_err(|err| ThreadStoreError::Internal {
+            message: err.to_string(),
+        })?
+}
+
+async fn search_catalog(
+    store: &LocalThreadStore,
+    params: SearchThreadsParams,
+    observer: ThreadSearchObserver,
+) -> ThreadStoreResult<ThreadSearchPage> {
     let cancelled = observer.cancelled.shared();
     let search_term = params.search_term.as_str();
+    if params.page_size == 0 {
+        return Err(ThreadStoreError::InvalidRequest {
+            message: "thread/search requires a positive page size".into(),
+        });
+    }
     if search_term.is_empty() {
         return Err(ThreadStoreError::InvalidRequest {
             message: "thread/search requires search_term".to_string(),
@@ -110,56 +122,12 @@ pub(super) async fn search_threads_observed(
                 message: format!("invalid rollout search term: {err}"),
             })?;
     }
-    let rg_command = InstallContext::current().rg_command();
-    let matching_rollouts = if let Some(progress) = observer.progress {
-        let (paths, candidates) = mpsc::channel(16);
-        let discovery = search_rollout_matches_with_progress(
-            &rg_command,
-            &store.config.codex_home,
-            params.archived,
-            search_term,
-            Some(paths),
-            Box::pin(cancelled.clone()),
-        );
-        tokio::pin!(discovery);
-        {
-            let context = progress::SearchProgressContext {
-                store,
-                params: &params,
-                state_db: state_db.as_deref(),
-                cursor: cursor.as_ref(),
-                sort_key,
-                sort_direction,
-                matcher: &mut matcher,
-            };
-            let reporter = context.report_search_candidates(candidates, progress);
-            tokio::pin!(reporter);
-            tokio::select! {
-                biased;
-                matches = &mut discovery => matches,
-                () = &mut reporter => discovery.await,
-            }
-        }
-    } else {
-        search_rollout_matches_with_progress(
-            &rg_command,
-            &store.config.codex_home,
-            params.archived,
-            search_term,
-            /*progress*/ None,
-            Box::pin(cancelled.clone()),
-        )
-        .await
-    };
-    let matching_rollouts = matching_rollouts.map_err(|err| ThreadStoreError::Internal {
-        message: format!("failed to search rollout contents: {err}"),
-    })?;
     tokio::select! {
         biased;
         () = cancelled => Err(search_cancelled()),
         result = finish_search(
             SearchContext { store, params: &params, state_db, rollout_config: &rollout_config, cursor,
-                sort_key, sort_direction, matcher: &mut matcher }, matching_rollouts,
+                sort_key, sort_direction, matcher: &mut matcher }, observer.progress,
         ) => result,
     }
 }
@@ -183,7 +151,7 @@ struct SearchContext<'a, 'term> {
 
 async fn finish_search(
     context: SearchContext<'_, '_>,
-    matching_rollouts: codex_rollout::RolloutSearchMatches,
+    progress: Option<mpsc::Sender<Vec<StoredThreadSearchResult>>>,
 ) -> ThreadStoreResult<ThreadSearchPage> {
     let SearchContext {
         store,
@@ -195,12 +163,6 @@ async fn finish_search(
         sort_direction,
         matcher,
     } = context;
-    if matching_rollouts.is_empty() {
-        return Ok(ThreadSearchPage {
-            items: Vec::new(),
-            next_cursor: None,
-        });
-    }
     let mut matching_items = Vec::new();
     let mut page_cursor = cursor;
     let scan_page_size = params.page_size.saturating_mul(8).clamp(256, 2048);
@@ -222,11 +184,25 @@ async fn finish_search(
             .then_some(crate::ThreadRelationFilter::IncludeAttached),
         use_state_db_only: state_db.is_some(),
     };
-    let mut remaining_rollouts = matching_rollouts
-        .into_iter()
-        .map(|path| rollout_search_path(&path))
-        .collect::<std::collections::HashSet<_>>();
-
+    let root = store.config.codex_home.join(if params.archived {
+        codex_rollout::ARCHIVED_SESSIONS_SUBDIR
+    } else {
+        codex_rollout::SESSIONS_SUBDIR
+    });
+    let root = match tokio::fs::canonicalize(root).await {
+        Ok(root) => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ThreadSearchPage {
+                items: Vec::new(),
+                next_cursor: None,
+            });
+        }
+        Err(error) => {
+            return Err(ThreadStoreError::Internal {
+                message: error.to_string(),
+            });
+        }
+    };
     loop {
         let page = list_rollout_threads(
             state_db.clone(),
@@ -236,6 +212,7 @@ async fn finish_search(
             page_cursor.as_ref(),
             sort_key,
             sort_direction,
+            codex_rollout::state_db::RolloutPathCheck::WhenOpening,
         )
         .await?;
         let page = codex_rollout::ThreadsPage::from(page);
@@ -246,29 +223,66 @@ async fn finish_search(
             .collect();
         let mut original_paths = None;
         for item in page.items {
-            let logical_path = rollout_search_path(item.path.as_path());
-            if !remaining_rollouts.remove(logical_path.as_path()) {
+            if !matches_source(params, &item) {
                 continue;
             }
-            if !eligible_search_item(store, params, &item, &page_thread_ids, &mut original_paths)
+            // A shared catalog can contain another Codex home's rollout paths.
+            let Some(path) = selected_search_path(&root, &item).await? else {
+                continue;
+            };
+            let Some(id) = item.thread_id else { continue };
+            let mut reader = match codex_rollout::open_rollout_line_reader(&path).await {
+                Ok(reader) => reader,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(search_read_error(error)),
+            };
+            let header = codex_rollout::read_session_meta_from_reader(&path, &mut reader)
                 .await
+                .map_err(search_read_error)?;
+            if header.meta.id != id {
+                continue;
+            }
+            if let Some(account) = &params.account
+                && !account
+                    .includes_header(
+                        &store.config.codex_home,
+                        id,
+                        &path,
+                        header.meta,
+                        &page_thread_ids,
+                        &mut original_paths,
+                    )
+                    .await
             {
                 continue;
             }
-            // Discovery can decode an archive, but its earlier match is not authoritative:
-            // the archive or the catalog-selected rollout can change before this page is built.
-            let snippet = verified_snippet(matcher, &item.path).await?;
+            let snippet = matcher
+                .first_match_in(reader)
+                .await
+                .map_err(search_read_error)?;
             let Some(snippet) = snippet else { continue };
-            matching_items.push(ThreadSearchItem { item, snippet });
+            let hit = ThreadSearchItem { item, snippet };
+            if let Some(progress) = &progress
+                && matching_items.len() < params.page_size.min(8)
+            {
+                let data = materialize_search_results(
+                    store,
+                    state_db.as_deref(),
+                    params.archived,
+                    vec![hit.clone()],
+                )
+                .await;
+                if !data.is_empty() {
+                    let _ = progress.try_send(data);
+                }
+            }
+            matching_items.push(hit);
             if matching_items.len() > params.page_size {
                 break;
             }
         }
         page_cursor = page.next_cursor;
-        if matching_items.len() > params.page_size
-            || remaining_rollouts.is_empty()
-            || page_cursor.is_none()
-        {
+        if matching_items.len() > params.page_size || page_cursor.is_none() {
             break;
         }
     }
@@ -296,43 +310,9 @@ async fn finish_search(
     Ok(ThreadSearchPage { items, next_cursor })
 }
 
-async fn verified_snippet(
-    matcher: &mut RolloutSnippetMatcher<'_>,
-    path: &Path,
-) -> ThreadStoreResult<Option<String>> {
-    match matcher.first_match(path).await {
-        Ok(snippet) => Ok(snippet),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(ThreadStoreError::Internal {
-            message: format!("failed to read rollout search match: {err}"),
-        }),
-    }
-}
-
-async fn eligible_search_item(
-    store: &LocalThreadStore,
-    params: &SearchThreadsParams,
-    item: &codex_rollout::ThreadItem,
-    ids: &[codex_protocol::ThreadId],
-    originals: &mut Option<HashMap<codex_protocol::ThreadId, PathBuf>>,
-) -> bool {
-    if !matches_source(params, item) {
-        return false;
-    }
-    match (&params.account, item.thread_id) {
-        (Some(account), Some(id)) => {
-            account
-                .includes(
-                    &store.config.codex_home,
-                    id,
-                    Some(&item.path),
-                    ids,
-                    originals,
-                )
-                .await
-        }
-        (Some(_), None) => false,
-        (None, _) => true,
+fn search_read_error(err: std::io::Error) -> ThreadStoreError {
+    ThreadStoreError::Internal {
+        message: format!("failed to read rollout search match: {err}"),
     }
 }
 
@@ -390,17 +370,35 @@ async fn materialize_search_results(
     items
 }
 
-fn rollout_search_path(path: &Path) -> PathBuf {
-    let path = codex_rollout::plain_rollout_path(path);
-    // Resume can persist a Windows namespace prefix while filesystem search returns the
-    // ordinary spelling. Normalize both join keys without requiring the uncompressed file
-    // to exist, and retain the filename identifying the selected rollout after a revert.
-    if cfg!(windows)
-        && let Some(normalized) = path.to_str().and_then(normalize_windows_device_path)
+async fn selected_search_path(
+    root: &Path,
+    item: &codex_rollout::ThreadItem,
+) -> ThreadStoreResult<Option<PathBuf>> {
+    if item.thread_id.is_none()
+        || codex_rollout::thread_id_from_rollout_path(&item.path) != item.thread_id
     {
-        return PathBuf::from(normalized);
+        return Ok(None);
     }
-    path
+    let Some(path) = codex_rollout::existing_rollout_path(&item.path).await else {
+        return Ok(None);
+    };
+    let canonical = match tokio::fs::canonicalize(&path).await {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ThreadStoreError::Internal {
+                message: error.to_string(),
+            });
+        }
+    };
+    if !canonical.starts_with(root)
+        || !tokio::fs::symlink_metadata(&path)
+            .await
+            .is_ok_and(|info| info.is_file())
+    {
+        return Ok(None);
+    }
+    Ok(Some(canonical))
 }
 
 fn cursor_from_thread_search_item(
