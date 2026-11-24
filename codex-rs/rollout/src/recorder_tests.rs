@@ -291,6 +291,57 @@ async fn state_db_init_backfills_before_returning() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn prefix_visitor_stops_before_invalid_bytes() -> std::io::Result<()> {
+    let dir = TempDir::new()?;
+    let path = dir.path().join("rollout.jsonl");
+    let id = ThreadId::new();
+    let mut file = File::create(&path)?;
+    let line = RolloutLine {
+        timestamp: "2026-07-09T00:00:00Z".to_string(),
+        ordinal: None,
+        item: paginated_session_meta_item(id, dir.path()),
+    };
+    serde_json::to_writer(&mut file, &line)?;
+    file.write_all(b"\n\xff\n")?;
+    drop(file);
+
+    let (_, thread_id, errors) =
+        RolloutRecorder::visit_rollout_items(&path, (), |(), _| std::ops::ControlFlow::Break(()))
+            .await?;
+    assert_eq!(thread_id, Some(id));
+    assert_eq!(errors, 0);
+    assert_eq!(
+        RolloutRecorder::load_rollout_items(&path)
+            .await
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::InvalidData
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn full_history_keeps_large_valid_records() -> std::io::Result<()> {
+    let dir = TempDir::new()?;
+    let path = dir.path().join("rollout.jsonl");
+    let text = "x".repeat(16 * 1024 * 1024 + 1);
+    let item = agent_message_item(&text);
+    let line = RolloutLine {
+        timestamp: "2026-07-09T00:00:00Z".to_string(),
+        ordinal: None,
+        item,
+    };
+    serde_json::to_writer(std::io::BufWriter::new(File::create(&path)?), &line)?;
+
+    let (items, _, errors) = RolloutRecorder::load_rollout_items(&path).await?;
+    assert_eq!(errors, 0);
+    assert!(
+        matches!(items.as_slice(), [RolloutItem::EventMsg(EventMsg::AgentMessage(event))] if event.message == text)
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn load_rollout_items_defaults_legacy_session_id() -> std::io::Result<()> {
     let home = TempDir::new().expect("temp dir");
     let rollout_path = home.path().join("rollout.jsonl");
