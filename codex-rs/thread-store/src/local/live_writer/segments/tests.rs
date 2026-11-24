@@ -381,6 +381,135 @@ fn compatibility_turn(thread_id: ThreadId, label: &str) -> serde_json::Result<Ve
     ]))
 }
 
+/// Offline splitting preserves native cursor ordinals while keeping the latest model read local.
+#[tokio::test]
+async fn cold_split_preserves_the_parent_and_serves_the_checkpoint_tail()
+-> Result<(), Box<dyn std::error::Error>> {
+    let home = TempDir::new()?;
+    let config = test_config(home.path());
+    let state = codex_state::StateRuntime::init(
+        config.sqlite.clone(),
+        config.default_model_provider_id.clone(),
+    )
+    .await?;
+    let store = LocalThreadStore::new(config, Some(state.clone()));
+    let id = ThreadId::new();
+    create(&store, id).await?;
+    let call_start = codex_protocol::realtime::RealtimeItem {
+        id: "early-start".into(),
+        realtime_session_id: "early-call".into(),
+        observed_at_ms: Some(1),
+        content: codex_protocol::realtime::RealtimeItemContent::RealtimeSessionStarted,
+    };
+    let mut history = vec![RolloutItem::RealtimeItem(call_start.clone())];
+    history.extend(compatibility_turn(id, "first")?);
+    let mut second = compatibility_turn(id, "second")?;
+    history.push(second.remove(0));
+    let mut snapshot = checkpoint(id)?;
+    let RolloutItem::Compacted(c) = &mut snapshot[0] else {
+        panic!("missing compaction")
+    };
+    c.resume_metadata.as_mut().unwrap().last_started_turn_id = Some("second".into());
+    snapshot.splice(1..1,[
+        RolloutItem::WorldState(codex_protocol::protocol::WorldStateItem::full(Default::default())),
+        serde_json::from_value(serde_json::json!({"type":"turn_context","payload":{
+            "turn_id":"second","cwd":home.path(),"approval_policy":"never",
+            "permission_profile":codex_protocol::models::PermissionProfile::read_only(),"model":"test-model"
+        }}))?,
+    ]);
+    history.extend(snapshot);
+    history.extend(second);
+    history.extend(compatibility_turn(id, "later")?);
+    store
+        .append_items(AppendThreadItemsParams {
+            thread_id: id,
+            items: history,
+        })
+        .await?;
+    let parent = store.live_rollout_path(id).await?;
+    store.shutdown_thread(id).await?;
+    codex_rollout::state_db::reconcile_rollout(
+        Some(&state),
+        &parent,
+        "test-provider",
+        None,
+        &[],
+        Some(false),
+        None,
+    )
+    .await;
+    let original = std::fs::read(&parent)?;
+    let model_items = |items: Vec<RolloutItem>| {
+        serde_json::to_value(items.into_iter().skip(1).collect::<Vec<_>>())
+    };
+    let load = || {
+        store.load_latest_model_context(crate::LoadThreadHistoryParams {
+            thread_id: id,
+            include_archived: false,
+        })
+    };
+    let before = model_items(load().await?.items)?;
+    assert!(matches!(
+        store.split_closed_rollout(id, false).await?,
+        crate::ColdSplitOutcome::Eligible { .. }
+    ));
+    assert_eq!(state.get_thread(id).await?.unwrap().rollout_path, parent);
+    let crate::ColdSplitOutcome::Split { rollout_path, .. } =
+        store.split_closed_rollout(id, true).await?
+    else {
+        panic!("missing split")
+    };
+    assert_eq!(std::fs::read(&parent)?, original);
+    let frozen = codex_rollout::read_session_meta_line(&rollout_path)
+        .await?
+        .meta
+        .history_base
+        .unwrap();
+    assert_eq!(frozen.end_byte_offset, original.len() as u64);
+    assert_eq!(std::fs::read_to_string(&rollout_path)?.lines().count(), 1);
+    // The call started before the retained checkpoint and exists only in the predecessor.
+    assert_eq!(
+        store.load_realtime_session_head(id).await?.as_deref(),
+        Some("early-call")
+    );
+    assert_eq!(
+        store.load_realtime_session(id, "early-call".into()).await?,
+        Some(vec![call_start])
+    );
+    let held = parent.with_extension("held");
+    std::fs::rename(&parent, &held)?;
+    assert_eq!(model_items(load().await?.items)?, before);
+    std::fs::rename(&held, &parent)?;
+    // A newer incomplete compaction in the active file requires replay before the copied tail.
+    let clean_head = std::fs::read(&rollout_path)?;
+    let incomplete = serde_json::json!({"timestamp":"2026-01-01T00:00:00Z","ordinal":frozen.end_ordinal_exclusive+1,
+        "type":"compacted","payload":{"message":"unfinished"}});
+    {
+        use std::io::Write;
+        let mut head = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&rollout_path)?;
+        writeln!(head, "{incomplete}")?;
+    }
+    assert!(
+        crate::local::model_context::scan_current_checkpoint(&rollout_path)
+            .await?
+            .is_none()
+    );
+    std::fs::write(&rollout_path, clean_head)?;
+
+    let cache = rollout_path.with_extension("checkpoint-tail");
+    std::fs::write(&cache, b"damaged copy")?;
+    assert_eq!(model_items(load().await?.items)?, before);
+    std::fs::remove_file(cache)?;
+    assert_eq!(model_items(load().await?.items)?, before);
+    assert!(matches!(
+        store.split_closed_rollout(id, true).await?,
+        crate::ColdSplitOutcome::Ineligible
+    ));
+    Ok(())
+}
+
 /// Compaction seals the prefix immediately and the same turn finishes in its continuation.
 #[tokio::test]
 async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dyn std::error::Error>>
