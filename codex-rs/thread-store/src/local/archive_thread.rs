@@ -38,7 +38,7 @@ pub(super) async fn archive_threads(
             });
         }
     }
-    let _writer_guards = store.acquire_writer_locks(&lock_thread_ids).await?;
+    let writer_guards = store.acquire_writer_locks(&lock_thread_ids).await?;
     // Only inspect active files whose names belong to the threads being archived.
     let reference_index = RolloutReferenceIndex::scan_unarchived_threads(
         store.config.codex_home.as_path(),
@@ -53,7 +53,9 @@ pub(super) async fn archive_threads(
     let mut archived_thread_ids = Vec::new();
     for thread_id in thread_ids {
         let rollout_paths = owned_rollout_paths_from_index(&reference_index, thread_id);
-        match archive_thread_with_paths(store, thread_id, rollout_paths).await {
+        match archive_thread_with_paths(store, thread_id, rollout_paths, &writer_guards[&thread_id])
+            .await
+        {
             Ok(()) => archived_thread_ids.push(thread_id),
             Err(err) if archived_thread_ids.is_empty() => return Err(err),
             Err(err) => warn!(
@@ -68,6 +70,7 @@ async fn archive_thread_with_paths(
     store: &LocalThreadStore,
     thread_id: codex_protocol::ThreadId,
     mut rollout_paths: Vec<std::path::PathBuf>,
+    writer: &super::WriterLockGuard,
 ) -> ThreadStoreResult<()> {
     let state_db_ctx = store.state_db().await;
     let selected_rollout_path = thread_rollout_resolver::resolve_current(store, thread_id)
@@ -98,6 +101,7 @@ async fn archive_thread_with_paths(
             rollout_path.as_path(),
             "sessions",
         )?;
+        super::helpers::recover_checkpoint(&canonical_rollout_path, writer).await?;
         let file_name =
             validated_rollout_file_name(canonical_rollout_path.as_path(), rollout_path.as_path())?;
         let destination = archive_folder.join(&file_name);
