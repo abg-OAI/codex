@@ -721,7 +721,7 @@ async fn thread_metadata_update_sanitizes_git_origin_before_persisting() -> Resu
     let start_id = mcp
         .send_thread_start_request_with_auto_env(ThreadStartParams {
             model: Some("mock-model".to_string()),
-            history_mode: Some(ThreadHistoryMode::Legacy),
+            history_mode: Some(ThreadHistoryMode::Paginated),
             ..Default::default()
         })
         .await?;

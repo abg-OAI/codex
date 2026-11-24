@@ -30,7 +30,6 @@ use crate::context::SubagentNotification;
 use crate::context::world_state::IncrementalToolsUpdate;
 use crate::init_state_db;
 use crate::session::SessionSettingsUpdate;
-use crate::session::session::Session;
 use crate::session::step_context::StepContext;
 use crate::session::step_settings::StepSettingsUpdate;
 use crate::session::tests::update_selected_settings_for_test;
@@ -2022,19 +2021,19 @@ async fn cold_resume_with_thread_instructions_preserves_lazy_v2_child_inheritanc
     let _ = config.features.enable(Feature::Sqlite);
     let admitted_country = RequestCountry::from_iso_code("DE").unwrap();
     let harness = AgentControlHarness::new_with_config(home, config).await;
-    let parent = harness
-        .manager
-        .start_thread(StartThreadOptions {
+    let parent = crate::test_support::start_saved_legacy_thread(
+        &harness.manager,
+        StartThreadOptions {
             request_country: admitted_country.clone(),
-            history_mode: Some(ThreadHistoryMode::Legacy),
             thread_instructions_provider: Some(Arc::new(TestThreadInstructionsProvider {
                 text: "initial thread instructions".into(),
                 shared,
             })),
             ..StartThreadOptions::new(harness.config.clone())
-        })
-        .await
-        .expect("start parent with thread instructions");
+        },
+    )
+    .await
+    .expect("start parent with thread instructions");
     let parent_thread_id = parent.thread_id;
     let control = &parent
         .thread
@@ -3337,7 +3336,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
     let new_thread = harness
         .manager
         .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+            history_mode: Some(ThreadHistoryMode::Paginated),
             ..StartThreadOptions::new(parent_config.clone())
         })
         .await
@@ -3527,7 +3526,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
     assert_ne!(child_thread_id, parent_thread_id);
     assert_eq!(
         child_thread.config_snapshot().await.history_mode,
-        ThreadHistoryMode::Legacy
+        ThreadHistoryMode::Paginated
     );
     let history = child_thread.session.clone_history().await;
     let history_items = history.raw_items().cloned().collect::<Vec<_>>();
