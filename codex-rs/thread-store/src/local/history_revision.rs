@@ -9,6 +9,7 @@ use std::path::Path;
 pub(super) async fn read(path: &Path) -> Option<String> {
     let path = codex_rollout::existing_rollout_path(path).await?;
     let path = tokio::fs::canonicalize(path).await.ok()?;
+    codex_rollout::ensure_checkpoint_complete(&path).ok()?;
     let metadata = tokio::fs::metadata(&path).await.ok()?;
     let modified = metadata.modified().ok()?;
     let created = metadata.created().ok();
