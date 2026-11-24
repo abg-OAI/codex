@@ -6,7 +6,9 @@
 //! need only provide the configured SQLite home.
 
 mod executor_exclusions;
+mod promotions;
 pub(super) use executor_exclusions::ExecutorExclusion;
+pub(super) use promotions::{CompletedAgent, Promotion, PromotionPhase};
 
 use std::sync::LazyLock;
 
