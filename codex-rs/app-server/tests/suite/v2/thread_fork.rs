@@ -147,13 +147,47 @@ async fn list_threads(mcp: &mut TestAppServer) -> Result<ThreadListResponse> {
 }
 
 #[tokio::test]
+async fn persistent_local_fork_requires_migrating_a_legacy_parent() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let saved = create_fake_rollout(
+        codex_home.path(),
+        "2025-02-04T10-00-00",
+        "2025-02-04T10:00:00Z",
+        "saved before migration",
+        None,
+        None,
+    )?;
+    let mut server = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized()
+        .await?;
+    let request = server
+        .send_thread_fork_request(ThreadForkParams {
+            thread_id: saved,
+            ..Default::default()
+        })
+        .await?;
+    let error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        server.read_stream_until_error_message(RequestId::Integer(request)),
+    )
+    .await??;
+    assert_eq!(error.error.code, -32600);
+    assert!(
+        error.error.message.contains("codex migrate-rollouts"),
+        "{error:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
 
     let preview = "Saved user message";
-    let conversation_id = create_fake_rollout(
+    let conversation_id = create_fake_paginated_rollout(
         codex_home.path(),
         "2025-01-05T12-00-00",
         "2025-01-05T12:00:00Z",
@@ -183,6 +217,34 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
         &RolloutItem::SessionMeta(Box::new(session_meta)),
     )
     .await?;
+    for item in [
+        EventMsg::TurnStarted(TurnStartedEvent {
+            turn_attribution: None,
+            turn_id: "saved-turn".into(),
+            root_turn_id: None,
+            trace_id: None,
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: Default::default(),
+        }),
+        EventMsg::ItemCompleted(ItemCompletedEvent {
+            thread_id: ThreadId::from_string(&conversation_id)?,
+            turn_id: "saved-turn".into(),
+            item: CoreTurnItem::UserMessage(UserMessageItem {
+                id: "saved-message".into(),
+                client_id: None,
+                content: vec![codex_protocol::user_input::UserInput::Text {
+                    text: preview.into(),
+                    text_elements: Vec::new(),
+                }],
+            }),
+            started_at_ms: None,
+            completed_at_ms: 0,
+            content_token_count: None,
+        }),
+    ] {
+        append_rollout_item_to_path(&original_path, &RolloutItem::EventMsg(item)).await?;
+    }
     let original_contents = std::fs::read_to_string(&original_path)?;
 
     let mut mcp = TestAppServer::builder()
@@ -253,7 +315,7 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
                 .account_scoped,
         ),
         (false, true),
-        "forking legacy history creates a newly account-scoped thread"
+        "forking an unscoped parent creates an account-scoped thread"
     );
     assert!(thread.cwd.as_path().is_absolute());
     assert_eq!(thread.source, SessionSource::VsCode);
@@ -335,7 +397,7 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_fork_preserves_persisted_approvals_reviewer() -> Result<()> {
+async fn ephemeral_fork_of_saved_legacy_thread_preserves_approvals_reviewer() -> Result<()> {
     assert_thread_fork_preserves_persisted_approvals_reviewer(ThreadHistoryMode::Legacy).await
 }
 
@@ -361,16 +423,17 @@ async fn thread_fork_preserves_persisted_permission_profile_and_honors_overrides
                 .without_managed_config()
                 .build_initialized()
                 .await?;
-            let start_id = mcp
-                .send_thread_start_request_with_auto_env(ThreadStartParams {
-                    history_mode: Some(history_mode),
+            let thread = load_fork_parent(
+                &mut mcp,
+                codex_home.path(),
+                history_mode,
+                ThreadStartParams {
                     approval_policy: Some(AskForApproval::OnRequest),
-                    permissions: Some("dev".to_string()),
+                    permissions: Some("dev".into()),
                     ..Default::default()
-                })
-                .await?;
-            let ThreadStartResponse { thread, .. } =
-                timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(start_id)).await??;
+                },
+            )
+            .await?;
             timeout(
                 DEFAULT_READ_TIMEOUT,
                 mcp.start_turn_and_wait_for_completion(TurnStartParams {
@@ -393,6 +456,7 @@ async fn thread_fork_preserves_persisted_permission_profile_and_honors_overrides
             .await?;
         let fork_id = mcp
             .send_thread_fork_request(ThreadForkParams {
+                ephemeral: history_mode == ThreadHistoryMode::Legacy,
                 thread_id: source_thread_id.clone(),
                 ..Default::default()
             })
@@ -415,6 +479,7 @@ async fn thread_fork_preserves_persisted_permission_profile_and_honors_overrides
 
         let fork_id = mcp
             .send_thread_fork_request(ThreadForkParams {
+                ephemeral: history_mode == ThreadHistoryMode::Legacy,
                 thread_id: source_thread_id.clone(),
                 approval_policy: Some(AskForApproval::Never),
                 sandbox: Some(SandboxMode::DangerFullAccess),
@@ -433,6 +498,7 @@ async fn thread_fork_preserves_persisted_permission_profile_and_honors_overrides
 
         let fork_id = mcp
             .send_thread_fork_request(ThreadForkParams {
+                ephemeral: history_mode == ThreadHistoryMode::Legacy,
                 thread_id: source_thread_id,
                 permissions: Some(":workspace".to_string()),
                 ..Default::default()
@@ -453,6 +519,61 @@ async fn thread_fork_preserves_persisted_permission_profile_and_honors_overrides
     Ok(())
 }
 
+async fn load_fork_parent(
+    server: &mut TestAppServer,
+    home: &std::path::Path,
+    mode: ThreadHistoryMode,
+    options: ThreadStartParams,
+) -> Result<codex_app_server_protocol::Thread> {
+    if mode == ThreadHistoryMode::Paginated {
+        return Ok(server
+            .start_thread(ThreadStartParams {
+                history_mode: Some(mode),
+                ..options
+            })
+            .await?
+            .thread);
+    }
+
+    let date = "2025-01-05T12-00-00";
+    let saved = create_fake_rollout(
+        home,
+        date,
+        "2025-01-05T12:00:00Z",
+        "Earlier user message",
+        Some("mock_provider"),
+        None,
+    )?;
+    if let Some(tools) = options.dynamic_tools {
+        let path = rollout_path(home, date, &saved);
+        let contents = std::fs::read_to_string(&path)?;
+        let (header, items) = contents
+            .split_once('\n')
+            .expect("fixture has a session header");
+        let mut header: Value = serde_json::from_str(header)?;
+        header["payload"]["dynamic_tools"] = serde_json::to_value(tools)?;
+        std::fs::write(
+            path,
+            format!("{}\n{items}", serde_json::to_string(&header)?),
+        )?;
+    }
+    let response: ThreadResumeResponse = server
+        .request(|request_id| ClientRequest::ThreadResume {
+            request_id,
+            params: ThreadResumeParams {
+                thread_id: saved,
+                permissions: options.permissions,
+                approval_policy: options.approval_policy,
+                config: options.config,
+                base_instructions: options.base_instructions,
+                developer_instructions: options.developer_instructions,
+                ..Default::default()
+            },
+        })
+        .await?;
+    Ok(response.thread)
+}
+
 async fn assert_thread_fork_preserves_persisted_approvals_reviewer(
     history_mode: ThreadHistoryMode,
 ) -> Result<()> {
@@ -466,19 +587,16 @@ async fn assert_thread_fork_preserves_persisted_approvals_reviewer(
             .build_initialized()
             .await?;
 
-        let start_id = mcp
-            .send_thread_start_request_with_auto_env(ThreadStartParams {
-                history_mode: Some(history_mode),
-                permissions: Some(":workspace".to_string()),
+        let thread = load_fork_parent(
+            &mut mcp,
+            codex_home.path(),
+            history_mode,
+            ThreadStartParams {
+                permissions: Some(":workspace".into()),
                 ..Default::default()
-            })
-            .await?;
-        let start_resp: JSONRPCResponse = timeout(
-            DEFAULT_READ_TIMEOUT,
-            mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+            },
         )
-        .await??;
-        let ThreadStartResponse { thread, .. } = to_response(start_resp)?;
+        .await?;
 
         let turn_id = mcp
             .send_turn_start_request(TurnStartParams {
@@ -569,6 +687,7 @@ async fn assert_thread_fork_preserves_persisted_approvals_reviewer(
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
             thread_id: source_thread_id.clone(),
+            ephemeral: history_mode == ThreadHistoryMode::Legacy,
             last_turn_id: Some(source_turn_id.clone()),
             ..Default::default()
         })
@@ -620,19 +739,7 @@ async fn assert_thread_fork_preserves_persisted_approvals_reviewer(
 }
 
 #[tokio::test]
-async fn thread_fork_at_last_turn_id_keeps_only_terminal_prefix() -> Result<()> {
-    assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(ThreadHistoryMode::Legacy).await
-}
-
-#[tokio::test]
 async fn paginated_thread_fork_at_named_boundaries_keeps_only_terminal_prefix() -> Result<()> {
-    assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(ThreadHistoryMode::Paginated)
-        .await
-}
-
-async fn assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(
-    history_mode: ThreadHistoryMode,
-) -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
@@ -644,7 +751,7 @@ async fn assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(
 
     let start_id = mcp
         .send_thread_start_request_with_auto_env(ThreadStartParams {
-            history_mode: Some(history_mode),
+            history_mode: Some(ThreadHistoryMode::Paginated),
             ..Default::default()
         })
         .await?;
@@ -835,9 +942,6 @@ async fn assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(
             .all(|turn| turn.status == TurnStatus::Completed)
     );
     assert_eq!(forked_thread.forked_from_id, Some(source_thread_id.clone()));
-    if history_mode == ThreadHistoryMode::Legacy {
-        assert_eq!(forked_thread.preview, "first");
-    }
     assert_eq!(
         std::fs::read_to_string(source_path.as_path())?,
         original_contents,
@@ -846,70 +950,64 @@ async fn assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(
 
     let forked_path = forked_thread.path.clone().expect("forked thread path");
     let forked_contents = std::fs::read_to_string(forked_path.as_path())?;
-    if history_mode == ThreadHistoryMode::Paginated {
-        assert!(
-            read_session_meta_line(forked_path.as_path())
-                .await?
-                .meta
-                .history_base
-                .is_some()
-        );
-        assert!(!forked_contents.contains(turn_ids[1].as_str()));
-    } else {
-        assert!(forked_contents.contains(turn_ids[1].as_str()));
-    }
+    assert!(
+        read_session_meta_line(forked_path.as_path())
+            .await?
+            .meta
+            .history_base
+            .is_some()
+    );
+    assert!(!forked_contents.contains(turn_ids[1].as_str()));
     assert!(!forked_contents.contains(turn_ids[2].as_str()));
 
-    if history_mode == ThreadHistoryMode::Paginated {
-        let before_fork_id = mcp
-            .send_thread_fork_request(ThreadForkParams {
-                thread_id: source_thread_id,
-                before_turn_id: Some(turn_ids[2].clone()),
-                ..Default::default()
-            })
-            .await?;
-        let ThreadForkResponse {
-            thread: before_fork,
-            ..
-        } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(before_fork_id)).await??;
-        assert_eq!(
-            before_fork
-                .turns
-                .iter()
-                .map(|turn| turn.id.clone())
-                .collect::<Vec<_>>(),
-            turn_ids[..2]
-        );
+    let before_fork_id = mcp
+        .send_thread_fork_request(ThreadForkParams {
+            thread_id: source_thread_id,
+            before_turn_id: Some(turn_ids[2].clone()),
+            ..Default::default()
+        })
+        .await?;
+    let ThreadForkResponse {
+        thread: before_fork,
+        ..
+    } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(before_fork_id)).await??;
+    assert_eq!(
+        before_fork
+            .turns
+            .iter()
+            .map(|turn| turn.id.clone())
+            .collect::<Vec<_>>(),
+        turn_ids[..2]
+    );
 
-        let completed = timeout(
-            DEFAULT_READ_TIMEOUT,
-            mcp.start_turn_and_wait_for_completion(TurnStartParams {
+    let completed = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.start_turn_and_wait_for_completion(TurnStartParams {
+            thread_id: forked_thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "private child prompt".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        }),
+    )
+    .await??;
+    let ThreadForkResponse {
+        thread: ephemeral_fork,
+        ..
+    } = mcp
+        .request(|request_id| ClientRequest::ThreadFork {
+            request_id,
+            params: ThreadForkParams {
                 thread_id: forked_thread.id.clone(),
-                input: vec![UserInput::Text {
-                    text: "private child prompt".to_string(),
-                    text_elements: Vec::new(),
-                }],
+                before_turn_id: Some(completed.turn.id),
+                ephemeral: true,
+                exclude_turns: true,
                 ..Default::default()
-            }),
-        )
-        .await??;
-        let ThreadForkResponse {
-            thread: ephemeral_fork,
-            ..
-        } = mcp
-            .request(|request_id| ClientRequest::ThreadFork {
-                request_id,
-                params: ThreadForkParams {
-                    thread_id: forked_thread.id.clone(),
-                    before_turn_id: Some(completed.turn.id),
-                    ephemeral: true,
-                    exclude_turns: true,
-                    ..Default::default()
-                },
-            })
-            .await?;
-        assert_eq!(ephemeral_fork.preview, "first");
-    }
+            },
+        })
+        .await?;
+    assert_eq!(ephemeral_fork.preview, "first");
 
     // Resuming a fork must not copy its parent's attachments again after an explicit removal.
     mcp.shutdown_gracefully().await?;
@@ -938,33 +1036,31 @@ async fn assert_thread_fork_at_named_boundary_keeps_only_terminal_prefix(
         .await?;
     assert!(after_resume.data.is_empty());
 
-    if history_mode == ThreadHistoryMode::Paginated {
-        assert_eq!(reopened.thread.preview, "first");
-        // The source is closed. Place the next fork boundary immediately after a compaction
-        // whose replacement history no longer contains the opening user message.
-        for item in [
-            RolloutItem::Compacted(serde_json::from_value(json!({
-                "message": "summary", "replacement_history": [], "window_number": 1
-            }))?),
-            RolloutItem::EventMsg(EventMsg::TurnStarted(serde_json::from_value(json!({
-                "turn_id": "after-compaction"
-            }))?)),
-        ] {
-            append_rollout_item_to_path(&source_path, &item).await?;
-        }
-        let fork: ThreadForkResponse = resumed
-            .request(|request_id| ClientRequest::ThreadFork {
-                request_id,
-                params: ThreadForkParams {
-                    thread_id: source_thread.id,
-                    before_turn_id: Some("after-compaction".to_string()),
-                    exclude_turns: true,
-                    ..Default::default()
-                },
-            })
-            .await?;
-        assert_eq!(fork.thread.preview, "first");
+    assert_eq!(reopened.thread.preview, "first");
+    // The source is closed. Place the next fork boundary immediately after a compaction
+    // whose replacement history no longer contains the opening user message.
+    for item in [
+        RolloutItem::Compacted(serde_json::from_value(json!({
+            "message": "summary", "replacement_history": [], "window_number": 1
+        }))?),
+        RolloutItem::EventMsg(EventMsg::TurnStarted(serde_json::from_value(json!({
+            "turn_id": "after-compaction"
+        }))?)),
+    ] {
+        append_rollout_item_to_path(&source_path, &item).await?;
     }
+    let fork: ThreadForkResponse = resumed
+        .request(|request_id| ClientRequest::ThreadFork {
+            request_id,
+            params: ThreadForkParams {
+                thread_id: source_thread.id,
+                before_turn_id: Some("after-compaction".to_string()),
+                exclude_turns: true,
+                ..Default::default()
+            },
+        })
+        .await?;
+    assert_eq!(fork.thread.preview, "first");
 
     Ok(())
 }
@@ -1220,7 +1316,7 @@ async fn thread_fork_inherits_explicit_source_name_from_session_index() -> Resul
     let codex_home = TempDir::new()?;
     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
 
-    let conversation_id = create_fake_rollout(
+    let conversation_id = create_fake_paginated_rollout(
         codex_home.path(),
         "2025-01-05T12-00-00",
         "2025-01-05T12:00:00Z",
@@ -1290,6 +1386,7 @@ async fn thread_fork_can_load_source_by_path() -> Result<()> {
 
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
+            ephemeral: true,
             thread_id: "not-a-valid-thread-id".to_string(),
             path: Some(original_path),
             ..Default::default()
@@ -1368,6 +1465,7 @@ async fn thread_fork_can_cut_before_unfinished_stored_turn() -> Result<()> {
 
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
+            ephemeral: true,
             thread_id: conversation_id,
             before_turn_id: Some(unfinished_turn_id.to_string()),
             ..Default::default()
@@ -1405,6 +1503,7 @@ async fn thread_fork_emits_restored_token_usage_before_next_turn() -> Result<()>
 
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
+            ephemeral: true,
             thread_id: conversation_id,
             thread_source: Some(ThreadSource::User),
             ..Default::default()
@@ -1458,6 +1557,7 @@ async fn thread_fork_can_exclude_turns_and_skip_restored_token_usage() -> Result
 
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
+            ephemeral: true,
             thread_id: conversation_id.clone(),
             exclude_turns: true,
             ..Default::default()
@@ -1493,7 +1593,7 @@ async fn thread_fork_tracks_thread_initialized_analytics() -> Result<()> {
         .write(codex_home.path())?;
     mount_analytics_capture(&server, codex_home.path()).await?;
 
-    let conversation_id = create_fake_rollout(
+    let conversation_id = create_fake_paginated_rollout(
         codex_home.path(),
         "2025-01-05T12-00-00",
         "2025-01-05T12:00:00Z",
@@ -1540,10 +1640,8 @@ async fn thread_fork_tracks_thread_initialized_analytics() -> Result<()> {
     Ok(())
 }
 
-#[test_case(ThreadHistoryMode::Legacy; "legacy")]
-#[test_case(ThreadHistoryMode::Paginated; "paginated")]
 #[tokio::test]
-async fn thread_fork_rejects_unmaterialized_thread(history_mode: ThreadHistoryMode) -> Result<()> {
+async fn thread_fork_rejects_unmaterialized_thread() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
@@ -1556,7 +1654,7 @@ async fn thread_fork_rejects_unmaterialized_thread(history_mode: ThreadHistoryMo
     let start_id = mcp
         .send_thread_start_request_with_auto_env(ThreadStartParams {
             model: Some("mock-model".to_string()),
-            history_mode: Some(history_mode),
+            history_mode: Some(ThreadHistoryMode::Paginated),
             ..Default::default()
         })
         .await?;
@@ -2367,7 +2465,7 @@ async fn thread_fork_with_empty_path_uses_thread_id() -> Result<()> {
     let codex_home = TempDir::new()?;
     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
 
-    let conversation_id = create_fake_rollout(
+    let conversation_id = create_fake_paginated_rollout(
         codex_home.path(),
         "2025-01-05T12-00-00",
         "2025-01-05T12:00:00Z",
@@ -2437,7 +2535,7 @@ async fn thread_fork_surfaces_cloud_config_bundle_load_errors() -> Result<()> {
         AuthCredentialsStoreMode::File,
     )?;
 
-    let conversation_id = create_fake_rollout(
+    let conversation_id = create_fake_paginated_rollout(
         codex_home.path(),
         "2025-01-05T12-00-00",
         "2025-01-05T12:00:00Z",
@@ -2892,9 +2990,11 @@ async fn inheriting_fork_preserves_parent_config(history_mode: ThreadHistoryMode
         .find(|model| model.show_in_picker && !model.service_tiers.is_empty())
         .expect("a bundled model supports service tiers");
     let tier = &model.service_tiers[0].id;
-    let parent = mcp
-        .start_thread(ThreadStartParams {
-            history_mode: Some(history_mode),
+    let parent = load_fork_parent(
+        &mut mcp,
+        codex_home.path(),
+        history_mode,
+        ThreadStartParams {
             base_instructions: Some("Retain these base instructions.".into()),
             developer_instructions: Some("Retain this system policy context.".into()),
             dynamic_tools: Some(vec![DynamicToolSpec::Function(DynamicToolFunctionSpec {
@@ -2904,10 +3004,11 @@ async fn inheriting_fork_preserves_parent_config(history_mode: ThreadHistoryMode
                 defer_loading: false,
             })]),
             ..Default::default()
-        })
-        .await?;
+        },
+    )
+    .await?;
     mcp.start_turn_and_wait_for_completion(TurnStartParams {
-        thread_id: parent.thread.id.clone(),
+        thread_id: parent.id.clone(),
         input: vec![UserInput::Text {
             text: "Initial turn".into(),
             text_elements: vec![],
@@ -2935,7 +3036,7 @@ async fn inheriting_fork_preserves_parent_config(history_mode: ThreadHistoryMode
     ] {
         let request_id = mcp
             .send_thread_fork_request(ThreadForkParams {
-                thread_id: parent.thread.id.clone(),
+                thread_id: parent.id.clone(),
                 experimental_prediction_mode: true,
                 ephemeral: true,
                 config: Some([("thread_unload_delay_secs".into(), delay)].into()),
@@ -2952,7 +3053,7 @@ async fn inheriting_fork_preserves_parent_config(history_mode: ThreadHistoryMode
 
     let fork_id = mcp
         .send_thread_fork_request(ThreadForkParams {
-            thread_id: parent.thread.id.clone(),
+            thread_id: parent.id.clone(),
             experimental_prediction_mode: true,
             ephemeral: true,
             exclude_turns: true,
@@ -2977,7 +3078,7 @@ async fn inheriting_fork_preserves_parent_config(history_mode: ThreadHistoryMode
         ),
     );
     assert!(child.thread.path.is_none());
-    for id in [&child.thread.id, &parent.thread.id] {
+    for id in [&child.thread.id, &parent.id] {
         mcp.start_turn_and_wait_for_completion(TurnStartParams {
             thread_id: id.clone(),
             input: vec![UserInput::Text {
@@ -3106,16 +3207,19 @@ async fn fork_option_disables_mcp_servers(
         .with_codex_home(codex_home.path())
         .build_initialized()
         .await?;
-    let parent = app
-        .start_thread(ThreadStartParams {
-            history_mode: Some(history_mode),
+    let parent = load_fork_parent(
+        &mut app,
+        codex_home.path(),
+        history_mode,
+        ThreadStartParams {
             // Only the parent catalog advertises the capability used by the prediction fork.
             config: Some([("model_catalog_json".into(), json!(catalog))].into()),
             ..Default::default()
-        })
-        .await?;
+        },
+    )
+    .await?;
     app.start_turn_and_wait_for_completion(TurnStartParams {
-        thread_id: parent.thread.id.clone(),
+        thread_id: parent.id.clone(),
         input: vec![UserInput::Text {
             text: "Initial turn".into(),
             text_elements: vec![],
@@ -3127,7 +3231,7 @@ async fn fork_option_disables_mcp_servers(
         .request(|request_id| ClientRequest::ThreadFork {
             request_id,
             params: ThreadForkParams {
-                thread_id: parent.thread.id.clone(),
+                thread_id: parent.id.clone(),
                 experimental_prediction_mode: true,
                 experimental_disable_prediction_mcp: disable_mcp,
                 ephemeral: true,
@@ -3160,7 +3264,7 @@ async fn fork_option_disables_mcp_servers(
         .await?;
     for (thread_id, text) in [
         (&child.thread.id, "Predict the next message."),
-        (&parent.thread.id, "Continue"),
+        (&parent.id, "Continue"),
     ] {
         app.start_turn_and_wait_for_completion(TurnStartParams {
             thread_id: thread_id.clone(),
@@ -3212,7 +3316,6 @@ async fn fork_option_disables_mcp_servers(
     Ok(())
 }
 
-#[test_case(ThreadHistoryMode::Legacy, false; "fresh persistent legacy")]
 #[test_case(ThreadHistoryMode::Legacy, true; "ephemeral legacy")]
 #[test_case(ThreadHistoryMode::Paginated, false; "fresh persistent paginated")]
 #[test_case(ThreadHistoryMode::Paginated, true; "ephemeral paginated")]

@@ -7,6 +7,7 @@ use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::items::TurnItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::ThreadHistoryMode;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodexBuilder;
@@ -16,12 +17,17 @@ use serde_json::json;
 use wiremock::MockServer;
 
 /// Admitted agent messages retain attribution through compaction and cold resume.
-#[test_case::test_case(false, "send_message_to_thread"; "local_message")]
-#[test_case::test_case(true, "send_message_to_thread"; "remote_message")]
-#[test_case::test_case(false, "fork_thread"; "local_assignment")]
-#[test_case::test_case(true, "fork_thread"; "remote_assignment")]
+#[test_case::test_case(false, "send_message_to_thread", None; "local_message")]
+#[test_case::test_case(true, "send_message_to_thread", None; "remote_message")]
+#[test_case::test_case(false, "fork_thread", None; "local_assignment")]
+#[test_case::test_case(true, "fork_thread", None; "remote_assignment")]
+#[test_case::test_case(false, "send_message_to_thread", Some(ThreadHistoryMode::Legacy); "saved_legacy_message")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn saffron_delivery_survives_compaction_and_resume(remote: bool, tool: &str) -> Result<()> {
+async fn saffron_delivery_survives_compaction_and_resume(
+    remote: bool,
+    tool: &str,
+    history_mode: Option<ThreadHistoryMode>,
+) -> Result<()> {
     use codex_core::TurnInput;
     use codex_core::TurnInputRequest;
     use codex_protocol::models::FunctionCallOutputPayload;
@@ -29,7 +35,7 @@ async fn saffron_delivery_survives_compaction_and_resume(remote: bool, tool: &st
 
     skip_if_no_network!(Ok(()));
     let server = responses::start_mock_server().await;
-    let mut builder = test_codex();
+    let mut builder = test_codex().with_history_mode(history_mode);
     let compact = if remote {
         builder = builder.with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
         responses::sse(vec![
@@ -131,6 +137,7 @@ async fn local_compaction_retains_requests() -> Result<()> {
     provider.name = "Local compaction test".to_owned();
     provider.supports_websockets = false;
     let builder = test_codex()
+        .with_history_mode(None)
         .with_model("gpt-5.4")
         .with_config(move |config| config.model_provider = provider);
     assert_retained_request(
@@ -149,7 +156,9 @@ async fn local_compaction_retains_requests() -> Result<()> {
 async fn remote_compaction_retains_requests() -> Result<()> {
     skip_if_no_network!(Ok(()));
     let server = responses::start_mock_server().await;
-    let builder = test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let builder = test_codex()
+        .with_history_mode(None)
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     assert_retained_request(
         &server,
         builder,
@@ -194,7 +203,13 @@ async fn assert_retained_request(
     .await;
     test.submit_turn("Continue the report.").await?;
     test.codex.flush_rollout().await?;
-    let history = test.codex.load_history(false).await?;
+    let history = test
+        .thread_store
+        .load_latest_model_context(codex_thread_store::LoadThreadHistoryParams {
+            thread_id: test.session_configured.thread_id,
+            include_archived: false,
+        })
+        .await?;
     assert!(
         history
             .items

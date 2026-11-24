@@ -2245,13 +2245,21 @@ pub(super) async fn start_recording_app_server_with_realtime_speech(
                         let mut request = serde_json::from_value::<ClientRequest>(
                             serde_json::to_value(request)?,
                         )?;
-                        // Simulate an older store while advertising pagination for the first probe.
-                        if (legacy_history
-                            || history_capabilities
-                                == HistoryCapabilities::FirstTurnPageUnsupported)
-                            && let ClientRequest::ThreadStart { params, .. } = &mut request
+                        // The proxy records the caller's wire request above. Its current local
+                        // backend can host the simulated old server's legacy sessions in memory.
+                        if legacy_history
+                            || history_capabilities == HistoryCapabilities::FirstTurnPageUnsupported
                         {
-                            params.history_mode = Some(ThreadHistoryMode::Legacy);
+                            match &mut request {
+                                ClientRequest::ThreadStart { params, .. } => {
+                                    params.history_mode = Some(ThreadHistoryMode::Legacy);
+                                    params.ephemeral = Some(true);
+                                }
+                                ClientRequest::ThreadFork { params, .. } if legacy_history => {
+                                    params.ephemeral = true
+                                }
+                                _ => {}
+                            }
                         }
                         let advertise_paginated = history_capabilities
                             == HistoryCapabilities::FirstTurnPageUnsupported
@@ -4745,13 +4753,12 @@ async fn remote_legacy_history_start_negotiates_once_for_resume_and_fork() -> Re
         Some(&app.config),
         vec![Arc::new(PlainHistoryCell::new(vec!["visible".into()]))],
     )
-    .await
-    .map_err(|error| color_eyre::eyre::eyre!(error))?;
-    assert_eq!(exported[0].raw_lines()[0].to_string(), "visible");
+    .await;
+    assert!(exported.is_err());
     assert!(
         recorded_params(&requests, "thread/read")[initial_read_count..]
             .iter()
-            .any(|params| params["includeTurns"] == true)
+            .all(|params| params["includeTurns"] != true)
     );
     assert_eq!(recorded_params(&requests, "thread/turns/list").len(), 1);
 
@@ -4815,76 +4822,72 @@ async fn remote_legacy_history_start_retries_unsupported_paginated_variant() -> 
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LegacyHistoryRequest {
+enum PaginatedHistoryRequest {
     Resume,
     Fork,
 }
 
-async fn assert_remote_legacy_history_retry(request: LegacyHistoryRequest) -> Result<()> {
-    let (app, _codex_home) = make_history_test_app().await?;
-    let legacy_thread_id =
-        create_history_rollout(&app.config, ThreadHistoryMode::Legacy, "legacy history")?;
-    let (mut app_server, requests, proxy) = start_recording_app_server_with_history(
+async fn assert_paginated_request_fails_without_reading_full_history(
+    operation: PaginatedHistoryRequest,
+) -> Result<()> {
+    let (app, _home) = Box::pin(make_history_test_app()).await?;
+    let thread_id =
+        create_history_rollout(&app.config, ThreadHistoryMode::Paginated, "saved page")?;
+    let (mut server, requests, proxy) = start_recording_app_server_with_history(
         &app.config,
         HistoryCapabilities::LegacyOnly,
-        /*blocked_thread_list*/ None,
-        /*failed_thread_name*/ None,
-        crate::app_server_session::ThreadParamsMode::Embedded,
+        None,
+        None,
+        crate::app_server_session::ThreadParamsMode::Remote,
         LoaderOverrides::default(),
     )
     .await?;
 
-    let method = match request {
-        LegacyHistoryRequest::Resume => {
-            let resumed = app_server
-                .resume_thread(
-                    &app.local_settings,
-                    app.config.clone(),
-                    legacy_thread_id,
-                    crate::app_server_session::ResumeModelSettings::RestoreFromThread,
-                )
-                .await?;
-            assert_eq!(resumed.session.thread_id, legacy_thread_id);
-            "thread/resume"
-        }
-        LegacyHistoryRequest::Fork => {
-            let forked = app_server
-                .fork_thread(&app.local_settings, app.config.clone(), legacy_thread_id)
-                .await?;
-            assert_ne!(forked.session.thread_id, legacy_thread_id);
-            "thread/fork"
-        }
+    let (method, result) = match operation {
+        PaginatedHistoryRequest::Resume => (
+            "thread/resume",
+            Box::pin(server.resume_thread(
+                &app.local_settings,
+                app.config.clone(),
+                thread_id,
+                crate::app_server_session::ResumeModelSettings::RestoreFromThread,
+            ))
+            .await,
+        ),
+        PaginatedHistoryRequest::Fork => (
+            "thread/fork",
+            Box::pin(server.fork_thread(&app.local_settings, app.config.clone(), thread_id)).await,
+        ),
     };
+    assert!(result.is_err(), "{method} should surface the server error");
     let attempts = recorded_params(&requests, method);
-    if request == LegacyHistoryRequest::Resume {
-        assert_eq!(attempts.len(), 2);
-        assert_eq!(attempts[0]["excludeTurns"], true);
-    } else {
-        assert_eq!(attempts.len(), 1);
-    }
-    assert_ne!(
-        attempts.last().expect("history request")["excludeTurns"],
-        true
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0]["excludeTurns"], true);
+    assert!(
+        recorded_params(&requests, "thread/read")
+            .iter()
+            .all(|params| params["includeTurns"] != true)
     );
-    assert!(recorded_params(&requests, "thread/turns/list").is_empty());
-    assert!(recorded_params(&requests, "thread/items/list").is_empty());
 
-    app_server.shutdown().await?;
+    server.shutdown().await?;
     proxy.await??;
     Ok(())
 }
 
 #[tokio::test]
-async fn remote_legacy_history_resume_retries_generic_method_not_found() -> Result<()> {
-    Box::pin(assert_remote_legacy_history_retry(
-        LegacyHistoryRequest::Resume,
+async fn paginated_resume_does_not_retry_with_full_history() -> Result<()> {
+    Box::pin(assert_paginated_request_fails_without_reading_full_history(
+        PaginatedHistoryRequest::Resume,
     ))
     .await
 }
 
 #[tokio::test]
-async fn remote_legacy_history_fork_avoids_unsupported_fields() -> Result<()> {
-    assert_remote_legacy_history_retry(LegacyHistoryRequest::Fork).await
+async fn paginated_fork_does_not_retry_with_full_history() -> Result<()> {
+    Box::pin(assert_paginated_request_fails_without_reading_full_history(
+        PaginatedHistoryRequest::Fork,
+    ))
+    .await
 }
 
 #[tokio::test]
@@ -5371,7 +5374,7 @@ async fn agents_overview_seeds_loaded_threads_when_recent_listing_is_unavailable
 }
 
 #[tokio::test]
-async fn agents_overview_stop_uses_full_history_after_legacy_negotiation() -> Result<()> {
+async fn agents_overview_stop_pages_paginated_threads_after_legacy_negotiation() -> Result<()> {
     let (mut app, _codex_home) = make_history_test_app().await?;
     let thread_id = create_history_rollout(
         &app.config,
@@ -5396,8 +5399,8 @@ async fn agents_overview_stop_uses_full_history_after_legacy_negotiation() -> Re
         .into_iter()
         .map(|params| params["includeTurns"].as_bool().unwrap_or(false))
         .collect::<Vec<_>>();
-    assert_eq!(include_turns, vec![false, true]);
-    assert!(recorded_params(&requests, "thread/turns/list").is_empty());
+    assert_eq!(include_turns, vec![false]);
+    assert_eq!(recorded_params(&requests, "thread/turns/list").len(), 1);
 
     app_server.shutdown().await?;
     proxy.await??;
