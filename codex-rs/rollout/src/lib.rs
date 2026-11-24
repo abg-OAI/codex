@@ -21,6 +21,8 @@ mod rollout_file_name;
 mod rollout_reference_index;
 pub(crate) mod search;
 mod seekable_reader;
+mod unfinished_turn;
+pub use unfinished_turn::unfinished_turn_context;
 pub(crate) mod session_index;
 mod sqlite_metrics;
 pub mod state_db;

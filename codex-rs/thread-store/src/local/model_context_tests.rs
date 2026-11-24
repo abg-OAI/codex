@@ -32,6 +32,94 @@ use crate::ThreadStore;
 use crate::local::test_support::test_config;
 use crate::local::test_support::write_session_file_with_history_mode;
 
+/// A complete active checkpoint does not require opening its older transcript.
+#[tokio::test]
+async fn current_checkpoint_does_not_resolve_missing_predecessor() {
+    let home = TempDir::new().expect("temp dir");
+    let uuid = Uuid::from_u128(9911);
+    let thread_id = ThreadId::from_string(&uuid.to_string()).expect("thread id");
+    let checkpoint = compacted("current", Some(Vec::new()));
+    let path = write_paginated_rollout(
+        home.path(),
+        "2025-01-03T13-00-00",
+        uuid,
+        [checkpoint.clone(), user_message("current suffix")],
+    );
+    set_history_base(
+        &path,
+        HistoryPosition {
+            thread_id: ThreadId::new(),
+            end_ordinal_exclusive: 99,
+            end_byte_offset: 1000,
+        },
+    );
+    let store = LocalThreadStore::new(test_config(home.path()), None);
+    let context = store
+        .load_latest_model_context(LoadThreadHistoryParams {
+            thread_id,
+            include_archived: false,
+        })
+        .await
+        .expect("bounded context does not read absent ancestry");
+    assert_eq!(context.items.len(), 3);
+    assert_eq!(
+        serde_json::to_value(&context.items[1]).unwrap(),
+        serde_json::to_value(checkpoint).unwrap()
+    );
+    assert!(
+        store
+            .resolve_rollout_lineage(thread_id, None)
+            .await
+            .is_err(),
+        "full history still requires the predecessor"
+    );
+}
+
+/// A frozen prefix stops before later mutations even when the latest file has another checkpoint.
+#[tokio::test]
+async fn checkpoint_probe_honors_frozen_prefix() {
+    let home = TempDir::new().expect("temp dir");
+    let first = compacted("frozen", Some(Vec::new()));
+    let path = write_paginated_rollout(
+        home.path(),
+        "2025-01-03T13-00-00",
+        Uuid::new_v4(),
+        [first, user_message("before cutoff")],
+    );
+    let cutoff = std::fs::metadata(&path).unwrap().len();
+    append_items(
+        &path,
+        [
+            compacted("later", Some(Vec::new())),
+            user_message("after cutoff"),
+        ],
+    );
+    let prefix = scan_checkpoint(&path, Some(cutoff)).await.unwrap().unwrap();
+    assert_eq!(prefix.len(), 2);
+    assert!(matches!(&prefix[0], RolloutItem::Compacted(item) if item.message == "frozen"));
+    let latest = scan_current_checkpoint(&path).await.unwrap().unwrap();
+    assert!(matches!(&latest[0], RolloutItem::Compacted(item) if item.message == "later"));
+}
+
+/// Conversation size does not determine speculative read cost when its current checkpoint is small.
+#[tokio::test]
+async fn checkpoint_probe_reads_tail_of_large_file() {
+    let home = TempDir::new().expect("temp dir");
+    let path = write_paginated_rollout(home.path(), "2025-01-03T13-00-00", Uuid::new_v4(), []);
+    let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+    let padding = vec![b' '; 1024 * 1024];
+    for _ in 0..65 {
+        file.write_all(&padding).unwrap();
+    }
+    file.write_all(b"\n").unwrap();
+    drop(file);
+    append_items(&path, [compacted("tail", Some(Vec::new()))]);
+    assert!(std::fs::metadata(&path).unwrap().len() > 64 * 1024 * 1024);
+    let context = scan_current_checkpoint(&path).await.unwrap().unwrap();
+    assert_eq!(context.len(), 1);
+    assert!(matches!(&context[0], RolloutItem::Compacted(item) if item.message == "tail"));
+}
+
 #[tokio::test]
 async fn model_context_revision_invalidates_after_append_or_removal() {
     let home = TempDir::new().expect("temp dir");

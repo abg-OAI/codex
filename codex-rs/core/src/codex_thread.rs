@@ -1353,8 +1353,10 @@ impl CodexThread {
     }
 
     pub fn rollout_path(&self) -> Option<PathBuf> {
-        self.rollout_path
-            .clone()
+        self.session
+            .live_thread()
+            .and_then(|thread| thread.local_rollout_path_snapshot())
+            .or_else(|| self.rollout_path.clone())
             .or_else(|| self.session.repaired_rollout_path())
     }
 

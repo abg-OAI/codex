@@ -20,6 +20,11 @@ use crate::StoredModelContext;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
 
+mod checkpoint;
+
+pub(super) use checkpoint::scan_checkpoint;
+pub(super) use checkpoint::scan_current_checkpoint;
+
 #[cfg(test)]
 #[path = "model_context_tests.rs"]
 mod tests;
@@ -74,12 +79,16 @@ pub(super) async fn load_from_rollout_path(
     }
 
     let items = if matches!(session_meta.meta.history_mode, ThreadHistoryMode::Paginated) {
-        let lineage = store
-            .resolve_rollout_lineage(thread_id, Some(path.to_path_buf()))
-            .await?;
-        let mut items = lineage
-            .read_with_fallback(store, scan_model_context_from_lineage)
-            .await?;
+        let mut items = if let Some(items) = scan_current_checkpoint(path).await? {
+            items
+        } else {
+            let lineage = store
+                .resolve_rollout_lineage(thread_id, Some(path.to_path_buf()))
+                .await?;
+            lineage
+                .read_with_fallback(store, scan_model_context_from_lineage)
+                .await?
+        };
         items.insert(0, RolloutItem::SessionMeta(Box::new(session_meta)));
         items
     } else {
