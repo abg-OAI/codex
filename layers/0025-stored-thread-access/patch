@@ -1,0 +1,454 @@
+diff --git a/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs b/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs
+index 2f8c4fcd7aeebb7598e8a18ceb834c7240f9711f..fc0a38d534b69a724b90c1351cfcd069b49b549a 100644
+--- a/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs
++++ b/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs
+@@ -1,10 +1,17 @@
+ use super::*;
++use crate::outgoing_message::OutgoingEnvelope;
++use crate::outgoing_message::OutgoingMessage;
++use codex_app_server_protocol::ServerNotification;
++use codex_app_server_protocol::ThreadArchiveParams;
++use codex_app_server_protocol::ThreadArchiveResponse;
+ use codex_app_server_protocol::ThreadItem;
+ use codex_app_server_protocol::ThreadItemPayload;
+ use codex_app_server_protocol::ThreadReadParams;
+ use codex_app_server_protocol::ThreadReadResponse;
+ use codex_app_server_protocol::ThreadResumeParams;
+ use codex_app_server_protocol::ThreadResumeResponse;
++use codex_app_server_protocol::ThreadSectionMoveParams;
++use codex_app_server_protocol::ThreadSectionMoveResponse;
+ use codex_core::StartThreadOptions;
+ use codex_protocol::ResponseItemId;
+ use codex_protocol::models::ContentItem;
+@@ -13,6 +20,7 @@ use codex_protocol::models::ResponseItem;
+ use codex_protocol::protocol::ThreadHistoryMode;
+ use codex_protocol::protocol::ThreadMemoryMode;
+ use codex_rollout::RolloutItem;
++use codex_state::PINNED_THREAD_SECTION_ID;
+ use codex_thread_store::LiveThread;
+ use codex_thread_store::LoadThreadHistoryParams;
+ use codex_thread_store::ResumeThreadParams;
+@@ -166,30 +174,47 @@ async fn exercise_saved_thread_repair(history_mode: ThreadHistoryMode) -> Result
+         None,
+     )
+     .await?;
+-    let request_id = RequestId::Integer(10);
+-    harness
+-        .processor
+-        .process_request(
+-            TEST_CONNECTION_ID,
+-            request_from_client_request(ClientRequest::ThreadRead {
+-                request_id: request_id.clone(),
+-                params: ThreadReadParams {
+-                    thread_id: thread_id.to_string(),
+-                    include_turns: true,
+-                },
+-            }),
+-            &AppServerTransport::Stdio,
+-            Arc::clone(&harness.session),
+-        )
+-        .await;
+-    let error = read_repair_error(&mut harness.outgoing_rx, request_id).await?;
+-    assert_eq!(error.code, crate::error_code::INTERNAL_ERROR_CODE);
+-    assert!(error.message.contains("failed to access loaded thread"));
+-    assert!(
+-        error
+-            .message
+-            .contains("failed to restore saved thread persistence")
+-    );
++    for request in [
++        ClientRequest::ThreadRead {
++            request_id: RequestId::Integer(10),
++            params: ThreadReadParams {
++                thread_id: thread_id.to_string(),
++                include_turns: true,
++            },
++        },
++        ClientRequest::ThreadSectionMove {
++            request_id: RequestId::Integer(14),
++            params: ThreadSectionMoveParams {
++                thread_id: thread_id.to_string(),
++                section_id: Some(PINNED_THREAD_SECTION_ID.to_owned()),
++                before_thread_id: None,
++            },
++        },
++        ClientRequest::ThreadArchive {
++            request_id: RequestId::Integer(15),
++            params: ThreadArchiveParams {
++                thread_id: thread_id.to_string(),
++            },
++        },
++    ] {
++        let request_id = request.id().clone();
++        harness
++            .processor
++            .process_request(
++                TEST_CONNECTION_ID,
++                request_from_client_request(request),
++                &AppServerTransport::Stdio,
++                Arc::clone(&harness.session),
++            )
++            .await;
++        let error = read_repair_error(&mut harness.outgoing_rx, request_id).await?;
++        assert_eq!(error.code, crate::error_code::INTERNAL_ERROR_CODE);
++        assert!(
++            error
++                .message
++                .contains("failed to restore saved thread persistence")
++        );
++    }
+     assert!(!broken.has_persistence());
+     blocker.shutdown().await?;
+
+@@ -259,6 +284,138 @@ async fn exercise_saved_thread_repair(history_mode: ThreadHistoryMode) -> Result
+     Ok(())
+ }
+
++#[test]
++#[serial(app_server_tracing)]
++fn saved_paginated_thread_operations_after_writer_shutdown() -> Result<()> {
++    run_current_thread_test_with_stack("saved-thread-after-shutdown", async {
++        let mut harness = TracingHarness::new_with_sqlite().await?;
++        harness
++            .processor
++            .connection_initialized(TEST_CONNECTION_ID, harness.session.request_attestation())
++            .await;
++        let (manager, store) = harness
++            .processor
++            .thread_processor
++            .saved_thread_persistence_test_resources();
++        let started: ThreadStartResponse = harness
++            .request(
++                ClientRequest::ThreadStart {
++                    request_id: RequestId::Integer(20),
++                    params: ThreadStartParams {
++                        history_mode: Some(codex_app_server_protocol::ThreadHistoryMode::Paginated),
++                        ..Default::default()
++                    },
++                },
++                None,
++            )
++            .await;
++        let saved_id = started.thread.id;
++        let thread_id = codex_protocol::ThreadId::from_string(&saved_id)?;
++        let loaded = manager.get_thread(thread_id).await?;
++        let turn: TurnStartResponse = harness
++            .request(
++                ClientRequest::TurnStart {
++                    request_id: RequestId::Integer(21),
++                    params: TurnStartParams {
++                        thread_id: saved_id.clone(),
++                        input: vec![UserInput::Text {
++                            text: "Save this turn".to_owned(),
++                            text_elements: Vec::new(),
++                        }],
++                        ..Default::default()
++                    },
++                },
++                None,
++            )
++            .await;
++        let turn_id = turn.turn.id;
++        tokio::time::timeout(Duration::from_secs(30), async {
++            loop {
++                let envelope = harness.outgoing_rx.recv().await.expect("outgoing channel");
++                if let OutgoingEnvelope::ToConnection {
++                    message: OutgoingMessage::AppServerNotification(notification),
++                    ..
++                } = envelope
++                    && let ServerNotification::TurnCompleted(completion) = notification.notification
++                    && completion.turn.id == turn_id
++                {
++                    break;
++                }
++            }
++        })
++        .await?;
++        loaded.flush_rollout().await?;
++        store.shutdown_thread(thread_id).await?;
++        assert!(Arc::ptr_eq(&loaded, &manager.get_thread(thread_id).await?));
++        assert!(loaded.has_persistence());
++
++        let _: ThreadSectionMoveResponse = harness
++            .request(
++                ClientRequest::ThreadSectionMove {
++                    request_id: RequestId::Integer(22),
++                    params: ThreadSectionMoveParams {
++                        thread_id: saved_id.clone(),
++                        section_id: Some(PINNED_THREAD_SECTION_ID.to_owned()),
++                        before_thread_id: None,
++                    },
++                },
++                None,
++            )
++            .await;
++        let read_stored = |include_archived| {
++            store.read_thread(codex_thread_store::ReadThreadParams {
++                thread_id,
++                include_archived,
++                include_history: false,
++            })
++        };
++        let moved = read_stored(false).await?;
++        assert_eq!(
++            moved.section.expect("persisted section").id,
++            PINNED_THREAD_SECTION_ID
++        );
++        assert!(moved.archived_at.is_none());
++
++        let read: ThreadReadResponse = harness
++            .request(
++                ClientRequest::ThreadRead {
++                    request_id: RequestId::Integer(23),
++                    params: ThreadReadParams {
++                        thread_id: saved_id.clone(),
++                        include_turns: true,
++                    },
++                },
++                None,
++            )
++            .await;
++        let turn = read
++            .thread
++            .turns
++            .iter()
++            .find(|turn| turn.id == turn_id)
++            .expect("saved turn");
++        assert!(turn.items.iter().any(|item| {
++            matches!(&item.payload, ThreadItemPayload::AgentMessage { text, .. } if text == "Done")
++        }));
++
++        let _: ThreadArchiveResponse = harness
++            .request(
++                ClientRequest::ThreadArchive {
++                    request_id: RequestId::Integer(24),
++                    params: ThreadArchiveParams {
++                        thread_id: saved_id,
++                    },
++                },
++                None,
++            )
++            .await;
++        assert!(read_stored(true).await?.archived_at.is_some());
++        assert!(read_stored(false).await.is_err());
++        harness.shutdown().await;
++        Ok(())
++    })
++}
++
+ async fn read_repair_error(
+     outgoing_rx: &mut mpsc::Receiver<crate::outgoing_message::OutgoingEnvelope>,
+     request_id: RequestId,
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index 71e9383e8f1c6bcbcb6996ab803a72be2cddefef..97e1a96820b250dd966def9a7ccda8f14ed9f8b8 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -1909,11 +1909,12 @@ impl ThreadRequestProcessor {
+
+         // Fresh threads have no rollout until their first turn. Materialize the
+         // loaded persistent thread before looking it up for archival.
+-        if let Ok(thread) = self.thread_manager.get_thread(thread_id).await
++        if let Some(thread) =
++            get_loaded_thread_for_persistence(&self.thread_manager, thread_id).await?
+             && !thread.config_snapshot().await.ephemeral
+         {
+             self.thread_store
+-                .persist_thread(thread_id, PersistContext::Standard)
++                .persist_thread(thread_id, PersistContext::StoredThreadAccess)
+                 .await
+                 .map_err(|err| thread_store_mutation_error("archive", err))?;
+         }
+@@ -3458,7 +3459,7 @@ impl ThreadRequestProcessor {
+             thread.turns = match thread.history_mode {
+                 ApiThreadHistoryMode::Paginated => {
+                     self.thread_store
+-                        .persist_thread(thread_id, PersistContext::Standard)
++                        .persist_thread(thread_id, PersistContext::StoredThreadAccess)
+                         .await
+                         .map_err(|err| thread_read_history_load_error(thread_id, err))?;
+                     self.paginated_thread_full_turns(thread_id)
+diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
+index f183fcf23bcfecd89e77513c4a9acd91a93d8d34..e2cb2cf43d91dab71012860dd6563491bc24d09d 100644
+--- a/codex-rs/core/src/codex_thread.rs
++++ b/codex-rs/core/src/codex_thread.rs
+@@ -1371,8 +1371,8 @@ impl CodexThread {
+             })
+     }
+
+-    /// Returns whether this runtime owns a writer, including one repaired in
+-    /// place after startup.
++    /// Returns whether this runtime has a persistence handle, including one restored
++    /// after startup. The store can close the writer before the runtime is unregistered.
+     pub fn has_persistence(&self) -> bool {
+         self.session.live_thread().is_some()
+     }
+diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
+index 18a8423a065bff6c9f96e09cdf4dcea275e3d8c2..e3f47f336b1eb21f533f091a685c941d5b20c334 100644
+--- a/codex-rs/core/src/thread_manager.rs
++++ b/codex-rs/core/src/thread_manager.rs
+@@ -89,6 +89,7 @@ use codex_models_manager::manager::SharedModelsManager;
+ use codex_protocol::ThreadId;
+ use codex_protocol::config_types::CollaborationModeMask;
+ use codex_protocol::error::CodexErr;
++use codex_protocol::error::CodexErrorDetails;
+ use codex_protocol::error::Result as CodexResult;
+ use codex_protocol::mcp::ClientMcpExtensions;
+ use codex_protocol::openai_models::ModelInfo;
+@@ -116,6 +117,7 @@ use codex_thread_store::LoadThreadHistoryParams;
+ use codex_thread_store::LocalThreadStore;
+ use codex_thread_store::LocalThreadStoreConfig;
+ use codex_thread_store::MoveThreadToSectionParams;
++use codex_thread_store::PersistContext;
+ use codex_thread_store::PreparedFork;
+ use codex_thread_store::ReadThreadByRolloutPathParams;
+ use codex_thread_store::ReadThreadParams;
+@@ -1399,15 +1401,20 @@ impl ThreadManager {
+         section: Option<&str>,
+         before_thread_id: Option<ThreadId>,
+     ) -> CodexResult<()> {
+-        if let Ok(thread) = self.get_thread(thread_id).await {
+-            if thread.config_snapshot().await.ephemeral {
+-                return Err(CodexErr::InvalidRequest(format!(
+-                    "ephemeral thread does not support section moves: {thread_id}"
+-                )));
++        match self.get_thread(thread_id).await {
++            Ok(thread) => {
++                if thread.config_snapshot().await.ephemeral {
++                    return Err(CodexErr::InvalidRequest(format!(
++                        "ephemeral thread does not support section moves: {thread_id}"
++                    )));
++                }
++                thread
++                    .session
++                    .try_ensure_rollout_materialized(PersistContext::StoredThreadAccess)
++                    .await?;
+             }
+-            // Explicit placement must work before the first turn materializes the thread.
+-            thread.ensure_rollout_materialized().await;
+-            thread.flush_rollout().await?;
++            Err(err) if matches!(err.details(), CodexErrorDetails::ThreadNotFound(_)) => {}
++            Err(err) => return Err(err),
+         }
+
+         self.state
+diff --git a/codex-rs/thread-store/src/live_thread.rs b/codex-rs/thread-store/src/live_thread.rs
+index d3c1cd2f5acd92a5fc0b70608f163b6a38079674..1c2ba15166db5af7c42d4791e85a0d60d9c04c6b 100644
+--- a/codex-rs/thread-store/src/live_thread.rs
++++ b/codex-rs/thread-store/src/live_thread.rs
+@@ -569,7 +569,10 @@ impl LiveThread {
+             patch: update.patch.clone(),
+             include_archived: true,
+         };
+-        if context == PersistContext::Standard {
++        if matches!(
++            context,
++            PersistContext::Standard | PersistContext::StoredThreadAccess
++        ) {
+             self.thread_store.update_thread_metadata(params).await?;
+         } else {
+             self.thread_store.record_thread_metadata(params).await?;
+diff --git a/codex-rs/thread-store/src/local/live_writer.rs b/codex-rs/thread-store/src/local/live_writer.rs
+index 0752cbef439aa351f373c101edbb3f9cef319476..bf3f33688730878327a2d4f4a4199fd2e2f3ca71 100644
+--- a/codex-rs/thread-store/src/local/live_writer.rs
++++ b/codex-rs/thread-store/src/local/live_writer.rs
+@@ -361,6 +361,17 @@ pub(super) async fn persist_thread(
+     write_and_project(store, thread_id, RolloutWriteOp::Persist, writer).await
+ }
+
++pub(super) async fn persist_thread_if_open(
++    store: &LocalThreadStore,
++    thread_id: ThreadId,
++) -> ThreadStoreResult<()> {
++    let writer = store.live_writer_locks.lock(thread_id).await;
++    if !store.live_recorders.lock().await.contains_key(&thread_id) {
++        return Ok(());
++    }
++    write_and_project(store, thread_id, RolloutWriteOp::Persist, writer).await
++}
++
+ pub(super) async fn flush_thread(
+     store: &LocalThreadStore,
+     thread_id: ThreadId,
+diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
+index 33e235b584750a011d6cf7e049276b3e0aa8de9a..087de539b3cab9e6885d8d0f36b39b935636e9f5 100644
+--- a/codex-rs/thread-store/src/local/mod.rs
++++ b/codex-rs/thread-store/src/local/mod.rs
+@@ -713,10 +713,14 @@ impl ThreadStore for LocalThreadStore {
+             return Box::pin(async { Ok(()) });
+         }
+         Box::pin(async move {
+-            if context == PersistContext::ThreadPreparation {
+-                live_writer::flush_thread(self, thread_id).await
+-            } else {
+-                live_writer::persist_thread(self, thread_id).await
++            match context {
++                PersistContext::ThreadPreparation => {
++                    live_writer::flush_thread(self, thread_id).await
++                }
++                PersistContext::StoredThreadAccess => {
++                    live_writer::persist_thread_if_open(self, thread_id).await
++                }
++                _ => live_writer::persist_thread(self, thread_id).await,
+             }
+         })
+     }
+@@ -1206,6 +1210,36 @@ mod tests {
+         );
+     }
+
++    #[tokio::test]
++    async fn stored_thread_access_propagates_materialization_failure_from_open_writer() {
++        let home = TempDir::new().expect("temp dir");
++        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
++        let thread_id = ThreadId::default();
++        store
++            .create_thread(create_thread_params(thread_id))
++            .await
++            .unwrap();
++        let path = store.live_rollout_path(thread_id).await.unwrap();
++        assert!(!path.exists());
++        tokio::fs::create_dir_all(&path).await.unwrap();
++
++        let result = store
++            .persist_thread(thread_id, PersistContext::StoredThreadAccess)
++            .await;
++        assert!(
++            matches!(result, Err(ThreadStoreError::Internal { .. })),
++            "{result:?}"
++        );
++
++        tokio::fs::remove_dir(&path).await.unwrap();
++        store
++            .persist_thread(thread_id, PersistContext::StoredThreadAccess)
++            .await
++            .unwrap();
++        assert!(path.is_file());
++        store.shutdown_thread(thread_id).await.unwrap();
++    }
++
+     #[tokio::test]
+     async fn raw_append_items_does_not_update_sqlite_metadata() {
+         // This pins the ThreadStore contract: raw appends are history-only. Callers that need
+diff --git a/codex-rs/thread-store/src/store.rs b/codex-rs/thread-store/src/store.rs
+index 8b511d7b925ef1884b51866dc93bf704919e3a12..b75d6c242baf24f22d97e96461fc42fc451c84fc 100644
+--- a/codex-rs/thread-store/src/store.rs
++++ b/codex-rs/thread-store/src/store.rs
+@@ -117,6 +117,9 @@ pub enum PersistContext {
+     ThreadPreparation,
+     /// Standard persistence makes the thread and all queued items durable and readable.
+     Standard,
++    /// Before accessing stored data, materialize any open writer. A closed writer has
++    /// nothing to persist; the subsequent operation resolves the stored thread.
++    StoredThreadAccess,
+     /// Copied subagent history may be enqueued so its durability fence can overlap relationship
+     /// persistence. The caller must await standard persistence before acknowledging the child.
+     SubagentSpawn,
+@@ -132,7 +135,7 @@ impl PersistContext {
+     /// durability barrier. Stores may still choose to persist synchronously.
+     pub fn allows_background_persistence(self) -> bool {
+         match self {
+-            Self::ThreadPreparation | Self::Standard => false,
++            Self::ThreadPreparation | Self::Standard | Self::StoredThreadAccess => false,
+             Self::SubagentSpawn | Self::TurnStart | Self::SteeredUserInput => true,
+         }
+     }

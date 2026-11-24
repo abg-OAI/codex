@@ -1,0 +1,22 @@
+[vcs]
+commit-msg = """
+Allow stored thread operations after the rollout writer closes
+
+A saved thread can stay registered after its local writer shuts down.
+Section moves, archival and paginated reads with turns then fail while
+trying to make already durable history available.
+
+Before accessing the stored thread, materialize an open writer under
+the same lock used for shutdown. With no writer, proceed to the store
+operation that resolves the saved thread. Propagate active writer and
+saved-session recovery failures. Turn writes and resume still require
+their writer.
+
+Cover the closed-writer interval through section move, read and archive
+requests, and exercise a failed materialization and retry with an open
+writer.
+"""
+
+[[operation]]
+[operation.patch]
+file = "patch"
