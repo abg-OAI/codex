@@ -41,6 +41,7 @@ use crate::analytics::GoalAnalytics;
 use crate::api::GoalService;
 use crate::events::GoalEventEmitter;
 use crate::metrics::GoalMetrics;
+use crate::resume::GoalResumeRuntime;
 use crate::runtime::ActiveGoalStopReason;
 use crate::runtime::GoalRuntimeConfig;
 use crate::runtime::GoalRuntimeHandle;
@@ -158,6 +159,15 @@ where
             });
             runtime.set_enabled(enabled);
             self.goal_service.register_runtime(&runtime);
+            input
+                .thread_store
+                .insert(codex_core::GoalResumeCapabilityHandle::new(
+                    GoalResumeRuntime::new(
+                        runtime.as_ref().clone(),
+                        Arc::clone(&self.state_dbs),
+                        self.event_emitter.clone(),
+                    ),
+                ));
         })
     }
 
