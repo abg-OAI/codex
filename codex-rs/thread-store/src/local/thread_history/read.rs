@@ -61,6 +61,7 @@ pub(super) struct StoredTurnRow {
     pub first_user_item_id: Option<String>,
     pub final_agent_item_id: Option<String>,
     pub summary_items: Vec<StoredThreadItem>,
+    terminal_without_start: bool,
 }
 
 #[derive(sqlx_macros::FromRow)]
@@ -127,6 +128,9 @@ pub(in crate::local) async fn list_turns(
     for turn in page.rows {
         let items = match params.items_view {
             StoredTurnItemsView::NotLoaded => Vec::new(),
+            StoredTurnItemsView::Summary if turn.terminal_without_start => {
+                super::split_turn_summary::load(pool, &mut lineage, &turn).await?
+            }
             StoredTurnItemsView::Summary
                 if matches!(turn.status, StoredTurnStatus::Interrupted)
                     && turn.first_user_item_id.is_none()
@@ -334,6 +338,8 @@ pub(super) fn stored_turn_row(row: sqlx::sqlite::SqliteRow) -> ThreadStoreResult
         duration_ms: row.try_get("duration_ms")?,
         first_user_item_id: row.try_get("first_user_item_id")?,
         final_agent_item_id: row.try_get("final_agent_item_id")?,
+        terminal_without_start: row.try_get::<Option<i64>, _>("rollout_end_ordinal")?
+            == Some(row.try_get("rollout_ordinal")?),
         summary_items: Vec::new(),
     })
 }
@@ -425,7 +431,9 @@ pub(super) fn stored_thread_item_row(
     })
 }
 
-fn stored_thread_item(row: sqlx::sqlite::SqliteRow) -> ThreadStoreResult<StoredThreadItem> {
+pub(super) fn stored_thread_item(
+    row: sqlx::sqlite::SqliteRow,
+) -> ThreadStoreResult<StoredThreadItem> {
     let updated_at_ordinal = stored_updated_at_ordinal(row.try_get("updated_at_ordinal")?)?;
     Ok(StoredThreadItem {
         turn_id: row.try_get("turn_id")?,

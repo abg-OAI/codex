@@ -177,6 +177,10 @@ type WriterLockGuard = Arc<codex_rollout::WriterLockGuard>;
 
 struct LiveRecorderEntry {
     recorder: RolloutRecorder,
+    // Keep both writers owned until SQLite resolves an uncertain path publication.
+    pending_continuation: Option<PendingContinuation>,
+    // Synchronous legacy consumers follow the installed physical writer across rotations.
+    rollout_path: tokio::sync::watch::Sender<PathBuf>,
     // Rollout projection rows are keyed by immutable rollout ID, not the stable thread ID used
     // to find this live writer.
     rollout_id: ThreadId,
@@ -192,6 +196,12 @@ struct LiveRecorderEntry {
 struct RealtimeSeals {
     pending: Option<String>,
     committed: HashSet<String>,
+}
+
+#[derive(Clone)]
+struct PendingContinuation {
+    recorder: RolloutRecorder,
+    rollout_id: ThreadId,
 }
 
 #[derive(Default)]
@@ -392,6 +402,19 @@ impl LocalThreadStore {
         live_writer::rollout_path(self, thread_id).await
     }
 
+    /// Subscribes to the physical path installed by the local writer owner.
+    pub(crate) async fn live_rollout_path_subscription(
+        &self,
+        thread_id: ThreadId,
+    ) -> ThreadStoreResult<tokio::sync::watch::Receiver<PathBuf>> {
+        self.live_recorders
+            .lock()
+            .await
+            .get(&thread_id)
+            .map(|entry| entry.rollout_path.subscribe())
+            .ok_or(ThreadStoreError::ThreadNotFound { thread_id })
+    }
+
     /// Select only materialized rollout inputs without creating a file for untouched threads.
     pub(crate) async fn feedback_rollout_path(
         &self,
@@ -469,6 +492,11 @@ impl LocalThreadStore {
             }),
             Entry::Vacant(entry) => {
                 entry.insert(LiveRecorderEntry {
+                    pending_continuation: None,
+                    rollout_path: tokio::sync::watch::channel(
+                        recorder.rollout_path().to_path_buf(),
+                    )
+                    .0,
                     recorder,
                     rollout_id,
                     history_mode,

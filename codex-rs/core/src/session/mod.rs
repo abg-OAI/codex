@@ -286,6 +286,7 @@ mod persistence_repair;
 mod plugin_selection;
 mod realtime_handoff;
 mod realtime_history;
+mod restart_checkpoint;
 mod retained_context;
 mod review;
 mod rollout_budget;
@@ -1958,6 +1959,18 @@ impl Session {
                 self.state.lock().await.latest_token_usage_record =
                     Self::last_token_usage_record_from_rollout(&rollout_items);
 
+                let settings_guard = thread_settings::acquire_persistence_lock(self).await;
+                // Copied paginated subagents already have a self-contained physical prefix.
+                // Other children capture their reconstructed context without snapshotting the parent.
+                let fork_checkpoint = if is_paginated_subagent
+                    && matches!(
+                        self.fork_persistence,
+                        ForkPersistence::Copied | ForkPersistence::CopiedDeferred
+                    ) {
+                    None
+                } else {
+                    self.fork_checkpoint_items(&rollout_items).await
+                };
                 let thread_settings_applied =
                     RolloutItem::EventMsg(thread_settings::applied_event(self).await);
                 match &self.fork_persistence {
@@ -1984,7 +1997,13 @@ impl Session {
                         rollout_items.push(thread_settings_applied);
                     }
                 }
+                if let Some(checkpoint) = fork_checkpoint {
+                    // Snapshot processing may have synthesized an interrupt marker. Keep it
+                    // before replacement history, and its terminal event after the checkpoint.
+                    rollout_items.extend(checkpoint);
+                }
                 self.persist_rollout_items(&rollout_items).await;
+                drop(settings_guard);
                 if self.preserve_parent_tool_declarations() {
                     let notice = DeveloperInstructions::new(
                         "<mcp_tools>\nMCP tools are unavailable for this request.\n</mcp_tools>",
