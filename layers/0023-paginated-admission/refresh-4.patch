@@ -1,0 +1,28 @@
+diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
+index 71bd52065b0f2f053c1ea9c73e8ec725b37636e8..1b58fe81060a3ddd2ce32fa7d5f467249983ab9f 100644
+--- a/codex-rs/core/src/session/tests.rs
++++ b/codex-rs/core/src/session/tests.rs
+@@ -4212,6 +4212,7 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
+         .fork_prepared_thread(
+             core_test_support::test_codex::StartThreadOptions::new(fork_config.clone()),
+             prepared,
++            codex_thread_store::InheritedHistoryVisibility::Full,
+         )
+         .await?;
+
+diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
+index b77e6e7b3e8342aef1ddc958acbdc831410dee60..b8c268b9763e546a759ca28a5960771192f9e7ce 100644
+--- a/codex-rs/core/src/thread_manager_tests.rs
++++ b/codex-rs/core/src/thread_manager_tests.rs
+@@ -1028,6 +1028,10 @@ async fn thread_id_generator_applies_to_roots_children_and_forks() {
+         .await
+         .expect("prepare fork");
+     let fork = manager
+-        .fork_prepared_thread(StartThreadOptions::new(config), prepared)
++        .fork_prepared_thread(
++            StartThreadOptions::new(config),
++            prepared,
++            codex_thread_store::InheritedHistoryVisibility::Full,
++        )
+         .await
+         .expect("fork root thread");

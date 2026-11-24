@@ -1,0 +1,57 @@
+diff --git a/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs b/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs
+index 51ba4adca030a8e17e3dcb96e12e926d5f5db894..2f8c4fcd7aeebb7598e8a18ceb834c7240f9711f 100644
+--- a/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs
++++ b/codex-rs/app-server/src/message_processor_saved_thread_persistence_tests.rs
+@@ -78,23 +78,34 @@ async fn exercise_saved_thread_repair(history_mode: ThreadHistoryMode) -> Result
+         .codex_home(harness._codex_home.path().to_path_buf())
+         .build()
+         .await?;
+-    let mut saved_options = StartThreadOptions::new(config.clone());
+-    if history_mode == ThreadHistoryMode::Legacy {
+-        saved_options.history_mode = Some(ThreadHistoryMode::Legacy);
+-    }
+-    let saved = manager.start_thread(saved_options).await?;
+-    let thread_id = saved.thread_id;
+-    assert_eq!(
+-        saved.thread.config_snapshot().await.history_mode,
+-        history_mode
+-    );
+-    saved
+-        .thread
+-        .inject_response_items(vec![marker("already saved", "saved-api-turn")])
+-        .await?;
+-    saved.thread.ensure_rollout_materialized().await;
+-    saved.thread.flush_rollout().await?;
+-    let rollout_path = saved.thread.rollout_path().expect("saved rollout");
+-    saved.thread.shutdown_and_wait().await?;
++    let write_rollout = match history_mode {
++        ThreadHistoryMode::Legacy => app_test_support::create_fake_rollout,
++        ThreadHistoryMode::Paginated => app_test_support::create_fake_paginated_rollout,
++    };
++    let saved_id = write_rollout(
++        harness._codex_home.path(),
++        "2025-09-15T12-00-00",
++        "2025-09-15T12:00:00Z",
++        "already saved",
++        Some(&config.model_provider_id),
++        None,
++    )?;
++    let thread_id = codex_protocol::ThreadId::from_string(&saved_id)?;
++    let _: ThreadResumeResponse = harness
++        .request(
++            ClientRequest::ThreadResume {
++                request_id: RequestId::Integer(9),
++                params: ThreadResumeParams {
++                    thread_id: saved_id,
++                    ..Default::default()
++                },
++            },
++            /*trace*/ None,
++        )
++        .await;
++    let saved = manager.get_thread(thread_id).await?;
++    assert_eq!(saved.config_snapshot().await.history_mode, history_mode);
++    let rollout_path = saved.rollout_path().expect("saved rollout");
++    saved.shutdown_and_wait().await?;
+     assert!(manager.remove_thread(&thread_id).await.is_some());
+     drop(saved);

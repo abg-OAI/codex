@@ -15,3 +15,11 @@ file = "patch"
 [[operation]]
 [operation.overlay]
 directory = "overlay"
+
+[[operation]]
+[operation.patch]
+file = "refresh.patch"
+
+[[operation]]
+[operation.patch]
+file = "refresh-1.patch"

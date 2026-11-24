@@ -2833,7 +2833,7 @@ index 3573c017d5f8f2784684b0ba5bd3644d5190f388..143f85cdb4969911a73ce3b0de460643
      Ok(())
  }
 diff --git a/codex-rs/core/tests/suite/turn_input_submission.rs b/codex-rs/core/tests/suite/turn_input_submission.rs
-index b44462328393987a50a69f5e766fa915b02ef686..fc7b1a71a144ff2a803b46043073f9571263b096 100644
+index 1746d432b1bf9fa8fb4540a72c25d6aa3a7939d9..03198d060cfe0785816cf31b489c49354be947cb 100644
 --- a/codex-rs/core/tests/suite/turn_input_submission.rs
 +++ b/codex-rs/core/tests/suite/turn_input_submission.rs
 @@ -200,6 +200,7 @@ async fn turn_extension_data_is_captured_for_automatic_turns() -> anyhow::Result
@@ -2844,15 +2844,15 @@ index b44462328393987a50a69f5e766fa915b02ef686..fc7b1a71a144ff2a803b46043073f957
          })
          .await?;
      let automatic_id = wait_for_event_match(&thread, |event| match event {
-@@ -326,6 +327,7 @@ async fn host_drain_rejects_turn_start_paths_without_recording_input() -> anyhow
-                 /*trigger_turn*/ false,
-             ),
-             start_options: TurnStartOptions::default(),
-+            accepted: None,
-         })
-         .await?;
-     // Fence the mailbox dispatch so the first wake has already been rejected.
-@@ -638,6 +640,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()>
+@@ -343,6 +344,7 @@ async fn host_drain_rejects_turn_start_paths_without_recording_input(
+             .submit(Op::InterAgentCommunication {
+                 communication,
+                 start_options: TurnStartOptions::default(),
++                accepted: None,
+             })
+             .await?;
+     }
+@@ -663,6 +665,7 @@ async fn host_drain_allows_mailbox_work_to_start_a_turn() -> anyhow::Result<()>
                  /*trigger_turn*/ true,
              ),
              start_options: Default::default(),
@@ -2860,7 +2860,7 @@ index b44462328393987a50a69f5e766fa915b02ef686..fc7b1a71a144ff2a803b46043073f957
          })
          .await?;
      wait_for_event(&test.codex, |event| {
-@@ -1912,3 +1915,53 @@ async fn tool_output_retention_is_submission_metadata() -> anyhow::Result<()> {
+@@ -1937,3 +1940,53 @@ async fn tool_output_retention_is_submission_metadata() -> anyhow::Result<()> {
      server.shutdown().await;
      Ok(())
  }

@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server/src/external_agent_migration/session_importer.rs b/codex-rs/app-server/src/external_agent_migration/session_importer.rs
-index 1a3613b43457761db733818e75afececcf080a7b..997ae267c92846c292e9aa08b6830d1572ebb72a 100644
+index 069db425899e1c876a59d92b3a57e3ecf4e1c939..da856f608dd6e648591f46b1a88ba22310867ae2 100644
 --- a/codex-rs/app-server/src/external_agent_migration/session_importer.rs
 +++ b/codex-rs/app-server/src/external_agent_migration/session_importer.rs
 @@ -37,6 +37,7 @@ use codex_rollout::RolloutItem;
@@ -46,9 +46,9 @@ index 1a3613b43457761db733818e75afececcf080a7b..997ae267c92846c292e9aa08b6830d15
 -            history_mode: ThreadHistoryMode::Legacy,
 +            history_mode,
              history_base: None,
+             inherited_history_visibility: Default::default(),
              subagent_history_start_ordinal: None,
-             initial_window_id: codex_protocol::ContextWindowId::new_uuid_v7(),
-@@ -508,7 +522,7 @@ impl ExternalAgentSessionImporter {
+@@ -509,7 +523,7 @@ impl ExternalAgentSessionImporter {
                  memory_mode,
              },
          };
@@ -516,18 +516,10 @@ index 0db25eff2345ae9a0aaf56c77ea12689a8656d1b..df8c91bae6e5dcdc8ec077e953c8eca0
                              .thread_read(thread_id, /*include_turns*/ true)
                              .await?
 diff --git a/codex-rs/tui/src/app/resume_preparation.rs b/codex-rs/tui/src/app/resume_preparation.rs
-index 7e8359f93f47beace60600a4609a13ef27a5f889..45e7a3f3fdc2645a0e56b17dd9feb4caaec5dcf6 100644
+index 6cc5d8f81cae9f911f5a2a57f556b6979ae6a5f5..e648e1c08c259b0292b3b265fbc678c257e20270 100644
 --- a/codex-rs/tui/src/app/resume_preparation.rs
 +++ b/codex-rs/tui/src/app/resume_preparation.rs
-@@ -5,7 +5,6 @@
- //! prepared result retains the connection identity and any provider error for read-only history.
-
- use super::*;
--use codex_app_server_client::TypedRequestError;
-
- /// Settings retained for a backend that is not currently displayed.
- #[derive(Clone)]
-@@ -57,36 +56,31 @@ impl App {
+@@ -399,41 +399,33 @@ impl App {
          let mut blank = self.agents_overview.blank_sessions.get(&thread_id)?.clone();
 
          // A turn can start while this backend is parked, without the TUI seeing it.
@@ -536,7 +528,9 @@ index 7e8359f93f47beace60600a4609a13ef27a5f889..45e7a3f3fdc2645a0e56b17dd9feb4ca
 -            codex_app_server_protocol::ThreadHistoryMode::Paginated
 -        ) && app_server.supports_paginated_history();
 -        let untouched = if paginated {
--            match app_server.thread_turns_page(thread_id, /*cursor*/ None, /*limit*/ 1).await {
+-            let page =
+-                app_server.thread_turns_page(thread_id, /*cursor*/ None, /*limit*/ 1);
+-            match self.wait_for_opening_task(tui, page).await {
 -                Ok(page) => Some(page.data.is_empty() && page.next_cursor.is_none()),
 -                Err(error) if Self::can_fallback_from_include_turns_error(&error) => Some(true),
 -                Err(error) if error.chain().any(|cause| matches!(
@@ -545,31 +539,39 @@ index 7e8359f93f47beace60600a4609a13ef27a5f889..45e7a3f3fdc2645a0e56b17dd9feb4ca
 -                        if crate::app_server_session::is_history_pagination_unsupported(source)
 -                )) => None,
 -                Err(_) => Some(false),
-+        let untouched = match thread.history_mode {
-+            codex_app_server_protocol::ThreadHistoryMode::Paginated => {
-+                match app_server
-+                    .thread_turns_page(thread_id, /*cursor*/ None, /*limit*/ 1)
-+                    .await
-+                {
-+                    Ok(page) => page.data.is_empty() && page.next_cursor.is_none(),
-+                    Err(error) => Self::can_fallback_from_include_turns_error(&error),
-+                }
-             }
+-            }
 -        } else {
 -            None
 -        };
 -        let untouched = match untouched {
 -            Some(untouched) => untouched,
--            None => match app_server
--                .thread_read(thread_id, /*include_turns*/ true)
+-            None => match self
+-                .wait_for_opening_task(
+-                    tui,
+-                    app_server.thread_read(thread_id, /*include_turns*/ true),
+-                )
 -                .await
 -            {
 -                Ok(thread) => {
 -                    thread.turns.is_empty()
 -                        && matches!(thread.status, codex_app_server_protocol::ThreadStatus::Idle)
++        let untouched = match thread.history_mode {
++            codex_app_server_protocol::ThreadHistoryMode::Paginated => {
++                let page =
++                    app_server.thread_turns_page(thread_id, /*cursor*/ None, /*limit*/ 1);
++                match self.wait_for_opening_task(tui, page).await {
++                    Ok(page) => page.data.is_empty() && page.next_cursor.is_none(),
++                    Err(error) => Self::can_fallback_from_include_turns_error(&error),
+                 }
+-                Err(error) => Self::can_fallback_from_include_turns_error(&error),
+-            },
++            }
 +            codex_app_server_protocol::ThreadHistoryMode::Legacy => {
-+                match app_server
-+                    .thread_read(thread_id, /*include_turns*/ true)
++                match self
++                    .wait_for_opening_task(
++                        tui,
++                        app_server.thread_read(thread_id, /*include_turns*/ true),
++                    )
 +                    .await
 +                {
 +                    Ok(thread) => {
@@ -580,9 +582,7 @@ index 7e8359f93f47beace60600a4609a13ef27a5f889..45e7a3f3fdc2645a0e56b17dd9feb4ca
 +                            )
 +                    }
 +                    Err(error) => Self::can_fallback_from_include_turns_error(&error),
-                 }
--                Err(error) => Self::can_fallback_from_include_turns_error(&error),
--            },
++                }
 +            }
          };
          if !untouched {

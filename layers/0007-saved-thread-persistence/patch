@@ -86,10 +86,10 @@ index 9f85ed0b87bbadfdaf88eaab495bbbe229b215d7..1db92d059c8f5dcb99a607e71b08ef9d
      let handle = std::thread::Builder::new()
          .name(name.to_string())
 diff --git a/codex-rs/app-server/src/request_processors.rs b/codex-rs/app-server/src/request_processors.rs
-index 3ee0a5676c2c3ca5c82dc8a24b06be07f24f4e51..70bfc55bdbdb988f4f9ecd6c5c182ec1ad5e8b49 100644
+index 4b640c0b451ab1419d2348b8064f661ffa16315f..962be6bb0d6a67e4c3e08b7a5b4e42765c79ed53 100644
 --- a/codex-rs/app-server/src/request_processors.rs
 +++ b/codex-rs/app-server/src/request_processors.rs
-@@ -621,6 +621,30 @@ use crate::thread_state::ThreadStateManager;
+@@ -619,6 +619,30 @@ use crate::thread_state::ThreadStateManager;
  use token_usage_replay::restored_token_usage_turn_id;
  use token_usage_replay::send_thread_token_usage_update_to_connection;
 
@@ -119,7 +119,7 @@ index 3ee0a5676c2c3ca5c82dc8a24b06be07f24f4e51..70bfc55bdbdb988f4f9ecd6c5c182ec1
 +
  pub(crate) fn apply_live_thread_settings(
      thread: &mut Thread,
-     config_snapshot: &ThreadConfigSnapshot,
+     loaded_thread: &CodexThread,
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
 index f5f6502272090e085e7de87d4cc9473c2007122c..ed0984643ecbe7f9c52377e501fd45938961ca25 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
@@ -498,10 +498,10 @@ index 5298178fd597ef68bd4a3ce68e369ac505e72466..b7babd4583db7746ff87d37fb09679c7
      }
 
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 63e61556455408a6211ee763d9175a6c8ed42b93..8604c5bd893d5b17438a24c2aae9b1d13a775bdd 100644
+index 08ab201b594ad55917dc16b56d8ff6a83b90312e..f9e55e93f990a35c246a702e4c6de7668693f6cd 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -1250,7 +1250,26 @@ impl CodexThread {
+@@ -1338,7 +1338,26 @@ impl CodexThread {
      }
 
      pub fn rollout_path(&self) -> Option<PathBuf> {
@@ -528,7 +528,7 @@ index 63e61556455408a6211ee763d9175a6c8ed42b93..8604c5bd893d5b17438a24c2aae9b1d1
 +        self.session.live_thread().is_some()
      }
 
-     /// Selects a local feedback rollout without materializing an untouched thread.
+     /// Whether the latest completed sampling request in this live context reported a removal.
 diff --git a/codex-rs/core/src/saffron/mod.rs b/codex-rs/core/src/saffron/mod.rs
 index bb75b5ef21638ffaec0e460cbbfb670324a5858a..ce13be03f1986a62708aa751fef7e5d35d633a67 100644
 --- a/codex-rs/core/src/saffron/mod.rs
@@ -554,10 +554,10 @@ index 0372bf0b84c815aed2cb28275992e438e0171e76..3ef627516007b4ebdae46f858bb05768
          startup_prewarm.abort().await;
      }
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0de8b47ce 100644
+index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f75919a3f514c 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -277,6 +277,7 @@ mod mcp_refresh;
+@@ -281,6 +281,7 @@ mod mcp_refresh;
  mod mcp_runtime;
  mod model_catalog_settings;
  pub(crate) mod multi_agents;
@@ -565,7 +565,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
  mod plugin_selection;
  mod realtime_handoff;
  mod realtime_history;
-@@ -1650,7 +1651,12 @@ impl Session {
+@@ -1671,7 +1672,12 @@ impl Session {
      }
  
      pub(crate) fn state_db(&self) -> Option<state_db::StateDbHandle> {
@@ -579,7 +579,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
      }
  
      pub(crate) fn live_thread_for_persistence(
-@@ -1662,7 +1668,12 @@ impl Session {
+@@ -1683,7 +1689,12 @@ impl Session {
      }
  
      pub(crate) fn live_thread(&self) -> Option<&LiveThread> {
@@ -593,7 +593,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
      }
  
      pub(crate) async fn set_thread_memory_mode(
-@@ -4165,20 +4176,26 @@ impl Session {
+@@ -4168,20 +4179,26 @@ impl Session {
          let has_user_turn_boundary = items
              .iter()
              .any(|envelope| crate::context_manager::is_user_turn_boundary(&envelope.item));
@@ -634,7 +634,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
              Some(thread_settings::applied_event(self).await)
          } else {
              None
-@@ -4187,8 +4204,13 @@ impl Session {
+@@ -4190,8 +4207,13 @@ impl Session {
              .iter()
              .map(|envelope| envelope.item.clone())
              .collect::<Vec<_>>();
@@ -649,7 +649,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
              let pending_orders = turn_context
                  .extension_data
                  .get::<retained_context::PendingAssistantMessageOrders>();
-@@ -4239,11 +4261,11 @@ impl Session {
+@@ -4242,11 +4264,11 @@ impl Session {
                          &turn_context.sub_id,
                          envelope,
                          prepared,
@@ -663,7 +663,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
                      state.take_initial_settings_pending();
                  }
                  response_items = vec![envelope.item.clone()];
-@@ -4258,11 +4280,11 @@ impl Session {
+@@ -4261,11 +4283,11 @@ impl Session {
                      .record_realtime_chunk_input(
                          &mut state,
                          envelope.clone(),
@@ -677,17 +677,17 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
                      state.take_initial_settings_pending();
                  }
                  response_items = vec![envelope.item];
-@@ -4275,7 +4297,8 @@ impl Session {
+@@ -4278,7 +4300,8 @@ impl Session {
              state
                  .current_time_reminder
                  .note_recorded_items(&response_items);
 -        }
 +            persistence
 +        };
-         for image in image_preparations {
-             self.services
-                 .analytics_events_client
-@@ -4287,29 +4310,15 @@ impl Session {
+         let recorded_through = items
+             .iter()
+             .filter_map(|item| item.metadata.as_ref()?.history_sequence)
+@@ -4295,29 +4318,15 @@ impl Session {
          if let Some(RealtimeRecord::Handoff(prepared)) = &realtime {
              self.finish_realtime_handoff(prepared, &items[0]).await;
          } else if !matches!(&realtime, Some(RealtimeRecord::Chunk)) {
@@ -721,7 +721,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
          if turn_context.config.memories.disable_on_external_context
              && let Some(item) = response_items
                  .iter()
-@@ -4857,19 +4866,21 @@ impl Session {
+@@ -4851,8 +4860,9 @@ impl Session {
          }
          let mut delivery = communication.delivery.as_ref();
          let mut result_write = None;
@@ -732,8 +732,10 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
              state.current_time_reminder.note_recorded_items(&items);
              state.history.record_annotated_items(
                  std::slice::from_mut(&mut response_item),
-                 model_info.truncation_policy.into(),
-             );
+@@ -4869,12 +4879,13 @@ impl Session {
+                         .as_ref()
+                         .and_then(|d| d.source_tool_call_id.as_ref()),
+                 );
 -        }
 +            persistence
 +        };
@@ -746,15 +748,15 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
                  RolloutItem::InterAgentCommunicationMetadata {
                      trigger_turn: communication.trigger_turn,
                  },
-@@ -4882,6 +4893,7 @@ impl Session {
+@@ -4887,6 +4898,7 @@ impl Session {
          {
              write.confirm();
          }
 +        drop(persistence);
          drop(boundary);
-         self.send_raw_response_items(turn_context, &items).await;
-     }
-@@ -4994,8 +5006,10 @@ impl Session {
+         let [item] = items;
+         self.send_event(
+@@ -5000,8 +5012,10 @@ impl Session {
              Some(history) => history.lock().await.observation_clock.floor_ms(),
              None => None,
          };
@@ -766,7 +768,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
              let complete_replacement =
                  matches!(&installation, CompactedHistoryInstallation::Complete(..));
              let replacement = match installation {
-@@ -5102,7 +5116,7 @@ impl Session {
+@@ -5108,7 +5122,7 @@ impl Session {
                  latest_token_usage_record: state.latest_token_usage_record.clone(),
                  resume_metadata: Some(resume_metadata),
              };
@@ -775,7 +777,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
          };
  
          // Use the replacement captured under the state lock, including goal edits retained
-@@ -5116,19 +5130,20 @@ impl Session {
+@@ -5122,19 +5136,20 @@ impl Session {
              );
          }
  
@@ -802,7 +804,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
          {
              let mut state = self.state.lock().await;
              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
-@@ -5519,6 +5534,11 @@ impl Session {
+@@ -5532,6 +5547,11 @@ impl Session {
  
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
@@ -814,7 +816,7 @@ index 797b83880acd3f5ac10148cda450c669894eb137..039fab1c451e1898e2730d9bc530ade0
          if let Some(live_thread) = self.live_thread()
              && let Err(e) = live_thread.append_items(items).await
          {
-@@ -5802,11 +5822,12 @@ impl Session {
+@@ -5811,11 +5831,12 @@ impl Session {
                  thread_settings::applied_event(self).await,
              ));
          }

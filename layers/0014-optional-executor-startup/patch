@@ -1,8 +1,8 @@
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 5307904e71302c44bfdf041d416fbf2b27042b00..02f6ebe62ced9cca0b219171a3952322904355c7 100644
+index 8ff674b6f2751ecd849e2ab9612e74b47c97daf4..b62db31f589811e34389d2bfd81df314e9f7777c 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -1615,6 +1615,7 @@ impl ThreadRequestProcessor {
+@@ -1632,6 +1632,7 @@ impl ThreadRequestProcessor {
              }
          }
 
@@ -10,10 +10,10 @@ index 5307904e71302c44bfdf041d416fbf2b27042b00..02f6ebe62ced9cca0b219171a3952322
          let environment_requests = environment_requests.unwrap_or_else(|| {
              listener_task_context
                  .thread_manager
-@@ -1637,6 +1638,10 @@ impl ThreadRequestProcessor {
-                 .then_some(ThreadHistoryMode::Paginated)
-         });
-         let mut thread_extension_init = ExtensionDataInit::new();
+@@ -1657,6 +1658,10 @@ impl ThreadRequestProcessor {
+         if experimental_raw_events {
+             thread_extension_init.insert(codex_core::UsageAttributionPolicy::Retain);
+         }
 +        codex_core::record_saffron_executor_selection_intent(
 +            &mut thread_extension_init,
 +            implicit_executor_selection,
@@ -48,7 +48,7 @@ index f1c6f3abd7c62d3b8461113e05987c2a055b3720..8c9579534596e078ee4ce271e19ad679
                          }
                      };
 diff --git a/codex-rs/core/src/agents_md.rs b/codex-rs/core/src/agents_md.rs
-index 08983d72ffd1e2a17fefd2740c68164c73f79486..f1e756e88ae05075093310fcfab219365cc73be2 100644
+index 570260be03792d8d0e3a3e764851b94954620df5..d06b7454ea49cbd1f0b3572c4a38160f4c82ea50 100644
 --- a/codex-rs/core/src/agents_md.rs
 +++ b/codex-rs/core/src/agents_md.rs
 @@ -20,6 +20,7 @@
@@ -59,9 +59,9 @@ index 08983d72ffd1e2a17fefd2740c68164c73f79486..f1e756e88ae05075093310fcfab21936
  use codex_config::ConfigLayerSource;
  use codex_config::default_project_root_markers;
  use codex_config::merge_toml_values;
-@@ -31,10 +32,12 @@ use codex_extension_api::Instructions;
- use codex_file_system::FileSystemSandboxContext;
- use codex_file_system::FindUpErrorPolicy;
+@@ -33,10 +34,12 @@ use codex_file_system::FindUpErrorPolicy;
+ use codex_file_system::MAX_METADATA_BATCH_BYTES;
+ use codex_file_system::MAX_METADATA_BATCH_PROBES;
  use codex_file_system::find_nearest_ancestor_with_markers;
 +use codex_protocol::protocol::TurnEnvironmentSelection;
  use codex_utils_absolute_path::AbsolutePathBuf;
@@ -72,7 +72,7 @@ index 08983d72ffd1e2a17fefd2740c68164c73f79486..f1e756e88ae05075093310fcfab21936
  use std::io;
  use toml::Value as TomlValue;
  use tracing::error;
-@@ -60,6 +63,16 @@ pub(crate) async fn load_project_instructions(
+@@ -62,6 +65,16 @@ pub(crate) async fn load_project_instructions(
      config: &Config,
      environments: &TurnEnvironmentSnapshot,
      warnings: &mut Vec<String>,
@@ -89,7 +89,7 @@ index 08983d72ffd1e2a17fefd2740c68164c73f79486..f1e756e88ae05075093310fcfab21936
  ) -> io::Result<LoadedAgentsMd> {
      let mut loaded = LoadedAgentsMd::default();
      if config.active_project.is_untrusted() || config.project_doc_max_bytes == 0 {
-@@ -85,7 +98,11 @@ pub(crate) async fn load_project_instructions(
+@@ -87,7 +100,11 @@ pub(crate) async fn load_project_instructions(
          .then(|| turn_environment.sandbox_context(/*additional_permissions*/ None));
          match read_agents_md(
              config,
@@ -102,7 +102,7 @@ index 08983d72ffd1e2a17fefd2740c68164c73f79486..f1e756e88ae05075093310fcfab21936
              &turn_environment.selection.environment_id,
              turn_environment.cwd(),
              remaining,
-@@ -122,6 +139,113 @@ pub(crate) async fn load_project_instructions(
+@@ -124,6 +141,113 @@ pub(crate) async fn load_project_instructions(
      Ok(loaded)
  }
 
@@ -216,7 +216,7 @@ index 08983d72ffd1e2a17fefd2740c68164c73f79486..f1e756e88ae05075093310fcfab21936
  /// Attempt to locate and load AGENTS.md documentation.
  ///
  /// On success returns `Ok(Some(loaded))` where `loaded` contains every
-@@ -131,14 +255,14 @@ pub(crate) async fn load_project_instructions(
+@@ -133,14 +257,14 @@ pub(crate) async fn load_project_instructions(
  #[tracing::instrument(name = "agents_md.load", skip_all, fields(max_total = max_total))]
  async fn read_agents_md(
      config: &Config,
@@ -233,7 +233,7 @@ index 08983d72ffd1e2a17fefd2740c68164c73f79486..f1e756e88ae05075093310fcfab21936
      let mut remaining = max_total;
      let mut loaded = LoadedAgentsMd::default();
 
-@@ -152,12 +276,11 @@ async fn read_agents_md(
+@@ -154,12 +278,11 @@ async fn read_agents_md(
              break;
          }
 
@@ -498,10 +498,10 @@ index 354c5d21a580421202d0c1299fd160c2f5a8c988..ba6b947a843530347a6caccf340a0f31
 +    assert!(!refreshed.text().contains("initial instructions"));
 +}
 diff --git a/codex-rs/core/src/environment_selection.rs b/codex-rs/core/src/environment_selection.rs
-index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70ef31aae6f 100644
+index 7c1b7a64421c6fff569e9353a060fcdf19171ed5..53bbdee7b1a6909f7207514cb118bbe3b883b516 100644
 --- a/codex-rs/core/src/environment_selection.rs
 +++ b/codex-rs/core/src/environment_selection.rs
-@@ -235,7 +235,8 @@ fn resolve_selection_config(
+@@ -262,7 +262,8 @@ fn resolve_selection_config(
          ),
          config @ (EnvironmentConfigState::Ready(_)
          | EnvironmentConfigState::Pending
@@ -511,7 +511,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
      };
      selection.config = config;
      (selection, origin)
-@@ -314,6 +315,8 @@ pub(crate) struct ThreadEnvironments {
+@@ -344,6 +345,8 @@ pub(crate) struct ThreadEnvironments {
      state: Mutex<ThreadEnvironmentsState>,
      // Retain configured bindings independently of active-turn membership and cancellation.
      configured: Mutex<ThreadEnvironmentsState>,
@@ -520,7 +520,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
  }
 
  struct ThreadEnvironmentsState {
-@@ -390,6 +393,26 @@ impl StartupRetry<'_> {
+@@ -420,6 +423,26 @@ impl StartupRetry<'_> {
      }
  }
 
@@ -547,10 +547,10 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
  impl ThreadEnvironments {
      pub(crate) fn new(
          environment_manager: Arc<EnvironmentManager>,
-@@ -399,6 +422,14 @@ impl ThreadEnvironments {
-         current: TurnEnvironmentSnapshot,
-         non_blocking_snapshots: bool,
-     ) -> Self {
+@@ -433,6 +456,14 @@ impl ThreadEnvironments {
+         if let Some(discovery) = &executor_discovery {
+             discovery.ensure_capacity(current.environments.len());
+         }
 +        let unavailable = current
 +            .all_selections()
 +            .into_iter()
@@ -562,15 +562,15 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
          let environments: Vec<_> = current
              .environments
              .into_iter()
-@@ -487,6 +518,7 @@ impl ThreadEnvironments {
-             local_shell,
+@@ -523,6 +554,7 @@ impl ThreadEnvironments {
              shell_snapshot,
              non_blocking_snapshots,
+             executor_discovery,
 +            unavailable,
              state: Mutex::new(ThreadEnvironmentsState {
                  thread_defaults: thread_defaults.clone(),
                  environments: Vec::new(),
-@@ -500,6 +532,22 @@ impl ThreadEnvironments {
+@@ -536,6 +568,22 @@ impl ThreadEnvironments {
          }
      }
 
@@ -593,7 +593,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
      /// Attach the initial active selection after `SessionConfigured` so clients see only later
      /// connection changes. Startup discovery uses the configured bindings until this point.
      pub(crate) fn activate_configured(&self, tx_event: Sender<Event>) {
-@@ -663,6 +711,11 @@ impl ThreadEnvironments {
+@@ -703,6 +751,11 @@ impl ThreadEnvironments {
                      })
              };
          for selected_environment in environments {
@@ -605,7 +605,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
              if !seen_environment_ids.insert(selected_environment.environment_id.as_str()) {
                  continue;
              }
-@@ -712,6 +765,12 @@ impl ThreadEnvironments {
+@@ -753,6 +806,12 @@ impl ThreadEnvironments {
                          EnvironmentConfigState::Failed(error) => {
                              pending_completions.push((completion, Err(error.clone())));
                          }
@@ -618,7 +618,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
                          EnvironmentConfigState::FromThread | EnvironmentConfigState::Pending => {
                              environment.pending_completion = Some(completion);
                          }
-@@ -821,17 +880,7 @@ impl ThreadEnvironments {
+@@ -884,17 +943,7 @@ impl ThreadEnvironments {
 
      /// Projects canonical selections back to caller input form without losing config ownership.
      pub(crate) fn selections(&self) -> Vec<TurnEnvironmentSelection> {
@@ -637,7 +637,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
      }
 
      /// Returns installed owner configuration without treating pending attachments as ready.
-@@ -842,7 +891,8 @@ impl ThreadEnvironments {
+@@ -905,7 +954,8 @@ impl ThreadEnvironments {
              EnvironmentConfigState::Ready(config) => Some(config),
              EnvironmentConfigState::FromThread
              | EnvironmentConfigState::Pending
@@ -647,7 +647,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
          }
      }
 
-@@ -981,6 +1031,13 @@ impl ThreadEnvironments {
+@@ -1044,6 +1094,13 @@ impl ThreadEnvironments {
              .inspect_selected_capability_roots(&selected_capability_roots);
          status.ready_roots.retain(|root| {
              let CapabilityRootLocation::Environment { environment_id, .. } = &root.location;
@@ -661,7 +661,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
              environments
                  .iter()
                  .find(|environment| &environment.selection.environment_id == environment_id)
-@@ -1008,8 +1065,8 @@ impl ThreadEnvironments {
+@@ -1071,8 +1128,8 @@ impl ThreadEnvironments {
          configuration_ready: Option<PendingConfiguration>,
      ) -> TurnEnvironmentResult {
          let environment_id = &selection.environment_id;
@@ -672,7 +672,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
          }
 
          // Wait for the shared executor connection.
-@@ -1108,18 +1165,18 @@ impl ThreadEnvironments {
+@@ -1171,18 +1228,18 @@ impl ThreadEnvironments {
 
      /// Copies the current selection without waiting for any executor to connect.
      pub(crate) fn snapshot_now(&self) -> TurnEnvironmentSnapshot {
@@ -695,7 +695,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
              .lock()
              .unwrap_or_else(PoisonError::into_inner)
              .environments
-@@ -1139,6 +1196,16 @@ impl ThreadEnvironments {
+@@ -1202,6 +1259,16 @@ impl ThreadEnvironments {
                  })
              })
              .collect();
@@ -712,7 +712,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
          TurnEnvironmentSnapshot { environments }
      }
 
-@@ -1193,8 +1260,8 @@ impl TurnEnvironmentState {
+@@ -1256,8 +1323,8 @@ impl TurnEnvironmentState {
          resolved: Option<TurnEnvironmentResult>,
      ) -> Self {
          let required_skills = starting.attachment.environment.required_skills().to_vec();
@@ -723,7 +723,7 @@ index b76bdf6b5245ebc43af7ea1a1f6e138a0c61a4a3..999f2527cae1fe2512626f43b85ff70e
              return Self::Failed {
                  required_skills,
                  selection: starting
-@@ -1466,6 +1533,11 @@ impl TurnEnvironmentSnapshot {
+@@ -1514,6 +1581,11 @@ impl TurnEnvironmentSnapshot {
                          .config_origin
                          .into_input_selection(environment.selection.clone()),
                  ),
@@ -931,10 +931,10 @@ index c096d3ae13b04bae0e5a9281889b258888f5dd12..91fa1ce377eb4fab73b0d66c8ea4667f
              environment.has_same_workspace(selection)
                  && (!inherited || matches!(environment.config, EnvironmentConfigState::Pending))
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index cc1accf85e435669cd3c9a7da027abef55a54de9..91e68cb32c753234d09ffcad1e4a472a315f607b 100644
+index 95e547e2c6e788eda47b57b0d2b1e226d3be56d9..2330c016525f190110c92fc6616386a11fb4efb9 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -442,6 +442,10 @@ impl SessionConfiguration {
+@@ -449,6 +449,10 @@ impl SessionConfiguration {
          if let Some(environments) = &updates.environments {
              next_configuration.legacy_fallback_cwd = environments.legacy_fallback_cwd.clone();
              next_configuration.environments = environments.environments.clone();
@@ -945,10 +945,10 @@ index cc1accf85e435669cd3c9a7da027abef55a54de9..91e68cb32c753234d09ffcad1e4a472a
          }
          let cwd_changed = next_configuration.legacy_fallback_cwd != current_cwd;
          if let Some(runtime_workspace_roots) = &updates.runtime_workspace_roots {
-@@ -1092,6 +1096,30 @@ impl Session {
-                     Arc::default()
-                 }
-             });
+@@ -1097,6 +1101,30 @@ impl Session {
+         let prevent_root_enrollment = thread_extension_init
+             .remove::<crate::agent::helper_daybreak::PreventRootEnrollment>()
+             .is_some();
 +        // Keep executor discovery out of the embedded startup/resume future.
 +        let admitted = Box::pin(crate::saffron::executor_startup::prepare(
 +            &config,
@@ -976,7 +976,7 @@ index cc1accf85e435669cd3c9a7da027abef55a54de9..91e68cb32c753234d09ffcad1e4a472a
          let mcp_thread_init = thread_extension_init.clone();
          let thread_extension_data = codex_extension_api::ExtensionData::new_with_init(
              thread_id.to_string(),
-@@ -1541,24 +1569,29 @@ impl Session {
+@@ -1571,27 +1599,32 @@ impl Session {
                  ShellSnapshot::disabled()
              };
              let inherited_environments = inherited_environments.unwrap_or_default();
@@ -990,6 +990,9 @@ index cc1accf85e435669cd3c9a7da027abef55a54de9..91e68cb32c753234d09ffcad1e4a472a
 -                shell_snapshot,
 -                inherited_environments.clone(),
 -                config.features.enabled(Feature::DeferredExecutor),
+-                config.features.enabled(Feature::ExecutorCapabilityDiscoveryV2).then(|| {
+-                    thread_extension_data.get_or_init(super::ExecutorDiscovery::default)
+-                }),
 -            ));
 +            let turn_environments = Arc::new(
 +                ThreadEnvironments::new(
@@ -1002,6 +1005,9 @@ index cc1accf85e435669cd3c9a7da027abef55a54de9..91e68cb32c753234d09ffcad1e4a472a
 +                    shell_snapshot,
 +                    inherited_environments.clone(),
 +                    config.features.enabled(Feature::DeferredExecutor),
++                    config.features.enabled(Feature::ExecutorCapabilityDiscoveryV2).then(|| {
++                        thread_extension_data.get_or_init(super::ExecutorDiscovery::default)
++                    }),
 +                )
 +                .with_unavailable_selections(environment_selections),
 +            );
@@ -1018,7 +1024,7 @@ index cc1accf85e435669cd3c9a7da027abef55a54de9..91e68cb32c753234d09ffcad1e4a472a
              // Keep discovery's future out of the large embedded startup/resume frame.
              let plugin_skill_warmup = Box::pin(warm_plugins_and_skills_for_session_init(
                  Arc::clone(&config),
-@@ -1589,7 +1622,8 @@ impl Session {
+@@ -1622,7 +1655,8 @@ impl Session {
                  plugin_skill_warmup,
                  thread_name_lookup,
              );

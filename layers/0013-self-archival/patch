@@ -42,10 +42,10 @@ index 4a6e7daae2c2e024d13efc19626ee8ca3c16313a..b27e522c722e9465c605c8aba4edbcff
                          auth_manager: auth_manager.clone(),
                          state_db: Some(state_db.clone()),
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 05a23c2b42c07f44a9d302623f5092b36c27cfee..8cc73d50b05ac8b5a74564b41b7b005c327aa26e 100644
+index 2271fe74344d294373d0612ca5461d039f08ac43..25358759edd1fd41962c26901188d09c808b457d 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
-@@ -180,6 +180,7 @@ pub(crate) struct MessageProcessor {
+@@ -181,6 +181,7 @@ pub(crate) struct MessageProcessor {
      pub(super) remote_control_processor: RemoteControlRequestProcessor,
      search_processor: SearchRequestProcessor,
      saffron_goal_scheduler: Option<SaffronGoalSchedulerHandle>,
@@ -53,7 +53,7 @@ index 05a23c2b42c07f44a9d302623f5092b36c27cfee..8cc73d50b05ac8b5a74564b41b7b005c
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -372,6 +373,7 @@ impl MessageProcessor {
+@@ -373,6 +374,7 @@ impl MessageProcessor {
              app_server_extension_event_sink(outgoing.clone(), thread_state_manager.clone());
          let mut queue_service = None;
          let sample_responses = Arc::new(crate::thread_sample::SampleResponseRegistry::default());
@@ -61,15 +61,15 @@ index 05a23c2b42c07f44a9d302623f5092b36c27cfee..8cc73d50b05ac8b5a74564b41b7b005c
          let thread_manager = Arc::new_cyclic(|thread_manager| {
              queue_service = queue_store.map(|queue| {
                  Arc::new(QueuedItemService::new(
-@@ -396,6 +398,7 @@ impl MessageProcessor {
-                     config.as_ref(),
+@@ -398,6 +400,7 @@ impl MessageProcessor {
                      ThreadExtensionDependencies {
+                         thread_state_manager: thread_state_manager.clone(),
                          sample_responses: Arc::clone(&sample_responses),
 +                        self_archive_sender: Some(self_archive_sender),
                          event_sink: Arc::clone(&extension_event_sink),
                          auth_manager: auth_manager.clone(),
                          state_db: state_db.clone(),
-@@ -579,6 +582,8 @@ impl MessageProcessor {
+@@ -582,6 +585,8 @@ impl MessageProcessor {
              config_warnings.clone(),
              sample_responses,
          );
@@ -78,7 +78,7 @@ index 05a23c2b42c07f44a9d302623f5092b36c27cfee..8cc73d50b05ac8b5a74564b41b7b005c
          let saffron_goal_scheduler = if !matches!(rpc_transport, AppServerRpcTransport::InProcess)
              && config.features.enabled(codex_features::Feature::Goals)
          {
-@@ -690,6 +695,7 @@ impl MessageProcessor {
+@@ -694,6 +699,7 @@ impl MessageProcessor {
              remote_control_processor,
              search_processor,
              saffron_goal_scheduler,
@@ -86,7 +86,7 @@ index 05a23c2b42c07f44a9d302623f5092b36c27cfee..8cc73d50b05ac8b5a74564b41b7b005c
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -700,6 +706,7 @@ impl MessageProcessor {
+@@ -704,6 +710,7 @@ impl MessageProcessor {
      }
 
      pub(crate) fn clear_runtime_references(&self) {
@@ -94,7 +94,7 @@ index 05a23c2b42c07f44a9d302623f5092b36c27cfee..8cc73d50b05ac8b5a74564b41b7b005c
          self.account_processor.clear_external_auth();
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
-@@ -937,6 +944,7 @@ impl MessageProcessor {
+@@ -946,6 +953,7 @@ impl MessageProcessor {
      }
 
      pub(crate) async fn drain_background_tasks(&self) {
@@ -103,11 +103,11 @@ index 05a23c2b42c07f44a9d302623f5092b36c27cfee..8cc73d50b05ac8b5a74564b41b7b005c
          if let Some(worker) = &self.turn_cost_worker {
              worker.shutdown();
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index ed0984643ecbe7f9c52377e501fd45938961ca25..5307904e71302c44bfdf041d416fbf2b27042b00 100644
+index 598be00d938b626c418adeacbe470b6dd73686d3..8ff674b6f2751ecd849e2ab9612e74b47c97daf4 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -7200,6 +7200,7 @@ fn build_thread_from_loaded_snapshot(
-     )
+@@ -7183,6 +7183,7 @@ fn paginate_background_terminals(
+     Ok((terminals[start..end].to_vec(), next_cursor))
  }
 
 +mod saffron_archive_self;
@@ -315,18 +315,18 @@ index 32fc11c5c8f3415e67911a69f34547d2cd56abda..9de6f0f83cab84186a6f5f62924c0656
  
                  let SamplingRequestResult {
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index ca8bbe6c66accbac63958245797477ee0015f85b..2eb73c26e60ccc425a7be9449e72f1cf3ecbb8fd 100644
+index 8ec5a6e0b57c1c1c28f74fb50b116b21dda97865..e9857f9a9aed9ea42c6232996f795158f4a65eb0 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
-@@ -911,6 +911,8 @@ impl Session {
+@@ -899,6 +899,8 @@ impl Session {
      ) {
          let mut state = self.state.lock().await;
          state.last_started_turn_id = Some(turn_id.to_owned());
 +        state.last_completed_turn_id = None;
 +        crate::saffron::archive_self::cancel(self);
          if let Some(attribution) = attribution {
+             state.pending_recorded_mail_sequence = 0;
              state.turn_attribution = Some(attribution);
-         }
 @@ -1154,6 +1156,7 @@ impl Session {
                  }],
              )

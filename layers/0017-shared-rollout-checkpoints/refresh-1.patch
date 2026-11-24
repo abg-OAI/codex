@@ -1,0 +1,44 @@
+diff --git a/codex-rs/core/src/session/restart_checkpoint.rs b/codex-rs/core/src/session/restart_checkpoint.rs
+index fffd85be6be6a7009fb2f1317c237f5c3ecf1406..64866208ff5351bb5636dcd0e1a971d0295efb4d 100644
+--- a/codex-rs/core/src/session/restart_checkpoint.rs
++++ b/codex-rs/core/src/session/restart_checkpoint.rs
+@@ -91,6 +91,7 @@ mod tests {
+                 history_mode: ThreadHistoryMode::Paginated,
+                 subagent_history_start_ordinal: None,
+                 history_base: None,
++                inherited_history_visibility: Default::default(),
+                 initial_window_id: ContextWindowId::new_uuid_v7(),
+                 runtime_workspace_roots: None,
+                 metadata: ThreadPersistenceMetadata {
+@@ -213,6 +214,7 @@ mod tests {
+                 history_mode: ThreadHistoryMode::Paginated,
+                 subagent_history_start_ordinal: None,
+                 history_base: None,
++                inherited_history_visibility: Default::default(),
+                 initial_window_id: ContextWindowId::new_uuid_v7(),
+                 runtime_workspace_roots: None,
+                 metadata: ThreadPersistenceMetadata {
+diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
+index afb015ea6d4bcbb6a0ee404d03590f68924421f7..ae0411ddd2083a9e79fb6788e3f6bdc0d01ab5a7 100644
+--- a/codex-rs/core/src/thread_manager_tests.rs
++++ b/codex-rs/core/src/thread_manager_tests.rs
+@@ -283,6 +283,7 @@ async fn assert_referenced_fork_checkpoint(completed: bool) {
+                 ..StartThreadOptions::new(config)
+             },
+             prepared,
++            codex_thread_store::InheritedHistoryVisibility::Full,
+         )
+         .await
+         .unwrap();
+diff --git a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
+index 18c8d9eb21562374e5eae84625d86487badd9832..eee8981039da36b24b236578d1491cfb3f6d74d0 100644
+--- a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
++++ b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
+@@ -1019,6 +1019,7 @@ fn create_params(store: &LocalThreadStore, thread_id: ThreadId) -> CreateThreadP
+         multi_agent_version: None,
+         history_mode: ThreadHistoryMode::Paginated,
+         history_base: None,
++        inherited_history_visibility: Default::default(),
+         subagent_history_start_ordinal: None,
+         initial_window_id: codex_protocol::ContextWindowId::new_uuid_v7(),
+         runtime_workspace_roots: None,

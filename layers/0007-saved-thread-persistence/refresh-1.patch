@@ -1,0 +1,51 @@
+diff --git a/codex-rs/core/src/session/persistence_repair.rs b/codex-rs/core/src/session/persistence_repair.rs
+index 7b538850cd50340298c8196975a503afd577eadd..10b68baba828475f72666268d21b545953867707 100644
+--- a/codex-rs/core/src/session/persistence_repair.rs
++++ b/codex-rs/core/src/session/persistence_repair.rs
+@@ -147,9 +147,11 @@ impl Session {
+                 }
+                 ThreadHistoryMode::Legacy => store.load_history(history_params).await?.items,
+             };
+-            let reconstructed = self
+-                .reconstruct_history_from_rollout(&turn_context, &saved)
+-                .await;
++            let reconstructed = self.reconstruct_history_with_retention(
++                &turn_context,
++                &saved,
++                state.session_configuration.guardian_retention,
++            );
+             let mut saved_counts = HashMap::<Vec<u8>, usize>::new();
+             for envelope in &reconstructed.history {
+                 *saved_counts
+@@ -214,9 +216,8 @@ impl Session {
+                         .ok_or_else(|| {
+                             anyhow::anyhow!("saved history turn lookup is unavailable")
+                         })?;
+-                    local_store
+-                        .existing_history_turns(self.thread_id, &turn_ids)
+-                        .await?
++                    // Keep the rollout lineage walk out of the future stored by thread lookups.
++                    Box::pin(local_store.existing_history_turns(self.thread_id, &turn_ids)).await?
+                 }
+                 ThreadHistoryMode::Legacy | ThreadHistoryMode::Paginated => saved
+                     .iter()
+diff --git a/codex-rs/core/src/session/rollout_reconstruction.rs b/codex-rs/core/src/session/rollout_reconstruction.rs
+index b6e131fb7ea580c6897daf0efbf1b633d80d19b1..a9e8793cf18d71997af5c82e90675331e0e0e889 100644
+--- a/codex-rs/core/src/session/rollout_reconstruction.rs
++++ b/codex-rs/core/src/session/rollout_reconstruction.rs
+@@ -199,6 +199,15 @@ impl Session {
+             .await
+             .session_configuration
+             .guardian_retention;
++        self.reconstruct_history_with_retention(turn_context, rollout_items, policy)
++    }
++
++    pub(super) fn reconstruct_history_with_retention(
++        &self,
++        turn_context: &TurnContext,
++        rollout_items: &[RolloutItem],
++        policy: Option<codex_protocol::protocol::GuardianRetentionPolicy>,
++    ) -> RolloutReconstruction {
+         let retention = policy.map(|policy| codex_history::MessageRetention {
+             thread_id: self.thread_id(),
+             policy,
