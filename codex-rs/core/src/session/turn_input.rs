@@ -899,6 +899,8 @@ impl Session {
     ) {
         let mut state = self.state.lock().await;
         state.last_started_turn_id = Some(turn_id.to_owned());
+        state.last_completed_turn_id = None;
+        crate::saffron::archive_self::cancel(self);
         if let Some(attribution) = attribution {
             state.pending_recorded_mail_sequence = 0;
             state.turn_attribution = Some(attribution);
@@ -1154,6 +1156,7 @@ impl Session {
                 }],
             )
             .await;
+        crate::saffron::archive_self::cancel(self);
         Ok((
             active_turn_id.clone(),
             active_task.turn_context.root_turn_id(),

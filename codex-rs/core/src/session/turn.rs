@@ -680,28 +680,52 @@ pub(crate) async fn run_turn(
                 .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
                 .await;
 
-            run_sampling_request(
-                Arc::clone(&sess),
-                Arc::clone(&step_context),
-                Arc::clone(&turn_context.extension_data),
-                Arc::clone(&turn_diff_tracker),
-                &mut client_session,
-                sampling_request_input,
-                &mut unfinished_plan_id,
-                cancellation_token.child_token(),
+            let execution = cancellation_token.child_token();
+            crate::saffron::archive_self::terminal::run_sampling(
+                &sess,
+                &turn_context,
+                execution.clone(),
+                run_sampling_request(
+                    Arc::clone(&sess),
+                    Arc::clone(&step_context),
+                    Arc::clone(&turn_context.extension_data),
+                    Arc::clone(&turn_diff_tracker),
+                    &mut client_session,
+                    sampling_request_input,
+                    &mut unfinished_plan_id,
+                    execution,
+                ),
             )
             .await
         }
         .await;
-        let sampling_request_result =
-            sampling_request_result.and_then(|(output, notifications)| {
-                let has_final_answer =
-                    !output.mailbox_preempted && output.last_agent_message.final_answer.is_some();
-                let next = work.accept_response(has_final_answer)?;
-                Ok((output, notifications, next))
-            });
+        let sampling_request_result = sampling_request_result.and_then(|result| {
+            let Some((output, notifications)) = result else {
+                sess.check_rollout_budget()?;
+                return Ok(None);
+            };
+            let has_final_answer =
+                !output.mailbox_preempted && output.last_agent_message.final_answer.is_some();
+            let next = work.accept_response(has_final_answer)?;
+            Ok(Some((output, notifications, next)))
+        });
         match sampling_request_result {
-            Ok((sampling_request_output, notify_messages, next)) => {
+            Ok(None) => {
+                if cancellation_token.is_cancelled() {
+                    return Err(CodexErr::TurnAborted);
+                }
+                if crate::saffron::archive_self::terminal::resume_if_revoked(&sess, &turn_context) {
+                    can_drain_pending_input = true;
+                    continue;
+                }
+                return crate::saffron::archive_self::terminal::complete(
+                    &sess,
+                    &step_context,
+                    &cancellation_token,
+                )
+                .await;
+            }
+            Ok(Some((sampling_request_output, notify_messages, next))) => {
                 guardian_budget_compacted = false;
 
                 let SamplingRequestResult {
