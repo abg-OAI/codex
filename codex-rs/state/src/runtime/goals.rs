@@ -4,6 +4,8 @@ use crate::sqlite::SqlitePoolWriteExt;
 use crate::sqlite::SqliteWriteQueryExt;
 use uuid::Uuid;
 
+mod active_goal_listing;
+
 #[derive(Clone)]
 pub struct GoalStore {
     pool: Arc<SqlitePool>,
