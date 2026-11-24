@@ -359,7 +359,7 @@ index 928c8cbdb675e98ab13fafb8d8c3bc722deb79d1..e66eba5d10dbde655abe5f26a61f29e6
              validated_rollout_file_name(canonical_rollout_path.as_path(), rollout_path.as_path())?;
          let destination = archive_folder.join(&file_name);
 diff --git a/codex-rs/thread-store/src/local/delete_thread.rs b/codex-rs/thread-store/src/local/delete_thread.rs
-index 3a8abfe86f5e79f1851286458fe7b55e82d1fb4a..84f7c9d14af1544418762870890d464496dc7bec 100644
+index aec7d7eab1d1ec23209e8a7735be52afb0bd1d01..44cb140e35efd8999c8609906270e8d0423106d1 100644
 --- a/codex-rs/thread-store/src/local/delete_thread.rs
 +++ b/codex-rs/thread-store/src/local/delete_thread.rs
 @@ -113,7 +113,7 @@ pub(super) async fn delete_thread(
@@ -425,7 +425,7 @@ index 3a8abfe86f5e79f1851286458fe7b55e82d1fb4a..84f7c9d14af1544418762870890d4644
  ) -> ThreadStoreResult<()> {
      let thread_id = thread_rollouts.thread_id;
      let thread_id_str = thread_id.to_string();
-@@ -291,11 +295,11 @@ async fn delete_thread_after_reference_check(
+@@ -290,11 +294,11 @@ async fn delete_thread_after_reference_check(
      // Stop queued file work before removing files, retaining ownership until cleanup finishes.
      let live_entry = store.live_recorders.lock().await.remove(&thread_id);
      if let Some(entry) = live_entry {
@@ -437,7 +437,7 @@ index 3a8abfe86f5e79f1851286458fe7b55e82d1fb4a..84f7c9d14af1544418762870890d4644
 +        super::helpers::recover_checkpoint(&rollout_path, writer).await?;
          delete_rollout_file(store, rollout_path.as_path())?;
      }
-     remove_thread_name_entries(store.config.codex_home.as_path(), thread_id)
+     // History readers can project while a thread is live. Unlink the rollouts before
 diff --git a/codex-rs/thread-store/src/local/helpers.rs b/codex-rs/thread-store/src/local/helpers.rs
 index c5b2a05e6ed1b054e872ea794d931c8edf9504c4..57f5122b99cbf012f29ed29e3926757324c287ba 100644
 --- a/codex-rs/thread-store/src/local/helpers.rs

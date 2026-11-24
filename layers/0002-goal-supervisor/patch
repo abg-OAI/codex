@@ -23,10 +23,10 @@ index caa9b4da77c8ae870e08b573d90ffad14c0450d0..14a266fafd1902a792fe51c4c246cb15
      codex_git_attribution::install(
          &mut builder,
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index c07afd284dd71479e2e27104c42916c9fea07543..05a23c2b42c07f44a9d302623f5092b36c27cfee 100644
+index 503c41365f8ea116d8e0ff5540a1c5fe25fe9f76..9b3185230d01d0a555c20054c13f48d8a6f6430c 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
-@@ -82,6 +82,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
+@@ -83,6 +83,8 @@ use codex_app_server_protocol::UserVerificationCancelResponse;
  use codex_app_server_protocol::experimental_required_message;
  use codex_arg0::Arg0DispatchPaths;
  use codex_code_mode::CodeModeSessionProvider;
@@ -35,7 +35,7 @@ index c07afd284dd71479e2e27104c42916c9fea07543..05a23c2b42c07f44a9d302623f5092b3
  use codex_core::ThreadManager;
  use codex_core::ThreadStoreBuilder;
  use codex_core::config::Config;
-@@ -177,6 +179,7 @@ pub(crate) struct MessageProcessor {
+@@ -178,6 +180,7 @@ pub(crate) struct MessageProcessor {
      project_processor: ProjectRequestProcessor,
      pub(super) remote_control_processor: RemoteControlRequestProcessor,
      search_processor: SearchRequestProcessor,
@@ -43,7 +43,7 @@ index c07afd284dd71479e2e27104c42916c9fea07543..05a23c2b42c07f44a9d302623f5092b3
      thread_goal_processor: ThreadGoalRequestProcessor,
      thread_queue_processor: ThreadQueueRequestProcessor,
      thread_processor: ThreadRequestProcessor,
-@@ -576,6 +579,24 @@ impl MessageProcessor {
+@@ -578,6 +581,24 @@ impl MessageProcessor {
              config_warnings.clone(),
              sample_responses,
          );
@@ -67,8 +67,8 @@ index c07afd284dd71479e2e27104c42916c9fea07543..05a23c2b42c07f44a9d302623f5092b3
 +        };
          let turn_processor = TurnRequestProcessor::new(
              Arc::clone(&thread_manager),
-             outgoing.clone(),
-@@ -668,6 +689,7 @@ impl MessageProcessor {
+             Arc::clone(&thread_store),
+@@ -671,6 +692,7 @@ impl MessageProcessor {
              project_processor,
              remote_control_processor,
              search_processor,
@@ -76,7 +76,7 @@ index c07afd284dd71479e2e27104c42916c9fea07543..05a23c2b42c07f44a9d302623f5092b3
              thread_goal_processor,
              thread_queue_processor,
              thread_processor,
-@@ -682,6 +704,9 @@ impl MessageProcessor {
+@@ -685,6 +707,9 @@ impl MessageProcessor {
          self.apps_processor.shutdown();
          self.models_refresh_worker.shutdown();
          self.skills_watcher.shutdown();
@@ -113,10 +113,10 @@ index f95d09f8cc474c8cbeb412c2c08604e27ac46505..e0a765f5196375b0c8ecf43a3a710b5b
      match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_and_wait()).await {
          Ok(Ok(())) => ThreadShutdownResult::Complete,
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 333c1c70bcdadafd0be25db74493f752dab62319..f5f6502272090e085e7de87d4cc9473c2007122c 100644
+index 2f1268271528c96556a31514a745adf0740325ec..ca00263cbab4cba1830035791ce5a8a692837a66 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
-@@ -350,6 +350,15 @@ fn has_model_resume_override(
+@@ -370,6 +370,15 @@ fn has_model_resume_override(
              .is_some_and(|overrides| overrides.contains_key("model_reasoning_effort"))
  }
 
@@ -132,8 +132,8 @@ index 333c1c70bcdadafd0be25db74493f752dab62319..f5f6502272090e085e7de87d4cc9473c
  fn has_permission_override(
      request_overrides: Option<&HashMap<String, serde_json::Value>>,
      typesafe_overrides: &ConfigOverrides,
-@@ -7188,6 +7197,8 @@ fn build_thread_from_loaded_snapshot(
-     )
+@@ -7171,6 +7180,8 @@ fn paginate_background_terminals(
+     Ok((terminals[start..end].to_vec(), next_cursor))
  }
 
 +mod saffron_goal_scheduler;

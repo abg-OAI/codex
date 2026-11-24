@@ -29,3 +29,11 @@ file = "refresh-2.patch"
 [[operation]]
 [operation.patch]
 file = "refresh-3.patch"
+
+[[operation]]
+[operation.patch]
+file = "refresh-4.patch"
+
+[[operation]]
+[operation.patch]
+file = "refresh-5.patch"

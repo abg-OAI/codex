@@ -1,0 +1,23 @@
+diff --git a/codex-rs/core/src/saffron/promote_subagent.rs b/codex-rs/core/src/saffron/promote_subagent.rs
+index 613157a15902045a45c1678209e7013ce868872f..73c92ca3c80a333c52ba5cb33707365594e2d228 100644
+--- a/codex-rs/core/src/saffron/promote_subagent.rs
++++ b/codex-rs/core/src/saffron/promote_subagent.rs
+@@ -31,6 +31,7 @@ use codex_protocol::protocol::SessionSource;
+ use codex_protocol::protocol::ThreadHistoryMode;
+ use codex_protocol::protocol::ThreadSource;
+ use codex_thread_store::ForkBoundary;
++use codex_thread_store::InheritedHistoryVisibility;
+ use codex_thread_store::PersistContext;
+ use codex_thread_store::PrepareForkParams;
+ use codex_thread_store::ThreadMetadataPatch;
+@@ -340,7 +341,9 @@ async fn create_root(
+                     boundary: ForkBoundary::Latest,
+                 })
+                 .await?;
+-            manager.fork_prepared_thread(options, prepared).await?
++            manager
++                .fork_prepared_thread(options, prepared, InheritedHistoryVisibility::Full)
++                .await?
+         }
+         _ => {
+             let history = stored

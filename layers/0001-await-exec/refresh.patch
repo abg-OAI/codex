@@ -1,0 +1,81 @@
+diff --git a/codex-rs/core/src/unified_exec/process_manager/interaction.rs b/codex-rs/core/src/unified_exec/process_manager/interaction.rs
+index cfaf3521564327f1aa98dff37a9899f3e83e739e..412d2ad6f1f826bf19719f9f428c691efd949faa 100644
+--- a/codex-rs/core/src/unified_exec/process_manager/interaction.rs
++++ b/codex-rs/core/src/unified_exec/process_manager/interaction.rs
+@@ -22,9 +22,9 @@ use tokio::sync::OwnedMutexGuard;
+ use tokio::time::Instant;
+
+ use super::fail_process_with_message;
+-use super::finish_deferred_network_approval_after_process_exit_for_session;
+-use super::finish_deferred_network_approval_for_session;
+-use super::network_denial_message_for_session;
++use super::finish_deferred_network_approval_after_process_exit;
++use super::finish_network_approval;
++use super::network_denial_message;
+ use crate::tools::context::ExecCommandToolOutput;
+ use crate::tools::network_approval::DeferredNetworkApproval;
+ use crate::unified_exec::UNIFIED_EXEC_OUTPUT_MAX_BYTES;
+@@ -65,7 +65,6 @@ pub(crate) struct ProcessInteraction<'a> {
+     manager: &'a UnifiedExecProcessManager,
+     process: Arc<UnifiedExecProcess>,
+     output: OutputHandles,
+-    session: Option<Arc<crate::session::session::Session>>,
+     network_approval: Option<DeferredNetworkApproval>,
+     call_id: String,
+     hook_command: String,
+@@ -169,14 +168,12 @@ impl UnifiedExecProcessManager {
+             return Err(UnifiedExecError::UnknownProcessId { process_id });
+         }
+         entry.last_used = Instant::now();
+-        let session = entry.session.upgrade();
+
+         Ok(ProcessInteractionAcquisition::Acquired(Box::new(
+             ProcessInteraction {
+                 manager: self,
+                 process,
+                 output: entry.process.output_handles().clone(),
+-                session,
+                 network_approval: entry.network_approval.clone(),
+                 call_id: entry.call_id.clone(),
+                 hook_command: entry.hook_command.clone(),
+@@ -274,12 +271,10 @@ impl ProcessInteraction<'_> {
+             self.finish_failure().await?;
+
+             if self.process.has_exited() && !exit_cleanup_finished {
+-                if let Err(message) =
+-                    finish_deferred_network_approval_after_process_exit_for_session(
+-                        self.session.as_ref(),
+-                        self.network_approval.take(),
+-                    )
+-                    .await
++                if let Err(message) = finish_deferred_network_approval_after_process_exit(
++                    self.network_approval.take(),
++                )
++                .await
+                 {
+                     self.manager.release_process_id(self.process_id).await;
+                     return Err(fail_process_with_message(self.process.as_ref(), message));
+@@ -350,21 +345,13 @@ impl ProcessInteraction<'_> {
+             .as_ref()
+             .is_some_and(DeferredNetworkApproval::is_cancelled)
+         {
+-            let message = network_denial_message_for_session(
+-                self.session.as_ref(),
+-                self.network_approval.take(),
+-            )
+-            .await;
++            let message = network_denial_message(self.network_approval.take());
+             self.manager.release_process_id(self.process_id).await;
+             return Err(fail_process_with_message(self.process.as_ref(), message));
+         }
+
+         if let Some(message) = self.process.failure_message() {
+-            let finish_result = finish_deferred_network_approval_for_session(
+-                self.session.as_ref(),
+-                self.network_approval.take(),
+-            )
+-            .await;
++            let finish_result = finish_network_approval(self.network_approval.take());
+             self.manager.release_process_id(self.process_id).await;
+             if let Err(message) = finish_result {
+                 return Err(fail_process_with_message(self.process.as_ref(), message));

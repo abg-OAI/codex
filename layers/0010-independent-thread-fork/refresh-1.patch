@@ -1,0 +1,71 @@
+diff --git a/codex-rs/core/src/saffron/fork_thread/section.rs b/codex-rs/core/src/saffron/fork_thread/section.rs
+index e60c01605f673abd425a8b55fbce81982f9028e1..7fab66ed9bdd54589895618c359d82aebb1967a5 100644
+--- a/codex-rs/core/src/saffron/fork_thread/section.rs
++++ b/codex-rs/core/src/saffron/fork_thread/section.rs
+@@ -406,7 +406,7 @@ mod tests {
+             turn,
+             cancellation_token: CancellationToken::new(),
+             tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+-            call_id: "placement-test".to_string(),
++            call_id: "placement-test".into(),
+             tool_name: ToolName::namespaced("saffron", "fork_thread"),
+             source: ToolCallSource::Direct,
+             native_call: None,
+@@ -710,7 +710,7 @@ mod tests {
+                 turn,
+                 cancellation_token: CancellationToken::new(),
+                 tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+-                call_id: "explicit-section-test".to_string(),
++                call_id: "explicit-section-test".into(),
+                 tool_name: ToolName::namespaced("saffron", "fork_thread"),
+                 source: ToolCallSource::Direct,
+                 native_call: None,
+@@ -780,7 +780,7 @@ mod tests {
+             turn,
+             cancellation_token: CancellationToken::new(),
+             tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+-            call_id: "timeout-test".to_string(),
++            call_id: "timeout-test".into(),
+             tool_name: ToolName::namespaced("saffron", "fork_thread"),
+             source: ToolCallSource::Direct,
+             native_call: None,
+@@ -830,7 +830,7 @@ mod tests {
+             turn,
+             cancellation_token: CancellationToken::new(),
+             tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+-            call_id: "opt-out-test".to_string(),
++            call_id: "opt-out-test".into(),
+             tool_name: ToolName::namespaced("saffron", "fork_thread"),
+             source: ToolCallSource::Direct,
+             native_call: None,
+@@ -864,7 +864,7 @@ mod tests {
+             turn,
+             cancellation_token: CancellationToken::new(),
+             tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+-            call_id: "ended-turn-test".to_string(),
++            call_id: "ended-turn-test".into(),
+             tool_name: ToolName::namespaced("saffron", "fork_thread"),
+             source: ToolCallSource::Direct,
+             native_call: None,
+diff --git a/codex-rs/core/src/saffron/fork_thread/tests.rs b/codex-rs/core/src/saffron/fork_thread/tests.rs
+index cf7f945ede8aae18f88d63bc3dc06fdfbd4f14da..1ca46c2a376db481a00a7aa83ec8420794e5ea7d 100644
+--- a/codex-rs/core/src/saffron/fork_thread/tests.rs
++++ b/codex-rs/core/src/saffron/fork_thread/tests.rs
+@@ -119,7 +119,7 @@ async fn blank_section_is_rejected_before_creation() {
+         turn,
+         cancellation_token: CancellationToken::new(),
+         tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+-        call_id: "blank-section".to_string(),
++        call_id: "blank-section".into(),
+         tool_name: ToolName::namespaced("saffron", "fork_thread"),
+         source: ToolCallSource::Direct,
+         native_call: None,
+@@ -512,7 +512,7 @@ fn tool_invocation(
+         turn,
+         cancellation_token: CancellationToken::new(),
+         tracker: Arc::new(Mutex::new(TurnDiffTracker::default())),
+-        call_id: "fork-call".to_string(),
++        call_id: "fork-call".into(),
+         tool_name: ToolName::namespaced("saffron", "fork_thread"),
+         source: ToolCallSource::Direct,
+         native_call: None,

@@ -1,0 +1,251 @@
+diff --git a/codex-rs/core/src/environment_selection_snapshot_tests.rs b/codex-rs/core/src/environment_selection_snapshot_tests.rs
+index 0e2d263f4a574c5f3cdfa5eaaf2fcc26ab3081c6..25fb4eff662830c435a18acca71c40a62daacd19 100644
+--- a/codex-rs/core/src/environment_selection_snapshot_tests.rs
++++ b/codex-rs/core/src/environment_selection_snapshot_tests.rs
+@@ -390,7 +390,8 @@ async fn unavailable_executor_survives_registry_removal_updates_and_child_inheri
+         ThreadEnvironmentDefaults::new(tests::test_environment_config(), SandboxType::None),
+         ShellSnapshot::disabled(),
+         TurnEnvironmentSnapshot::default(),
+-        false,
++        /*non_blocking_snapshots*/ false,
++        /*executor_discovery*/ None,
+     )
+     .with_unavailable_selections(&[local.clone(), excluded.clone()]);
+     owner.update_selections(&[local.clone()]);
+@@ -421,7 +422,8 @@ async fn unavailable_executor_survives_registry_removal_updates_and_child_inheri
+         ThreadEnvironmentDefaults::new(tests::test_environment_config(), SandboxType::None),
+         ShellSnapshot::disabled(),
+         snapshot,
+-        false,
++        /*non_blocking_snapshots*/ false,
++        /*executor_discovery*/ None,
+     );
+     child.update_selections(&[local]);
+     assert_eq!(child.snapshot().await.all_selections()[1], excluded);
+diff --git a/codex-rs/core/src/saffron/executor_startup.rs b/codex-rs/core/src/saffron/executor_startup.rs
+index 439513f16cf6bd60a65b7af6882565501afe185c..00a668f6e0efbfded97d24e44791ae3108d33f8b 100644
+--- a/codex-rs/core/src/saffron/executor_startup.rs
++++ b/codex-rs/core/src/saffron/executor_startup.rs
+@@ -9,6 +9,7 @@ use crate::environment_selection::ThreadEnvironments;
+ use crate::environment_selection::TurnEnvironmentSnapshot;
+ use crate::environment_selection::TurnEnvironmentState;
+ use crate::environment_selection::retain_unavailable_selections;
++use crate::session::ExecutorDiscovery;
+ use crate::session::ThreadEnvironmentDefaults;
+ use crate::shell::Shell;
+ use crate::shell_snapshot::ShellSnapshot;
+@@ -47,6 +48,7 @@ pub(crate) struct StartupEnvironments {
+     pub(crate) selections: Vec<TurnEnvironmentSelection>,
+     pub(crate) inherited: TurnEnvironmentSnapshot,
+     pub(crate) project_instructions_pinned: bool,
++    pub(crate) executor_discovery: Option<Arc<ExecutorDiscovery>>,
+ }
+
+ /// Admitted selections, reusable bindings and completed instruction discovery.
+@@ -121,6 +123,7 @@ pub(crate) async fn prepare(
+             startup.manager,
+             startup.shell,
+             startup.defaults,
++            startup.executor_discovery.as_deref(),
+             optional_secondaries,
+             &mut result,
+         )
+@@ -180,6 +183,7 @@ async fn admit(
+     manager: Arc<EnvironmentManager>,
+     shell: Shell,
+     defaults: ThreadEnvironmentDefaults,
++    executor_discovery: Option<&ExecutorDiscovery>,
+     optional_secondaries: bool,
+     result: &mut AdmittedEnvironments,
+ ) -> anyhow::Result<()> {
+@@ -208,6 +212,7 @@ async fn admit(
+         ShellSnapshot::disabled(),
+         result.inherited.clone(),
+         true,
++        /*executor_discovery*/ None,
+     )
+     .with_unavailable_selections(&result.selections);
+     discovery.update_configured_selections(&remote);
+@@ -245,16 +250,14 @@ async fn admit(
+             }
+         })
+         .buffer_unordered(16);
++    let mut admitted_remotes = Vec::new();
+     while let Some((selection, admitted)) = pending.next().await {
+         match admitted {
+             Ok((environment, instructions)) => {
+                 result.inherited.environments.retain(|state| {
+                     state_selection(state).environment_id != selection.environment_id
+                 });
+-                result
+-                    .inherited
+-                    .environments
+-                    .push(TurnEnvironmentState::Ready(environment));
++                admitted_remotes.push(environment);
+                 result.instructions.push(instructions);
+             }
+             Err(error) if optional_secondaries => {
+@@ -279,6 +282,22 @@ async fn admit(
+             }
+         }
+     }
++    // Inventory prewarming has its own timeout. A slow inventory must not exclude
++    // a remote that met the deadline for readiness and project instructions.
++    if let Some(discovery) = executor_discovery {
++        discovery.ensure_capacity(admitted_remotes.len());
++        futures::future::join_all(
++            admitted_remotes
++                .iter()
++                .map(|remote| discovery.prewarm(remote)),
++        )
++        .await;
++    }
++    result.inherited.environments.extend(
++        admitted_remotes
++            .into_iter()
++            .map(TurnEnvironmentState::Ready),
++    );
+     Ok(())
+ }
+
+diff --git a/codex-rs/core/src/saffron/executor_startup_tests.rs b/codex-rs/core/src/saffron/executor_startup_tests.rs
+index d4b631aea618a83d1804c1fc18e7813a33bb8caf..4f856ee599b2eb99a90d3f48718428ff3ab96d50 100644
+--- a/codex-rs/core/src/saffron/executor_startup_tests.rs
++++ b/codex-rs/core/src/saffron/executor_startup_tests.rs
+@@ -290,6 +290,46 @@ async fn cold_resume_preserves_exclusions_but_a_fresh_thread_can_retry() {
+     assert_eq!(store.executor_exclusions(thread_id).await.unwrap().len(), 1);
+ }
+
++#[tokio::test]
++async fn inventory_timeout_keeps_an_admitted_executor_available() {
++    let home = TempDir::new().unwrap();
++    let mut config = config(&home).await;
++    config.ephemeral = true;
++    config.project_doc_max_bytes = 0;
++    let manager = Arc::new(EnvironmentManager::default_for_tests());
++    let (url, inventory_started, _server) = executor(ExecutorBehavior::StallInventory).await;
++    manager
++        .upsert_environment("remote".into(), url, None)
++        .unwrap();
++    let mut inputs = startup(
++        manager,
++        vec![selection("local", &config), selection("remote", &config)],
++    );
++    inputs.executor_discovery = Some(Arc::default());
++    let mut init = ExtensionDataInit::new();
++    record_selection_intent(&mut init, true);
++    let _clock_guard = freeze_clock();
++    let mut task =
++        tokio::spawn(async move { prepare(&config, ThreadId::new(), false, &init, inputs).await });
++    tokio::select! {
++        started = inventory_started => started.expect("executor received inventory request"),
++        _ = &mut task => panic!("admission finished before prewarming the inventory"),
++    }
++    tokio::time::advance(STARTUP_BUDGET + Duration::from_millis(1)).await;
++    let admitted = task.await.unwrap().unwrap();
++    assert_eq!(
++        admitted
++            .inherited
++            .turn_environments()
++            .next()
++            .unwrap()
++            .selection
++            .environment_id,
++        "remote"
++    );
++    assert!(admitted.warnings.is_empty());
++}
++
+ #[tokio::test]
+ async fn explicit_pending_owner_keeps_deferred_startup() {
+     let home = TempDir::new().unwrap();
+@@ -363,6 +403,7 @@ fn startup(
+         selections,
+         inherited: TurnEnvironmentSnapshot::default(),
+         project_instructions_pinned: false,
++        executor_discovery: None,
+     }
+ }
+
+@@ -379,6 +420,7 @@ fn freeze_clock() -> std::sync::mpsc::Sender<()> {
+ #[derive(Clone, Copy, PartialEq, Eq)]
+ enum ExecutorBehavior {
+     StallInitialization,
++    StallInventory,
+     StallInstructions,
+     StallAfterParentInstructions,
+     Ready,
+@@ -404,6 +446,8 @@ async fn executor(
+             };
+             let method = request["method"].as_str().unwrap();
+             if (behavior == ExecutorBehavior::StallInitialization && method == "initialize")
++                || (behavior == ExecutorBehavior::StallInventory
++                    && method == "capabilities/discoverV2")
+                 || (behavior == ExecutorBehavior::StallInstructions && method == "fs/getMetadata")
+                 || (behavior == ExecutorBehavior::StallAfterParentInstructions
+                     && method == "fs/readFile"
+@@ -416,7 +460,7 @@ async fn executor(
+                 "initialize" => json!({"sessionId":"startup-test"}),
+                 "initialized" => continue,
+                 "environment/info" => {
+-                    json!({"shell":{"name":"bash","path":"/bin/bash"},"userHomeDir":"file:///home/test","platformOs":"linux","temporaryDirectories":["file:///tmp"],"capabilities":{}})
++                    json!({"shell":{"name":"bash","path":"/bin/bash"},"userHomeDir":"file:///home/test","platformOs":"linux","temporaryDirectories":["file:///tmp"],"executorVersion":"0.164.0","capabilities":{"capabilityDiscoveryV2":behavior == ExecutorBehavior::StallInventory}})
+                 }
+                 "fs/getMetadata" if behavior == ExecutorBehavior::StallAfterParentInstructions => {
+                     let path = request["params"]["path"].as_str().unwrap();
+diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
+index 2330c016525f190110c92fc6616386a11fb4efb9..3a9408802a4f622f363298295c0d445c79168e22 100644
+--- a/codex-rs/core/src/session/session.rs
++++ b/codex-rs/core/src/session/session.rs
+@@ -1101,12 +1101,21 @@ impl Session {
+         let prevent_root_enrollment = thread_extension_init
+             .remove::<crate::agent::helper_daybreak::PreventRootEnrollment>()
+             .is_some();
++        let mcp_thread_init = thread_extension_init.clone();
++        let thread_extension_data = codex_extension_api::ExtensionData::new_with_init(
++            thread_id.to_string(),
++            thread_extension_init,
++        );
++        let executor_discovery = config
++            .features
++            .enabled(Feature::ExecutorCapabilityDiscoveryV2)
++            .then(|| thread_extension_data.get_or_init(super::ExecutorDiscovery::default));
+         // Keep executor discovery out of the embedded startup/resume future.
+         let admitted = Box::pin(crate::saffron::executor_startup::prepare(
+             &config,
+             thread_id,
+             matches!(&initial_history, InitialHistory::Resumed(_)),
+-            &thread_extension_init,
++            &mcp_thread_init,
+             crate::saffron::executor_startup::StartupEnvironments {
+                 manager: Arc::clone(&environment_manager),
+                 shell: session_configuration
+@@ -1120,16 +1129,12 @@ impl Session {
+                 selections: environment_selections.to_vec(),
+                 inherited: inherited_environments.unwrap_or_default(),
+                 project_instructions_pinned: instructions.project_snapshot.is_some(),
++                executor_discovery: executor_discovery.clone(),
+             },
+         ))
+         .await?;
+         let environment_selections = admitted.selections.as_slice();
+         let inherited_environments = Some(admitted.inherited);
+-        let mcp_thread_init = thread_extension_init.clone();
+-        let thread_extension_data = codex_extension_api::ExtensionData::new_with_init(
+-            thread_id.to_string(),
+-            thread_extension_init,
+-        );
+         crate::agent::turn_metrics::register_thread(
+             &thread_extension_data,
+             &session_source,
+@@ -1610,9 +1615,7 @@ impl Session {
+                     shell_snapshot,
+                     inherited_environments.clone(),
+                     config.features.enabled(Feature::DeferredExecutor),
+-                    config.features.enabled(Feature::ExecutorCapabilityDiscoveryV2).then(|| {
+-                        thread_extension_data.get_or_init(super::ExecutorDiscovery::default)
+-                    }),
++                    executor_discovery,
+                 )
+                 .with_unavailable_selections(environment_selections),
+             );
