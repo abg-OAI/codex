@@ -16,6 +16,9 @@ use super::*;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::HistoryPosition;
 
+// Leave room below the stock reader's SQL limit for subsequent forks and continuations.
+const MAX_CHECKPOINT_SEGMENTS: usize = 900;
+
 /// Recognizes batches eligible for physical rotation, including persisted settings.
 /// Native model-context reads stop at replacement history with a window number;
 /// they do not require these additional write-batch companions.
@@ -90,30 +93,67 @@ pub(super) async fn rotate(
         .map_err(thread_store_io_error)?
         .meta;
     let fork_cutoff = codex_rollout::forked_from_ordinal_exclusive(&meta, Some(source_path));
-    let writer_lock = store
-        .live_recorders
-        .lock()
+    let (writer_lock, remaining) = {
+        let entries = store.live_recorders.lock().await;
+        let entry = entries
+            .get(&thread_id)
+            .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?;
+        (entry.writer_lock.clone(), entry.rotations_until_archive)
+    };
+    let source_end = HistoryPosition {
+        thread_id: rollout_id,
+        end_ordinal_exclusive: projection.next_ordinal,
+        end_byte_offset: projection.next_byte_offset,
+    };
+    let remaining = if meta.history_base.is_none() {
+        Some(MAX_CHECKPOINT_SEGMENTS - 1)
+    } else {
+        remaining
+    };
+    let (rotations_until_archive, archive) =
+        match super::super::rollout_archive::RolloutArchive::prepare(
+            store,
+            thread_id,
+            source_path,
+            source_end,
+            remaining,
+            MAX_CHECKPOINT_SEGMENTS,
+        )
         .await
-        .get(&thread_id)
-        .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?
-        .writer_lock
-        .clone();
+        {
+            Ok((remaining, archive)) => (Some(remaining), archive),
+            Err(error) => {
+                warn!(
+                    "continuing rotation without a consolidated archive for {thread_id}: {error}"
+                );
+                (None, None)
+            }
+        };
     let session_timestamp = meta.timestamp.clone();
     let next_id = ThreadId::new();
     let next = super::super::rollout_continuation::create(
         store,
         meta,
         next_id,
-        Some(HistoryPosition {
-            thread_id: rollout_id,
-            end_ordinal_exclusive: projection.next_ordinal,
-            end_byte_offset: projection.next_byte_offset,
-        }),
+        Some(
+            archive
+                .as_ref()
+                .map_or(source_end, |archive| archive.position),
+        ),
         fork_cutoff,
         writer_lock,
         Some(session_timestamp),
     )
-    .await?;
+    .await;
+    let next = match next {
+        Ok(next) => next,
+        Err(error) => {
+            if let Some(archive) = archive {
+                archive.discard(store).await?;
+            }
+            return Err(error);
+        }
+    };
     let publication = async {
         next.stage_continuation(items.to_vec())
             .await
@@ -141,6 +181,8 @@ pub(super) async fn rotate(
             .get_mut(&thread_id)
             .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?;
         entry.pending_continuation = Some(super::super::PendingContinuation {
+            archive,
+            rotations_until_archive,
             recorder: next.clone(),
             rollout_id: next_id,
         });
@@ -211,6 +253,9 @@ pub(super) async fn reconcile_publication(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(thread_store_io_error(error)),
         }
+        if let Some(archive) = &pending.archive {
+            archive.discard(store).await?;
+        }
         if let Some(entry) = store.live_recorders.lock().await.get_mut(&thread_id) {
             entry.pending_continuation = None;
         }
@@ -235,6 +280,7 @@ async fn install_continuation(
             return Ok(());
         };
         entry.rollout_id = pending.rollout_id;
+        entry.rotations_until_archive = pending.rotations_until_archive;
         entry
             .rollout_path
             .send_replace(pending.recorder.rollout_path().to_path_buf());
