@@ -7183,6 +7183,7 @@ fn paginate_background_terminals(
     Ok((terminals[start..end].to_vec(), next_cursor))
 }
 
+mod saffron_archive_self;
 mod saffron_goal_scheduler;
 
 #[cfg(test)]
