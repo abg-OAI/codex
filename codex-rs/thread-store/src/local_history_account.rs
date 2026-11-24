@@ -32,7 +32,26 @@ impl LocalHistoryAccount {
         let Ok(header) = codex_rollout::read_session_meta_line(path).await else {
             return false;
         };
-        let mut meta = header.meta;
+        self.includes_header(
+            codex_home,
+            thread_id,
+            path,
+            header.meta,
+            page_thread_ids,
+            original_paths,
+        )
+        .await
+    }
+
+    pub(crate) async fn includes_header(
+        &self,
+        codex_home: &Path,
+        thread_id: ThreadId,
+        path: &Path,
+        mut meta: codex_rollout::SessionMeta,
+        page_thread_ids: &[ThreadId],
+        original_paths: &mut Option<HashMap<ThreadId, PathBuf>>,
+    ) -> bool {
         if meta.id != thread_id {
             return false;
         }

@@ -55,7 +55,7 @@ fn time_sort_cursors_include_thread_id_tie_breaker() {
 }
 
 #[tokio::test]
-async fn authoritative_search_rechecks_stale_compressed_discovery() {
+async fn search_verifies_contents_of_selected_compressed_rollout() {
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
     let store = LocalThreadStore::new(config.clone(), /*state_db*/ None);
@@ -106,7 +106,7 @@ async fn authoritative_search_rechecks_stale_compressed_discovery() {
             sort_direction: codex_rollout::SortDirection::Desc,
             matcher: &mut matcher,
         },
-        std::collections::HashSet::from([path]),
+        None,
     )
     .await
     .expect("finish search");
@@ -320,6 +320,131 @@ async fn source_kind_filter_applies_before_search_pagination() {
         ),
         (vec![review_ids[0]], true, vec![review_ids[1]], None),
     );
+}
+
+#[tokio::test]
+async fn indexed_search_checks_the_thread_id_in_the_open_rollout()
+-> Result<(), Box<dyn std::error::Error>> {
+    let home = TempDir::new()?;
+    let config = test_config(home.path());
+    let db = codex_state::StateRuntime::init(
+        config.sqlite.clone(),
+        config.default_model_provider_id.clone(),
+    )
+    .await?;
+    let store = LocalThreadStore::new(config, Some(db.clone()));
+    let id = Uuid::new_v4();
+    let path = write_session_file_with(
+        home.path(),
+        home.path().join("sessions/2025/01/03"),
+        "2025-01-03T12-00-00",
+        id,
+        "needle",
+        Some("test-provider"),
+        ThreadHistoryMode::Legacy,
+    )?;
+    let mut row = codex_state::ThreadMetadataBuilder::new(
+        ThreadId::from_u128(id.as_u128()),
+        path.clone(),
+        Utc::now(),
+        SessionSource::Cli,
+    )
+    .build("test-provider");
+    row.first_user_message = Some("needle".to_owned());
+    db.upsert_thread(&row).await?;
+    let params = SearchThreadsParams {
+        include_attached_threads: false,
+        account: None,
+        page_size: 1,
+        cursor: None,
+        sort_key: ThreadSortKey::CreatedAt,
+        sort_direction: SortDirection::Desc,
+        allowed_sources: vec![SessionSource::Cli],
+        source_kinds: None,
+        archived: false,
+        search_term: "needle".to_owned(),
+    };
+    assert_eq!(store.search_threads(params.clone()).await?.items.len(), 1);
+    let contents = std::fs::read_to_string(&path)?;
+    std::fs::write(
+        path,
+        contents.replace(&id.to_string(), &Uuid::new_v4().to_string()),
+    )?;
+    assert!(store.search_threads(params).await?.items.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn search_returns_the_request_limit_error_across_compressed_rollouts()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+
+    let home = TempDir::new()?;
+    let config = test_config(home.path());
+    let db = codex_state::StateRuntime::init(
+        config.sqlite.clone(),
+        config.default_model_provider_id.clone(),
+    )
+    .await?;
+    let store = LocalThreadStore::new(config, Some(db.clone()));
+    let params = SearchThreadsParams {
+        include_attached_threads: false,
+        account: None,
+        page_size: 8,
+        cursor: None,
+        sort_key: ThreadSortKey::CreatedAt,
+        sort_direction: SortDirection::Desc,
+        allowed_sources: vec![SessionSource::Cli],
+        source_kinds: None,
+        archived: false,
+        search_term: "missing search term".into(),
+    };
+    let message = "a".repeat(64 * 1024);
+    let line = serde_json::json!({
+        "timestamp": "2025-01-03T12:00:00Z",
+        "type": "event_msg",
+        "payload": {"type": "agent_message", "message": message},
+    })
+    .to_string();
+    for id in 1..=2 {
+        let path = write_session_file_with(
+            home.path(),
+            home.path().join("sessions/2025/01/03"),
+            "2025-01-03T12-00-00",
+            Uuid::from_u128(id),
+            "ordinary conversation",
+            Some("test-provider"),
+            ThreadHistoryMode::Legacy,
+        )?;
+        let compressed = path.with_extension("jsonl.zst");
+        let mut encoder = zstd::stream::Encoder::new(std::fs::File::create(&compressed)?, 1)?;
+        encoder.write_all(&std::fs::read(&path)?)?;
+        for _ in 0..512 {
+            writeln!(encoder, "{line}")?;
+        }
+        encoder.finish()?;
+        std::fs::remove_file(&path)?;
+        let mut row = codex_state::ThreadMetadataBuilder::new(
+            ThreadId::from_u128(id),
+            compressed,
+            Utc::now(),
+            SessionSource::Cli,
+        )
+        .build("test-provider");
+        row.first_user_message = Some("ordinary conversation".into());
+        db.upsert_thread(&row).await?;
+        if id == 1 {
+            assert!(store.search_threads(params.clone()).await?.items.is_empty());
+        }
+    }
+    let error = store.search_threads(params).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("thread/search exceeded the 64 MiB request input limit"),
+        "{error}"
+    );
+    Ok(())
 }
 
 #[tokio::test]

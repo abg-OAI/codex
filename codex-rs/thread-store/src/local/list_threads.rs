@@ -85,6 +85,7 @@ pub(super) async fn list_threads(
         cursor.as_ref(),
         sort_key,
         sort_direction,
+        codex_rollout::state_db::RolloutPathCheck::DuringListing,
     )
     .await?;
 
@@ -315,6 +316,7 @@ pub(super) async fn list_rollout_threads(
     cursor: Option<&codex_rollout::Cursor>,
     sort_key: codex_rollout::ThreadSortKey,
     sort_direction: codex_rollout::SortDirection,
+    path_check: codex_rollout::state_db::RolloutPathCheck,
 ) -> ThreadStoreResult<LocalThreadsPage> {
     if params.use_state_db_only
         || params.included_thread_ids.is_some()
@@ -340,6 +342,7 @@ pub(super) async fn list_rollout_threads(
             params.section.as_ref().map(Option::as_deref),
             params.project_id.as_ref().map(Option::as_deref),
             params.search_term.as_deref(),
+            path_check,
         )
         .await
         .ok_or_else(|| ThreadStoreError::Internal {
