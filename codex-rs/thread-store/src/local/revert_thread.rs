@@ -46,6 +46,7 @@ pub(super) async fn revert(
         .await?
         .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?;
     let source_path = current_rollout.path;
+    super::helpers::recover_checkpoint(&source_path, &writer_lock).await?;
     let mut source_meta = codex_rollout::read_session_meta_line(source_path.as_path())
         .await
         .map_err(|err| ThreadStoreError::Internal {
@@ -152,7 +153,6 @@ pub(super) async fn revert(
     }
     Ok(())
 }
-
 
 fn thread_store_io_error(err: std::io::Error) -> ThreadStoreError {
     ThreadStoreError::Internal {
