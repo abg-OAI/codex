@@ -89,6 +89,7 @@ use codex_models_manager::manager::SharedModelsManager;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::error::CodexErr;
+use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::openai_models::ModelInfo;
@@ -116,6 +117,7 @@ use codex_thread_store::LoadThreadHistoryParams;
 use codex_thread_store::LocalThreadStore;
 use codex_thread_store::LocalThreadStoreConfig;
 use codex_thread_store::MoveThreadToSectionParams;
+use codex_thread_store::PersistContext;
 use codex_thread_store::PreparedFork;
 use codex_thread_store::ReadThreadByRolloutPathParams;
 use codex_thread_store::ReadThreadParams;
@@ -1399,15 +1401,20 @@ impl ThreadManager {
         section: Option<&str>,
         before_thread_id: Option<ThreadId>,
     ) -> CodexResult<()> {
-        if let Ok(thread) = self.get_thread(thread_id).await {
-            if thread.config_snapshot().await.ephemeral {
-                return Err(CodexErr::InvalidRequest(format!(
-                    "ephemeral thread does not support section moves: {thread_id}"
-                )));
+        match self.get_thread(thread_id).await {
+            Ok(thread) => {
+                if thread.config_snapshot().await.ephemeral {
+                    return Err(CodexErr::InvalidRequest(format!(
+                        "ephemeral thread does not support section moves: {thread_id}"
+                    )));
+                }
+                thread
+                    .session
+                    .try_ensure_rollout_materialized(PersistContext::StoredThreadAccess)
+                    .await?;
             }
-            // Explicit placement must work before the first turn materializes the thread.
-            thread.ensure_rollout_materialized().await;
-            thread.flush_rollout().await?;
+            Err(err) if matches!(err.details(), CodexErrorDetails::ThreadNotFound(_)) => {}
+            Err(err) => return Err(err),
         }
 
         self.state

@@ -713,10 +713,14 @@ impl ThreadStore for LocalThreadStore {
             return Box::pin(async { Ok(()) });
         }
         Box::pin(async move {
-            if context == PersistContext::ThreadPreparation {
-                live_writer::flush_thread(self, thread_id).await
-            } else {
-                live_writer::persist_thread(self, thread_id).await
+            match context {
+                PersistContext::ThreadPreparation => {
+                    live_writer::flush_thread(self, thread_id).await
+                }
+                PersistContext::StoredThreadAccess => {
+                    live_writer::persist_thread_if_open(self, thread_id).await
+                }
+                _ => live_writer::persist_thread(self, thread_id).await,
             }
         })
     }
@@ -1204,6 +1208,36 @@ mod tests {
         assert!(
             matches!(err, ThreadStoreError::ThreadNotFound { thread_id: missing } if missing == thread_id)
         );
+    }
+
+    #[tokio::test]
+    async fn stored_thread_access_propagates_materialization_failure_from_open_writer() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let thread_id = ThreadId::default();
+        store
+            .create_thread(create_thread_params(thread_id))
+            .await
+            .unwrap();
+        let path = store.live_rollout_path(thread_id).await.unwrap();
+        assert!(!path.exists());
+        tokio::fs::create_dir_all(&path).await.unwrap();
+
+        let result = store
+            .persist_thread(thread_id, PersistContext::StoredThreadAccess)
+            .await;
+        assert!(
+            matches!(result, Err(ThreadStoreError::Internal { .. })),
+            "{result:?}"
+        );
+
+        tokio::fs::remove_dir(&path).await.unwrap();
+        store
+            .persist_thread(thread_id, PersistContext::StoredThreadAccess)
+            .await
+            .unwrap();
+        assert!(path.is_file());
+        store.shutdown_thread(thread_id).await.unwrap();
     }
 
     #[tokio::test]

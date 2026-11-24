@@ -117,6 +117,9 @@ pub enum PersistContext {
     ThreadPreparation,
     /// Standard persistence makes the thread and all queued items durable and readable.
     Standard,
+    /// Before accessing stored data, materialize any open writer. A closed writer has
+    /// nothing to persist; the subsequent operation resolves the stored thread.
+    StoredThreadAccess,
     /// Copied subagent history may be enqueued so its durability fence can overlap relationship
     /// persistence. The caller must await standard persistence before acknowledging the child.
     SubagentSpawn,
@@ -132,7 +135,7 @@ impl PersistContext {
     /// durability barrier. Stores may still choose to persist synchronously.
     pub fn allows_background_persistence(self) -> bool {
         match self {
-            Self::ThreadPreparation | Self::Standard => false,
+            Self::ThreadPreparation | Self::Standard | Self::StoredThreadAccess => false,
             Self::SubagentSpawn | Self::TurnStart | Self::SteeredUserInput => true,
         }
     }

@@ -569,7 +569,10 @@ impl LiveThread {
             patch: update.patch.clone(),
             include_archived: true,
         };
-        if context == PersistContext::Standard {
+        if matches!(
+            context,
+            PersistContext::Standard | PersistContext::StoredThreadAccess
+        ) {
             self.thread_store.update_thread_metadata(params).await?;
         } else {
             self.thread_store.record_thread_metadata(params).await?;
