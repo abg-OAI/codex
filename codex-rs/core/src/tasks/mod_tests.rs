@@ -819,7 +819,11 @@ async fn abort_drops_timing_guards_before_profile_completion(finished_before_wai
         done.await;
     }
     session
-        .abort_taken_tasks(Some(turn), TurnAbortReason::Interrupted)
+        .abort_taken_tasks(
+            Some(turn),
+            TurnAbortReason::Interrupted,
+            super::PendingWorkAfterAbort::Restart,
+        )
         .await;
 
     let timing = &context.turn_timing_state;
