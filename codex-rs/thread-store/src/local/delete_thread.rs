@@ -290,14 +290,8 @@ async fn delete_thread_after_reference_check(
     // Stop queued file work before removing files, retaining ownership until cleanup finishes.
     let live_entry = store.live_recorders.lock().await.remove(&thread_id);
     if let Some(entry) = live_entry {
-        writer_guards.push(entry.writer_lock);
-        entry
-            .recorder
-            .discard()
-            .await
-            .map_err(|err| ThreadStoreError::Internal {
-                message: format!("failed to stop thread writer before deletion: {err}"),
-            })?;
+        writer_guards.push(entry.writer_lock.clone());
+        super::live_writer::discard_recorders(entry).await?;
     }
     let found_rollout_path = !thread_rollouts.paths.is_empty();
     for rollout_path in thread_rollouts.paths {

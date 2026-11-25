@@ -45,6 +45,7 @@ pub struct LiveThread {
     thread_store: Arc<dyn ThreadStore>,
     metadata_sync: Arc<Mutex<ThreadMetadataSync>>,
     persistence_telemetry: RolloutPersistenceTelemetry,
+    local_rollout_path: Option<tokio::sync::watch::Receiver<PathBuf>>,
 }
 
 /// Owns persistence acquisition and its live thread while initialization is still fallible.
@@ -152,7 +153,9 @@ impl LiveThread {
         let metadata_sync =
             ThreadMetadataSync::for_create(&params, inherited_preview.as_deref()).await;
         thread_store.create_thread(params).await?;
+        let local_rollout_path = Self::subscribe_local_path(&thread_store, thread_id).await?;
         Ok(Self {
+            local_rollout_path,
             thread_id,
             history_mode,
             thread_store,
@@ -223,8 +226,10 @@ impl LiveThread {
         };
         params.history = Some(Arc::clone(&history));
         let metadata_sync = ThreadMetadataSync::for_resume(&params, metadata.as_ref());
+        let local_rollout_path = Self::subscribe_local_path(&thread_store, thread_id).await?;
         Ok((
             Self {
+                local_rollout_path,
                 thread_id,
                 history_mode,
                 thread_store,
@@ -495,6 +500,27 @@ impl LiveThread {
                 self.read_thread(include_archived, /*include_history*/ false)
                     .await
             }
+        }
+    }
+
+    /// Returns the last installed local path without retaining a startup-only snapshot.
+    pub fn local_rollout_path_snapshot(&self) -> Option<PathBuf> {
+        self.local_rollout_path
+            .as_ref()
+            .map(|path| path.borrow().clone())
+    }
+
+    /// Local writer ownership publishes path changes; remote stores expose no local path.
+    async fn subscribe_local_path(
+        store: &Arc<dyn ThreadStore>,
+        thread_id: ThreadId,
+    ) -> ThreadStoreResult<Option<tokio::sync::watch::Receiver<PathBuf>>> {
+        match store.as_any().downcast_ref::<LocalThreadStore>() {
+            Some(local) => local
+                .live_rollout_path_subscription(thread_id)
+                .await
+                .map(Some),
+            None => Ok(None),
         }
     }
 

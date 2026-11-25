@@ -127,6 +127,7 @@ pub(super) async fn revert(
         history_base,
         forked_from_ordinal_exclusive,
         writer_lock,
+        None,
     )
     .await?;
     let replacement_path = recorder.rollout_path().to_path_buf();
