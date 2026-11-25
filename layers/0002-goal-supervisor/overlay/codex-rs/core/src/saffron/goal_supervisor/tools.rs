@@ -275,8 +275,8 @@ impl ToolOutput for Output {
         JsonToolOutput::new(self.0.clone()).to_response_item(call_id, payload)
     }
 
-    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
-        self.0.clone()
+    fn code_mode_result(&self, _payload: &ToolPayload) -> codex_code_mode::CodeModeToolResult {
+        self.0.clone().into()
     }
 }
 

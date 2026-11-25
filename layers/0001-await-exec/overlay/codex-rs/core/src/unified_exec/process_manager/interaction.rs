@@ -11,7 +11,6 @@
 //! and the deadline, and available output wins over the deadline.
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use codex_protocol::protocol::TruncationPolicy;
@@ -380,23 +379,11 @@ impl ProcessInteraction<'_> {
     /// but never let inherited open streams postpone the exit response without
     /// bound.
     async fn wait_for_trailing_output(&self) {
-        if self.output.output_closed.load(Ordering::Acquire) {
-            return;
-        }
-
-        let deadline = Instant::now() + POST_EXIT_OUTPUT_CLOSE_WAIT;
-        loop {
-            let output_closed = self.output.output_closed_notify.notified();
-            tokio::pin!(output_closed);
-            output_closed.as_mut().enable();
-            if self.output.output_closed.load(Ordering::Acquire) {
-                return;
-            }
-            tokio::select! {
-                _ = &mut output_closed => {}
-                _ = tokio::time::sleep_until(deadline) => return,
-            }
-        }
+        let _ = tokio::time::timeout(
+            POST_EXIT_OUTPUT_CLOSE_WAIT,
+            self.output.output_closed.cancelled(),
+        )
+        .await;
     }
 }
 

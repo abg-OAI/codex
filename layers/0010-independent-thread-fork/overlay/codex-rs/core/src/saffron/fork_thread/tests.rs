@@ -18,7 +18,7 @@ use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider::create_model_provider;
 use codex_models_manager::manager::ModelCatalogSettings;
-use codex_protocol::dynamic_tools::DynamicToolResponse;
+use codex_protocol::dynamic_tools::DynamicToolCallResult;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
@@ -269,9 +269,8 @@ fn fork_runs_from_completed_history_without_a_goal(
                             .session
                             .notify_dynamic_tool_response(
                                 &call.id,
-                                DynamicToolResponse {
-                                    content_items: Vec::new(),
-                                    success: false,
+                                DynamicToolCallResult::Error {
+                                    error_message: "unavailable".into(),
                                 },
                             )
                             .await;

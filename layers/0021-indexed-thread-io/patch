@@ -147,13 +147,13 @@ index cf46f8b623cddadbcf5fb966cc1ae157215da299..2269ddf4b33dfa7579e5a9843d9fbb8d
          let patterns = Arc::clone(self.compiled_patterns()?);
          lines
 diff --git a/codex-rs/rollout/src/state_db.rs b/codex-rs/rollout/src/state_db.rs
-index 4cf78a279bc975a7be8efedb84b155202273a0b3..843ec8704c3c9fc62a00d531bd03e4c5e1c5693b 100644
+index efb49de5924f63b39156b188503b1145830e9c4c..a35d869a618f11e9fd43a9b92a4c94df3ed5caf0 100644
 --- a/codex-rs/rollout/src/state_db.rs
 +++ b/codex-rs/rollout/src/state_db.rs
-@@ -347,6 +347,13 @@ pub async fn list_thread_ids_db(
-     }
+@@ -291,6 +291,13 @@ pub fn normalize_cwd_for_state_db(cwd: &Path) -> PathBuf {
+     normalize_for_path_comparison(cwd).unwrap_or_else(|_| cwd.to_path_buf())
  }
-
+ 
 +/// Whether the caller will verify the selected physical rollout as it consumes each row.
 +#[derive(Clone, Copy, PartialEq, Eq)]
 +pub enum RolloutPathCheck {
@@ -164,7 +164,7 @@ index 4cf78a279bc975a7be8efedb84b155202273a0b3..843ec8704c3c9fc62a00d531bd03e4c5
  /// List thread metadata from SQLite without rollout directory traversal.
  #[allow(clippy::too_many_arguments)]
  pub async fn list_threads_db(
-@@ -365,6 +372,7 @@ pub async fn list_threads_db(
+@@ -309,6 +316,7 @@ pub async fn list_threads_db(
      section: Option<Option<&str>>,
      project_id: Option<Option<&str>>,
      search_term: Option<&str>,
@@ -172,7 +172,7 @@ index 4cf78a279bc975a7be8efedb84b155202273a0b3..843ec8704c3c9fc62a00d531bd03e4c5
  ) -> Option<codex_state::ThreadsPage> {
      let ctx = context?;
      if ctx.sqlite() != sqlite {
-@@ -429,30 +437,40 @@ pub async fn list_threads_db(
+@@ -373,30 +381,40 @@ pub async fn list_threads_db(
          .inspect_err(|err| warn!("state db list_threads failed: {err}"))
          .ok()?;
          // Parent-scoped listings include empty threads whose rollout may still be pending.
@@ -187,7 +187,7 @@ index 4cf78a279bc975a7be8efedb84b155202273a0b3..843ec8704c3c9fc62a00d531bd03e4c5
          }
          num_scanned_rows = num_scanned_rows.saturating_add(page.num_scanned_rows);
          next_anchor = page.next_anchor;
-
+ 
 -        for item in page.items {
 -            if let Some(existing_path) =
 -                crate::compression::existing_rollout_path(item.rollout_path.as_path()).await
@@ -222,7 +222,7 @@ index 4cf78a279bc975a7be8efedb84b155202273a0b3..843ec8704c3c9fc62a00d531bd03e4c5
 +        .inspect_err(|err| warn!("state db list_threads path checks failed: {err}"))
 +        .ok()?;
 +        items.extend(selected);
-
+ 
          if items.len() == page_size || next_anchor.is_none() {
              break;
 diff --git a/codex-rs/rollout/src/state_db_tests.rs b/codex-rs/rollout/src/state_db_tests.rs

@@ -450,7 +450,7 @@ index f1b10840d1e516a063749c59d7ba60880b496722..adbcdcb039d427d59d3af74b2804dc8f
 +        .expect("hidden helpers should not consume agent capacity");
 +}
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f138c8525 100644
+index 4eb55d8cb5978904ce76424b2216b2616d7dc8ba..dbe5629a66a1496834a6bbfe482bd790738624ee 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -26,6 +26,7 @@ use codex_protocol::protocol::EnvironmentConfigState;
@@ -459,9 +459,9 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
  use futures::stream;
 +use std::time::Duration;
  use std::time::Instant;
-
- const AGENT_NAMES: &str = include_str!("../../../assets/agent/agent_names.txt");
-@@ -216,11 +217,33 @@ impl LocalAgentControl {
+ use tracing::Instrument;
+ use tracing::instrument::WithSubscriber;
+@@ -218,11 +219,33 @@ impl LocalAgentControl {
              SpawnInitialInput::UserInput(initial_input),
              session_source,
              SpawnAgentOptions::default(),
@@ -470,7 +470,7 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
          .await?;
          Ok(spawned_agent.thread_id)
      }
-
+ 
 +    /// Spawns an unlisted, uncounted helper owned by internal coordination.
 +    ///
 +    /// The caller must supply a `ThreadSpawn` source so parentage and a unique
@@ -495,7 +495,7 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
      fn validate_loaded_v2_child(
          &self,
          thread: &CodexThread,
-@@ -668,6 +691,7 @@ impl LocalAgentControl {
+@@ -670,6 +693,7 @@ impl LocalAgentControl {
          initial_input: SpawnInitialInput,
          session_source: Option<SessionSource>,
          options: SpawnAgentOptions,
@@ -503,7 +503,7 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
      ) -> CodexResult<(LiveAgent, ThreadConfigSnapshot)> {
          let membership = self.runtime.admit_start()?;
          let spawn_started_at = Instant::now();
-@@ -678,6 +702,7 @@ impl LocalAgentControl {
+@@ -680,6 +704,7 @@ impl LocalAgentControl {
              .as_ref()
              .and_then(SessionSource::parent_thread_id)
              .or(options.parent_thread_id);
@@ -511,7 +511,7 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
          let multi_agent_version = state
              .effective_multi_agent_version_for_spawn(
                  &InitialHistory::New,
-@@ -688,11 +713,12 @@ impl LocalAgentControl {
+@@ -690,11 +715,12 @@ impl LocalAgentControl {
              )
              .await;
          let product_sku = config.apps_mcp_product_sku.clone();
@@ -526,7 +526,7 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
              && session_source
                  .as_ref()
                  .is_some_and(is_v2_resident_session_source);
-@@ -718,10 +744,13 @@ impl LocalAgentControl {
+@@ -720,10 +746,13 @@ impl LocalAgentControl {
          } else {
              agent_max_threads
          };
@@ -544,7 +544,7 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
          let inherited_environments = match &options.environments {
              Some(environments) => Some(environments.clone()),
              None => {
-@@ -760,6 +789,7 @@ impl LocalAgentControl {
+@@ -762,6 +791,7 @@ impl LocalAgentControl {
                      depth,
                      agent_path,
                      agent_role,
@@ -552,7 +552,7 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
                      /*preferred_agent_nickname*/ None,
                  )?;
                  (Some(session_source), agent_metadata)
-@@ -909,17 +939,21 @@ impl LocalAgentControl {
+@@ -911,25 +941,29 @@ impl LocalAgentControl {
              membership,
              SpawnOwner::Local,
          );
@@ -560,11 +560,19 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
 -        let control = self.clone();
 -        let source = notification_source.clone();
 -        let ephemeral = config.ephemeral;
--        pending_spawn.set_edge_write(tokio::spawn(async move {
--            control
--                .persist_thread_spawn_edge_for_source(ephemeral, child_thread_id, source.as_ref())
--                .await
--        }));
+-        pending_spawn.set_edge_write(tokio::spawn(
+-            async move {
+-                control
+-                    .persist_thread_spawn_edge_for_source(
+-                        ephemeral,
+-                        child_thread_id,
+-                        source.as_ref(),
+-                    )
+-                    .await
+-            }
+-            .in_current_span()
+-            .with_current_subscriber(),
+-        ));
 -        pending_spawn.wait_for_edge().await?;
 -        let edge_write = edge_write_started_at.elapsed();
 +        let edge_write = if hidden_helper {
@@ -574,18 +582,26 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
 +            let control = self.clone();
 +            let source = notification_source.clone();
 +            let ephemeral = config.ephemeral;
-+            pending_spawn.set_edge_write(tokio::spawn(async move {
-+                control
-+                    .persist_thread_spawn_edge_for_source(ephemeral, child_thread_id, source.as_ref())
-+                    .await
-+            }));
++            pending_spawn.set_edge_write(tokio::spawn(
++                async move {
++                    control
++                        .persist_thread_spawn_edge_for_source(
++                            ephemeral,
++                            child_thread_id,
++                            source.as_ref(),
++                        )
++                        .await
++                }
++                .in_current_span()
++                .with_current_subscriber(),
++            ));
 +            pending_spawn.wait_for_edge().await?;
 +            edge_write_started_at.elapsed()
 +        };
          let child_create_started_at = Instant::now();
          let new_thread = state
              .spawn_child_thread(
-@@ -932,9 +966,18 @@ impl LocalAgentControl {
+@@ -943,9 +977,18 @@ impl LocalAgentControl {
              .map_err(|err| err.with_agent_context(AgentErrorContext::ChildStartup))?;
          let child_create = child_create_started_at.elapsed();
          agent_metadata.agent_id = Some(new_thread.thread_id);
@@ -607,16 +623,16 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
          {
              let client_metadata = match state.get_thread(*parent_thread_id).await {
                  Ok(parent_thread) => parent_thread.session.app_server_client_metadata().await,
-@@ -957,7 +1000,7 @@ impl LocalAgentControl {
+@@ -968,7 +1011,7 @@ impl LocalAgentControl {
          }
-
+ 
          let durability_wait_started_at = Instant::now();
 -        if options.fork_mode.is_some() {
 +        if !hidden_helper && options.fork_mode.is_some() {
              new_thread.thread.ensure_rollout_materialized().await;
          }
          let durability_wait = edge_write + durability_wait_started_at.elapsed();
-@@ -1024,7 +1067,9 @@ impl LocalAgentControl {
+@@ -1035,7 +1078,9 @@ impl LocalAgentControl {
              Some(config) => config,
              None => new_thread.thread.config_snapshot().await,
          };
@@ -627,7 +643,7 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
          if let Some(residency_slot) = residency_slot {
              residency_slot.commit(new_thread.thread_id);
          }
-@@ -1033,8 +1078,10 @@ impl LocalAgentControl {
+@@ -1044,8 +1089,10 @@ impl LocalAgentControl {
          // Notify a new thread has been created. This notification will be processed by clients
          // to subscribe or drain this newly created thread.
          // TODO(jif) add helper for drain
@@ -640,7 +656,7 @@ index 0aa0ae5e9f4fbe94a21444d73bfac71714023e8d..608a4199934bbb6a52f9c6100a691b0f
              let child_reference = agent_metadata
                  .agent_path
                  .as_ref()
-@@ -1210,6 +1257,7 @@ impl LocalAgentControl {
+@@ -1221,6 +1268,7 @@ impl LocalAgentControl {
                  depth,
                  agent_path.or(resumed_agent_path),
                  resumed_agent_role,
@@ -705,6 +721,18 @@ index 2c0a8baaa4c09473607c3e459c2c541c0b7a95a9..91c567fbf3e5ef18034d66a66f058c7a
          let state = Arc::clone(&self.state);
          let teardown = membership.into_teardown_guard("child_spawn_cleanup", Some(child));
          let edge_write = self.edge_write.take();
+diff --git a/codex-rs/core/src/agent/control/spawn_publication_tests.rs b/codex-rs/core/src/agent/control/spawn_publication_tests.rs
+index 70f360f34b0af962b0b4dd76a6456d2db74a2933..7bb25e8143b2bb7a1e759b6055a8911b012e5a81 100644
+--- a/codex-rs/core/src/agent/control/spawn_publication_tests.rs
++++ b/codex-rs/core/src/agent/control/spawn_publication_tests.rs
+@@ -160,6 +160,7 @@ async fn spawn_publication_child(
+                 agent_role: None,
+             })),
+             options,
++            AgentListingVisibility::Listed,
+         )
+         .await
+         .map(|(agent, _)| agent.thread_id)
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
 index b22f68fcedf4ca6315093f9d0b18f1cb61d96b88..b9d35d366399b8467d34a0c84240afe44207981e 100644
 --- a/codex-rs/core/src/agent/control_tests.rs

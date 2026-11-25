@@ -23,10 +23,10 @@ index bd70c86c5326e97847e10c06a226d58488f4c5c2..25f4038facb38708b0073a4ff21a1bdf
  codex-features = { workspace = true }
  codex-hooks = { workspace = true }
 diff --git a/codex-rs/core/tests/common/test_codex.rs b/codex-rs/core/tests/common/test_codex.rs
-index 25cc2365a115b443259346d3af3adf6b7eff565e..2a5aa50d4e5300f3f7c8183d13a13a9c82ac2891 100644
+index 4b0595d683d0e9ac09624e92f611aee71e59a963..b53bc19d32c69bd3d9666ebd2eedc72f2e531b9f 100644
 --- a/codex-rs/core/tests/common/test_codex.rs
 +++ b/codex-rs/core/tests/common/test_codex.rs
-@@ -969,14 +969,39 @@ impl TestCodexBuilder {
+@@ -977,14 +977,39 @@ impl TestCodexBuilder {
              }
              (Some(path), None) => {
                  let auth_manager = self.auth.manager_for_home(config.codex_home.as_path());
@@ -74,7 +74,7 @@ index 25cc2365a115b443259346d3af3adf6b7eff565e..2a5aa50d4e5300f3f7c8183d13a13a9c
              }
              (None, Some(user_shell_override)) => {
                  Box::pin(
-@@ -1003,14 +1028,27 @@ impl TestCodexBuilder {
+@@ -1011,15 +1036,28 @@ impl TestCodexBuilder {
                  } else {
                      None
                  };
@@ -82,6 +82,7 @@ index 25cc2365a115b443259346d3af3adf6b7eff565e..2a5aa50d4e5300f3f7c8183d13a13a9c
 +                let options = StartThreadOptions {
                      request_country: self.request_country.clone(),
                      history_mode: self.history_mode,
+                     thread_extension_init: std::mem::take(&mut self.thread_extension_init),
                      client_mcp_extensions: client_mcp_extensions(),
                      environments: environment_requests,
                      ..StartThreadOptions::new(config.clone())
@@ -104,7 +105,7 @@ index 25cc2365a115b443259346d3af3adf6b7eff565e..2a5aa50d4e5300f3f7c8183d13a13a9c
 +                }
              }
          };
-
+ 
 diff --git a/codex-rs/core/tests/saffron_compaction_retention.rs b/codex-rs/core/tests/saffron_compaction_retention.rs
 index 2ff625381b7687e37cc4809318a8e945c0679fdd..a9fb010cf7bcb49f3ac81e278c54aa25302cc3a1 100644
 --- a/codex-rs/core/tests/saffron_compaction_retention.rs

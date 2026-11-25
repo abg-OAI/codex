@@ -31,8 +31,8 @@ impl LocalThreadStore {
         let mut records = records.into_iter().enumerate().peekable();
         let mut output = Vec::with_capacity(records.len());
         while let Some((position, record)) = records.next() {
-            let event = match record {
-                RolloutItem::EventMsg(event) => event,
+            let (event, metadata) = match record {
+                RolloutItem::EventMsg { event, metadata } => (event, metadata),
                 other => {
                     output.push(other);
                     continue;
@@ -80,7 +80,7 @@ impl LocalThreadStore {
                 }
                 _ => {}
             }
-            output.push(RolloutItem::EventMsg(event));
+            output.push(RolloutItem::EventMsg { event, metadata });
         }
         Ok(output)
     }
@@ -163,13 +163,17 @@ impl LocalThreadStore {
 }
 
 fn notice(record: &RolloutItem) -> bool {
-    matches!(record, RolloutItem::EventMsg(EventMsg::ItemCompleted(event)) if event.item.id().starts_with("external-import-notice-"))
+    matches!(record, RolloutItem::EventMsg { event: EventMsg::ItemCompleted(event), .. } if event.item.id().starts_with("external-import-notice-"))
 }
 
 fn transcript_record(record: &RolloutItem) -> bool {
     matches!(
         record,
-        RolloutItem::ResponseItem(_) | RolloutItem::EventMsg(EventMsg::ItemCompleted(_))
+        RolloutItem::ResponseItem(_)
+            | RolloutItem::EventMsg {
+                event: EventMsg::ItemCompleted(_),
+                ..
+            }
     ) && !notice(record)
 }
 
@@ -225,8 +229,14 @@ fn imported_suffix(
             {
                 header = Some(line.meta)
             }
-            RolloutItem::EventMsg(EventMsg::TurnComplete(_)) => ends_at_completion = true,
-            RolloutItem::EventMsg(EventMsg::TurnStarted(_)) => ends_at_completion = false,
+            RolloutItem::EventMsg {
+                event: EventMsg::TurnComplete(_),
+                ..
+            } => ends_at_completion = true,
+            RolloutItem::EventMsg {
+                event: EventMsg::TurnStarted(_),
+                ..
+            } => ends_at_completion = false,
             // The original import notice remains in its original turn when the source grows.
             ref record if notice(record) && !found_notice => {
                 found_notice = true;
@@ -241,9 +251,17 @@ fn imported_suffix(
                 }
                 ends_at_completion = false;
             }
-            RolloutItem::EventMsg(EventMsg::ItemCompleted(old)) => {
-                let Some((_, RolloutItem::EventMsg(EventMsg::ItemCompleted(new)))) =
-                    expected.next()
+            RolloutItem::EventMsg {
+                event: EventMsg::ItemCompleted(old),
+                ..
+            } => {
+                let Some((
+                    _,
+                    RolloutItem::EventMsg {
+                        event: EventMsg::ItemCompleted(new),
+                        ..
+                    },
+                )) = expected.next()
                 else {
                     return Ok(None);
                 };
@@ -256,21 +274,41 @@ fn imported_suffix(
                 }
                 ends_at_completion = false;
             }
-            RolloutItem::EventMsg(EventMsg::TokenCount(_)) | RolloutItem::TokenUsageRecord(_) => {}
+            RolloutItem::EventMsg {
+                event: EventMsg::TokenCount(_),
+                ..
+            }
+            | RolloutItem::TokenUsageRecord(_) => {}
             _ => return Ok(None),
         }
     }
     if !found_notice || !ends_at_completion {
         return Ok(None);
     }
-    let (Some(meta), Some((index, RolloutItem::EventMsg(EventMsg::ItemCompleted(_))))) =
-        (header, expected.next())
+    let (
+        Some(meta),
+        Some((
+            index,
+            RolloutItem::EventMsg {
+                event: EventMsg::ItemCompleted(_),
+                ..
+            },
+        )),
+    ) = (header, expected.next())
     else {
         return Ok(None);
     };
     let start = index
         .checked_sub(1)
-        .filter(|&i| matches!(&source[i], RolloutItem::EventMsg(EventMsg::TurnStarted(_))))
+        .filter(|&i| {
+            matches!(
+                &source[i],
+                RolloutItem::EventMsg {
+                    event: EventMsg::TurnStarted(_),
+                    ..
+                }
+            )
+        })
         .unwrap_or(index);
     let suffix = source
         .into_iter()
@@ -282,4 +320,33 @@ fn imported_suffix(
         suffix: codex_rollout::into_persisted_rollout_items(suffix, ThreadHistoryMode::Paginated),
         next_model_id,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paginating_imported_events_keeps_rejected_audio_ids() {
+        let wire = serde_json::json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "turn_id": "turn-1",
+                "last_agent_message": null,
+                "error": {
+                    "message": "Invalid recording",
+                    "codex_error_info": "bad_request",
+                    "rejected_audio_file_ids": ["audio-1"]
+                }
+            }
+        });
+        let record = serde_json::from_value(wire.clone()).unwrap();
+        let output =
+            LocalThreadStore::paginate_import_messages(ThreadId::new(), vec![record]).unwrap();
+        assert_eq!(
+            serde_json::to_value(output).unwrap(),
+            serde_json::json!([wire])
+        );
+    }
 }

@@ -69,7 +69,10 @@ fn select_suffix(bytes: &[u8], owner: ThreadId) -> Option<(usize, u64, u64)> {
         let begin = after.checked_sub(record.len() + 1)?;
         let line = parse(record)?;
         match line.item {
-            RolloutItem::EventMsg(EventMsg::ThreadRolledBack(event)) if event.num_turns > 0 => {
+            RolloutItem::EventMsg {
+                event: EventMsg::ThreadRolledBack(event),
+                ..
+            } if event.num_turns > 0 => {
                 return None;
             }
             RolloutItem::Compacted(item) if checkpoint.is_none() => {
@@ -81,13 +84,16 @@ fn select_suffix(bytes: &[u8], owner: ThreadId) -> Option<(usize, u64, u64)> {
                 let mut companions = bytes[after..].split(|&b| b == b'\n').map(parse);
                 if !matches!(companions.next()??.item, RolloutItem::WorldState(world) if world.full)
                     || !matches!(companions.next()??.item, RolloutItem::TurnContext(ctx) if ctx.turn_id.as_deref() == Some(turn_id.as_str()))
-                    || !matches!(companions.next()??.item, RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(settings)) if settings.thread_id == Some(owner))
+                    || !matches!(companions.next()??.item, RolloutItem::EventMsg { event: EventMsg::ThreadSettingsApplied(settings), .. } if settings.thread_id == Some(owner))
                 {
                     return None;
                 }
                 checkpoint = Some(turn_id);
             }
-            RolloutItem::EventMsg(EventMsg::TurnStarted(event)) if checkpoint.is_some() => {
+            RolloutItem::EventMsg {
+                event: EventMsg::TurnStarted(event),
+                ..
+            } if checkpoint.is_some() => {
                 if checkpoint.as_deref() != Some(event.turn_id.as_str()) {
                     return None;
                 }
@@ -111,7 +117,11 @@ fn validate_retained_turns(bytes: &[u8], first: u64) -> Option<u64> {
             return None;
         }
         next = next.checked_add(1)?;
-        if let RolloutItem::EventMsg(EventMsg::TurnStarted(event)) = &line.item {
+        if let RolloutItem::EventMsg {
+            event: EventMsg::TurnStarted(event),
+            ..
+        } = &line.item
+        {
             turns.insert(event.turn_id.clone());
         }
         let changes = codex_app_server_protocol::project_rollout_line(&line);

@@ -554,10 +554,10 @@ index 0372bf0b84c815aed2cb28275992e438e0171e76..3ef627516007b4ebdae46f858bb05768
          startup_prewarm.abort().await;
      }
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f75919a3f514c 100644
+index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7ffa384ec 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -281,6 +281,7 @@ mod mcp_refresh;
+@@ -282,6 +282,7 @@ mod mcp_refresh;
  mod mcp_runtime;
  mod model_catalog_settings;
  pub(crate) mod multi_agents;
@@ -565,7 +565,7 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
  mod plugin_selection;
  mod realtime_handoff;
  mod realtime_history;
-@@ -1671,7 +1672,12 @@ impl Session {
+@@ -1674,7 +1675,12 @@ impl Session {
      }
  
      pub(crate) fn state_db(&self) -> Option<state_db::StateDbHandle> {
@@ -579,7 +579,7 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
      }
  
      pub(crate) fn live_thread_for_persistence(
-@@ -1683,7 +1689,12 @@ impl Session {
+@@ -1686,7 +1692,12 @@ impl Session {
      }
  
      pub(crate) fn live_thread(&self) -> Option<&LiveThread> {
@@ -593,51 +593,38 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
      }
  
      pub(crate) async fn set_thread_memory_mode(
-@@ -4168,20 +4179,26 @@ impl Session {
+@@ -4238,18 +4249,15 @@ impl Session {
          let has_user_turn_boundary = items
              .iter()
              .any(|envelope| crate::context_manager::is_user_turn_boundary(&envelope.item));
--        // Thread settings precede the first accepted input. Keep the persistence lock
--        // through its seal, and clear the pending flag only after the seal succeeds.
--        let realtime_settings_guard = if realtime.is_some()
+-        // Prepare settings before publishing tracked evidence so there is no await
+-        // between recording the revision and handing the append to the session.
+-        let prepare_before_recording = realtime.is_some() || self.pending_review_writes.is_some();
+-        let mut early_guard = if prepare_before_recording
 -            && has_user_turn_boundary
 -            && self.reference_context_item().await.is_none()
 -        {
--            Some(thread_settings::acquire_persistence_lock(self).await)
+-            Some(thread_settings::acquire_owned_persistence_lock(self).await)
 -        } else {
 -            None
 -        };
--        let realtime_initial_settings = realtime_settings_guard.is_some()
--            && self.reference_context_item().await.is_none()
--            && self.state.lock().await.initial_settings_pending();
--        let realtime_settings_event = if realtime_initial_settings {
-+        // Thread settings precede the first accepted input. Realtime inputs clear the
-+        // pending flag after the seal succeeds so that a failed seal can be retried.
-+        let settings_guard =
+-        let initial_settings_pending = early_guard.is_some()
++        // Prepare settings before recording input so persistence repair sees the
++        // history update and its append on the same side of writer attachment.
++        let mut settings_guard =
 +            if has_user_turn_boundary && self.reference_context_item().await.is_none() {
-+                Some(thread_settings::acquire_persistence_lock(self).await)
++                Some(thread_settings::acquire_owned_persistence_lock(self).await)
 +            } else {
 +                None
 +            };
-+        let initial_settings_pending =
-+            if settings_guard.is_some() && self.reference_context_item().await.is_none() {
-+                let mut state = self.state.lock().await;
-+                if realtime.is_some() {
-+                    state.initial_settings_pending()
-+                } else {
-+                    state.take_initial_settings_pending()
-+                }
-+            } else {
-+                false
-+            };
-+        let mut settings_event = if initial_settings_pending {
-             Some(thread_settings::applied_event(self).await)
-         } else {
-             None
-@@ -4190,8 +4207,13 @@ impl Session {
-             .iter()
++        let initial_settings_pending = settings_guard.is_some()
+             && self.reference_context_item().await.is_none()
+             && self.state.lock().await.initial_settings_pending();
+         let mut early_settings = if initial_settings_pending {
+@@ -4262,8 +4270,13 @@ impl Session {
              .map(|envelope| envelope.item.clone())
              .collect::<Vec<_>>();
+         let mut review_write = None;
 -        {
 +        let persistence = {
              let mut state = self.state.lock().await;
@@ -649,35 +636,7 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
              let pending_orders = turn_context
                  .extension_data
                  .get::<retained_context::PendingAssistantMessageOrders>();
-@@ -4242,11 +4264,11 @@ impl Session {
-                         &turn_context.sub_id,
-                         envelope,
-                         prepared,
--                        realtime_settings_event,
-+                        settings_event.take(),
-                         policy,
-                     )
-                     .await?;
--                if realtime_initial_settings {
-+                if initial_settings_pending {
-                     state.take_initial_settings_pending();
-                 }
-                 response_items = vec![envelope.item.clone()];
-@@ -4261,11 +4283,11 @@ impl Session {
-                     .record_realtime_chunk_input(
-                         &mut state,
-                         envelope.clone(),
--                        realtime_settings_event,
-+                        settings_event.take(),
-                         policy,
-                     )
-                     .await?;
--                if realtime_initial_settings {
-+                if initial_settings_pending {
-                     state.take_initial_settings_pending();
-                 }
-                 response_items = vec![envelope.item];
-@@ -4278,7 +4300,8 @@ impl Session {
+@@ -4352,7 +4365,8 @@ impl Session {
              state
                  .current_time_reminder
                  .note_recorded_items(&response_items);
@@ -687,41 +646,52 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
          let recorded_through = items
              .iter()
              .filter_map(|item| item.metadata.as_ref()?.history_sequence)
-@@ -4295,29 +4318,15 @@ impl Session {
+@@ -4369,39 +4383,23 @@ impl Session {
          if let Some(RealtimeRecord::Handoff(prepared)) = &realtime {
              self.finish_realtime_handoff(prepared, &items[0]).await;
          } else if !matches!(&realtime, Some(RealtimeRecord::Chunk)) {
--            let settings_guard =
--                if has_user_turn_boundary && self.reference_context_item().await.is_none() {
--                    Some(thread_settings::acquire_persistence_lock(self).await)
--                } else {
--                    None
--                };
+-            let settings_guard = if !prepare_before_recording
+-                && has_user_turn_boundary
+-                && self.reference_context_item().await.is_none()
+-            {
+-                Some(thread_settings::acquire_persistence_lock(self).await)
+-            } else {
+-                None
+-            };
 -            let initial_settings = if settings_guard.is_some()
 -                && self.reference_context_item().await.is_none()
 -                && self.state.lock().await.take_initial_settings_pending()
 -            {
 -                Some(thread_settings::applied_event(self).await)
 -            } else {
--                None
+-                early_settings
 -            };
 -            let rollout_items = initial_settings
-+            let rollout_items = settings_event
++            let rollout_items = early_settings
                  .into_iter()
                  .map(RolloutItem::EventMsg)
                  .chain(items.into_iter().map(RolloutItem::ResponseItem))
                  .collect::<Vec<_>>();
--            self.persist_rollout_items(&rollout_items).await;
+             if let Some(write) = review_write {
+                 if let Some(recording) =
+-                    self.start_review_write(rollout_items, write, early_guard.take())
++                    self.start_review_write(rollout_items, write, settings_guard.take())
+                 {
+                     let _ = recording.await;
+                 }
+             } else {
+-                self.persist_rollout_items(&rollout_items).await;
++                self.persist_rollout_items_locked(&rollout_items).await;
+             }
 -            drop(settings_guard);
-+            self.persist_rollout_items_locked(&rollout_items).await;
          }
--        drop(realtime_settings_guard);
+-        drop(early_guard);
 +        drop(persistence);
 +        drop(settings_guard);
          if turn_context.config.memories.disable_on_external_context
              && let Some(item) = response_items
                  .iter()
-@@ -4851,8 +4860,9 @@ impl Session {
+@@ -4944,8 +4942,9 @@ impl Session {
          }
          let mut delivery = communication.delivery.as_ref();
          let mut result_write = None;
@@ -732,7 +702,7 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
              state.current_time_reminder.note_recorded_items(&items);
              state.history.record_annotated_items(
                  std::slice::from_mut(&mut response_item),
-@@ -4869,12 +4879,13 @@ impl Session {
+@@ -4962,12 +4961,13 @@ impl Session {
                          .as_ref()
                          .and_then(|d| d.source_tool_call_id.as_ref()),
                  );
@@ -748,7 +718,7 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
                  RolloutItem::InterAgentCommunicationMetadata {
                      trigger_turn: communication.trigger_turn,
                  },
-@@ -4887,6 +4898,7 @@ impl Session {
+@@ -4980,6 +4980,7 @@ impl Session {
          {
              write.confirm();
          }
@@ -756,7 +726,7 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
          drop(boundary);
          let [item] = items;
          self.send_event(
-@@ -5000,8 +5012,10 @@ impl Session {
+@@ -5093,8 +5094,10 @@ impl Session {
              Some(history) => history.lock().await.observation_clock.floor_ms(),
              None => None,
          };
@@ -768,7 +738,7 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
              let complete_replacement =
                  matches!(&installation, CompactedHistoryInstallation::Complete(..));
              let replacement = match installation {
-@@ -5108,7 +5122,7 @@ impl Session {
+@@ -5204,7 +5207,7 @@ impl Session {
                  latest_token_usage_record: state.latest_token_usage_record.clone(),
                  resume_metadata: Some(resume_metadata),
              };
@@ -777,7 +747,7 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
          };
  
          // Use the replacement captured under the state lock, including goal edits retained
-@@ -5122,19 +5136,20 @@ impl Session {
+@@ -5218,19 +5221,20 @@ impl Session {
              );
          }
  
@@ -804,19 +774,19 @@ index ba3f82d4a4982751bdff5e69ac3ec85e3e949c2e..9fc56b65bcbf2c9a6aecc87bdf4f7591
          {
              let mut state = self.state.lock().await;
              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
-@@ -5532,6 +5547,11 @@ impl Session {
+@@ -5620,6 +5624,11 @@ impl Session {
+     }
  
-     #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
 +        let _persistence = self.persistence_repair.state.lock().await;
 +        self.persist_rollout_items_locked(items).await
 +    }
 +
 +    async fn persist_rollout_items_locked(&self, items: &[RolloutItem]) -> bool {
-         if let Some(live_thread) = self.live_thread()
-             && let Err(e) = live_thread.append_items(items).await
-         {
-@@ -5811,11 +5831,12 @@ impl Session {
+         self.persist_rollout_items_with_ack(items, /*write*/ None)
+             .await
+     }
+@@ -5927,11 +5936,12 @@ impl Session {
                  thread_settings::applied_event(self).await,
              ));
          }

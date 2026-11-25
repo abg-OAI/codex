@@ -27,7 +27,10 @@ pub(super) fn is_rotation_checkpoint(items: &[RolloutItem]) -> bool {
                 metadata.dynamic_tools.is_some()))
         && matches!(
             items.last(),
-            Some(RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(_)))
+            Some(RolloutItem::EventMsg {
+                event: EventMsg::ThreadSettingsApplied(_),
+                ..
+            })
         )
 }
 

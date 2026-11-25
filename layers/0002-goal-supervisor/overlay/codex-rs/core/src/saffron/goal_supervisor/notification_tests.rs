@@ -42,7 +42,6 @@ async fn supervisor_failure_does_not_queue_a_parent_completion_message() {
         message: "model unavailable".to_string(),
         codex_error_info: None,
         misalignment: None,
-        rejected_audio_file_ids: Vec::new(),
     });
 
     helper

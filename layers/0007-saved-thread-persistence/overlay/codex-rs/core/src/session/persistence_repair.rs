@@ -221,9 +221,10 @@ impl Session {
                 ThreadHistoryMode::Legacy | ThreadHistoryMode::Paginated => saved
                     .iter()
                     .filter_map(|item| match item {
-                        RolloutItem::EventMsg(EventMsg::TurnStarted(event)) => {
-                            Some(event.turn_id.clone())
-                        }
+                        RolloutItem::EventMsg {
+                            event: EventMsg::TurnStarted(event),
+                            ..
+                        } => Some(event.turn_id.clone()),
                         _ => None,
                     })
                     .collect(),

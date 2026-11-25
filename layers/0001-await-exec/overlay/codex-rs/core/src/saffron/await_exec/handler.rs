@@ -144,8 +144,8 @@ impl ToolOutput for AwaitExecToolOutput {
         self.result.output.post_tool_use_response(call_id, payload)
     }
 
-    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
-        self.response_value()
+    fn code_mode_result(&self, _payload: &ToolPayload) -> codex_code_mode::CodeModeToolResult {
+        self.response_value().into()
     }
 }
 
