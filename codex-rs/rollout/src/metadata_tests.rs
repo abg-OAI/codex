@@ -313,6 +313,46 @@ async fn extract_metadata_from_rollout_returns_latest_memory_mode() {
     assert_eq!(outcome.memory_mode.as_deref(), Some("polluted"));
 }
 
+#[tokio::test]
+async fn extraction_keeps_user_message_before_first_metadata() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("imported.jsonl");
+    let id = ThreadId::new();
+    let header = RolloutItem::SessionMeta(Box::new(SessionMetaLine {
+        meta: SessionMeta {
+            id,
+            timestamp: "2026-01-27T12:34:56Z".to_string(),
+            ..Default::default()
+        },
+        git: None,
+    }));
+    let opening = RolloutItem::EventMsg(codex_protocol::protocol::EventMsg::UserMessage(
+        codex_protocol::protocol::UserMessageEvent {
+            message: "opening message".to_string(),
+            ..Default::default()
+        },
+    ));
+    let mut file = File::create(&path).expect("create rollout");
+    for item in [opening, header] {
+        let line = RolloutLine {
+            timestamp: "2026-01-27T12:34:56Z".to_string(),
+            ordinal: None,
+            item,
+        };
+        serde_json::to_writer(&mut file, &line).expect("write item");
+        writeln!(file).expect("finish line");
+    }
+
+    let outcome = extract_metadata_from_rollout(&path, "openai")
+        .await
+        .expect("extract");
+    assert_eq!(outcome.metadata.id, id);
+    assert_eq!(
+        outcome.metadata.first_user_message.as_deref(),
+        Some("opening message")
+    );
+}
+
 #[test]
 fn builder_from_items_falls_back_to_filename() {
     let dir = tempdir().expect("tempdir");
