@@ -1,5 +1,8 @@
 //! Persist Codex session rollouts (.jsonl) so sessions can be replayed or inspected later.
 
+mod checkpoint;
+pub use checkpoint::ensure_checkpoint_complete;
+
 use std::collections::HashSet;
 use std::fs;
 use std::fs::File;
@@ -128,6 +131,15 @@ pub enum RolloutRecorderParams {
 
 enum RolloutCmd {
     AddItems(Vec<RolloutItem>),
+    StageContinuation {
+        items: Vec<RolloutItem>,
+        ack: oneshot::Sender<std::io::Result<()>>,
+    },
+    Checkpoint {
+        items: Vec<RolloutItem>,
+        lock: Arc<crate::WriterLockGuard>,
+        ack: oneshot::Sender<std::io::Result<()>>,
+    },
     ReadUnpersistedSessionMeta {
         ack: oneshot::Sender<Option<SessionMeta>>,
     },
@@ -149,7 +161,7 @@ enum RolloutCmd {
 /// Observable state for the background rollout writer task.
 struct RolloutWriterTask {
     // The task, not just its caller, owns the lock until queued file writes finish.
-    _writer_lock: Option<Arc<crate::WriterLockGuard>>,
+    writer_lock: Option<Arc<crate::WriterLockGuard>>,
     handle: Mutex<Option<JoinHandle<()>>>,
     terminal_failure: Mutex<Option<Arc<IoError>>>,
 }
@@ -158,7 +170,7 @@ impl RolloutWriterTask {
     /// Create task observability state before spawning the writer.
     fn new(writer_lock: Option<Arc<crate::WriterLockGuard>>) -> Self {
         Self {
-            _writer_lock: writer_lock,
+            writer_lock,
             handle: Mutex::new(None),
             terminal_failure: Mutex::new(None),
         }
@@ -1098,6 +1110,53 @@ impl RolloutRecorder {
             })
     }
 
+    /// Persist one compaction batch under the stable thread's writer lock. An
+    /// interrupted append can be completed from the adjacent durable intent.
+    pub async fn record_checkpoint(&self, items: Vec<RolloutItem>) -> std::io::Result<()> {
+        if !cfg!(unix) {
+            self.record_canonical_items(&items).await?;
+            return self.persist().await;
+        }
+        if items.is_empty() {
+            return Err(IoError::new(
+                std::io::ErrorKind::InvalidInput,
+                "compaction checkpoint has no records",
+            ));
+        }
+        let lock = self
+            .writer_task
+            .writer_lock
+            .clone()
+            .ok_or_else(|| IoError::other("compaction append requires a thread writer lock"))?;
+        let (ack, result) = oneshot::channel();
+        self.tx
+            .send(RolloutCmd::Checkpoint { items, lock, ack })
+            .await
+            .map_err(IoError::other)?;
+        result.await.map_err(IoError::other)?
+    }
+
+    /// Write a new continuation once and sync it before its path can be selected.
+    pub async fn stage_continuation(&self, items: Vec<RolloutItem>) -> std::io::Result<()> {
+        let (ack, result) = oneshot::channel();
+        self.tx
+            .send(RolloutCmd::StageContinuation { items, ack })
+            .await
+            .map_err(IoError::other)?;
+        result.await.map_err(IoError::other)?
+    }
+
+    /// Complete a pending checkpoint before recovering cached history or ordinals.
+    pub async fn recover_checkpoint(
+        path: &Path,
+        lock: Arc<crate::WriterLockGuard>,
+    ) -> std::io::Result<bool> {
+        let path = path.to_owned();
+        tokio::task::spawn_blocking(move || checkpoint::recover(&path, &lock))
+            .await
+            .map_err(IoError::other)?
+    }
+
     /// Materialize the rollout file and persist all buffered items.
     ///
     /// This is idempotent. If materialization fails, the recorder keeps all pending items in memory
@@ -1144,7 +1203,8 @@ impl RolloutRecorder {
         path: &Path,
     ) -> std::io::Result<(Vec<RolloutItem>, Option<ThreadId>, usize)> {
         trace!("Resuming rollout from {path:?}");
-        compression::read_rollout_lines(path, |reader| {
+        ensure_checkpoint_complete(path)?;
+        let result = compression::read_rollout_lines(path, |reader| {
             let mut items: Vec<RolloutItem> = Vec::new();
             let mut thread_id: Option<ThreadId> = None;
             let mut parse_errors = 0usize;
@@ -1205,7 +1265,9 @@ impl RolloutRecorder {
             );
             Ok((items, thread_id, parse_errors))
         })
-        .await
+        .await?;
+        ensure_checkpoint_complete(path)?;
+        Ok(result)
     }
 
     pub async fn get_rollout_history(path: &Path) -> std::io::Result<InitialHistory> {
@@ -1816,6 +1878,48 @@ impl RolloutWriterState {
         Ok(())
     }
 
+    async fn stage_continuation(&mut self, items: Vec<RolloutItem>) -> std::io::Result<()> {
+        if !self.is_deferred() || !self.pending_items.is_empty() {
+            return Err(IoError::other("continuation needs a new deferred recorder"));
+        }
+        self.add_items(items);
+        // A failed candidate remains unpublished. Discard it instead of retrying
+        // a JSON record whose prefix may already have reached the file.
+        self.write_pending_once().await?;
+        self.sync_checkpoint_file().await
+    }
+
+    async fn sync_checkpoint_file(&mut self) -> std::io::Result<()> {
+        let writer = self
+            .writer
+            .as_ref()
+            .ok_or_else(|| IoError::other("checkpoint writer is closed"))?;
+        writer.file.sync_all().await?;
+        #[cfg(unix)]
+        for directory in &self.directories_to_sync {
+            tokio::fs::File::open(directory).await?.sync_all().await?;
+        }
+        #[cfg(unix)]
+        self.directories_to_sync.clear();
+        Ok(())
+    }
+
+    async fn append_checkpoint(
+        &mut self,
+        items: Vec<RolloutItem>,
+        lock: Arc<crate::WriterLockGuard>,
+    ) -> std::io::Result<()> {
+        self.persist().await?;
+        self.sync_checkpoint_file().await?;
+        let ordinals = self.ordinal_state;
+        let path = self.rollout_path.clone();
+        self.ordinal_state =
+            tokio::task::spawn_blocking(move || checkpoint::append(&path, &items, ordinals, &lock))
+                .await
+                .map_err(IoError::other)??;
+        Ok(())
+    }
+
     async fn shutdown(&mut self) -> std::io::Result<()> {
         if self.is_deferred() && self.pending_items.is_empty() {
             return Ok(());
@@ -1964,6 +2068,21 @@ async fn rollout_writer(
                 state.add_items(items);
                 state.flush_if_materialized().await;
             }
+            RolloutCmd::StageContinuation { items, ack } => {
+                if let Err(err) = state.stage_continuation(items).await {
+                    let _ = ack.send(Err(clone_io_error(&err)));
+                    return Err(err);
+                }
+                let _ = ack.send(Ok(()));
+            }
+            RolloutCmd::Checkpoint { items, lock, ack } => {
+                if let Err(err) = state.append_checkpoint(items, lock).await {
+                    // No later command may append beyond a partial checkpoint.
+                    let _ = ack.send(Err(clone_io_error(&err)));
+                    return Err(err);
+                }
+                let _ = ack.send(Ok(()));
+            }
             RolloutCmd::Persist { ack } => {
                 let _ = ack.send(state.persist().await);
             }
@@ -2038,6 +2157,11 @@ async fn open_rollout_for_append(
     path: &Path,
     writer_lock: Option<Arc<crate::WriterLockGuard>>,
 ) -> std::io::Result<(PathBuf, tokio::fs::File, RolloutOrdinalState)> {
+    if let Some(lock) = writer_lock.as_ref() {
+        RolloutRecorder::recover_checkpoint(path, Arc::clone(lock)).await?;
+    } else {
+        ensure_checkpoint_complete(path)?;
+    }
     let refresh_modified_time =
         !tokio::fs::try_exists(compression::plain_rollout_path(path)).await?;
     let path = compression::materialize_rollout_for_append(path, writer_lock.clone()).await?;
@@ -2088,12 +2212,8 @@ struct RolloutLineRef<'a> {
     item: &'a RolloutItem,
 }
 
-impl JsonlWriter {
-    async fn write_rollout_item(
-        &mut self,
-        rollout_item: &RolloutItem,
-        ordinal: Option<u64>,
-    ) -> std::io::Result<()> {
+impl<'a> RolloutLineRef<'a> {
+    fn new(item: &'a RolloutItem, ordinal: Option<u64>) -> std::io::Result<Self> {
         let timestamp_format: &[FormatItem] = format_description!(
             "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
         );
@@ -2101,11 +2221,21 @@ impl JsonlWriter {
             .format(timestamp_format)
             .map_err(|e| IoError::other(format!("failed to format timestamp: {e}")))?;
 
-        let line = RolloutLineRef {
+        Ok(Self {
             timestamp,
             ordinal,
-            item: rollout_item,
-        };
+            item,
+        })
+    }
+}
+
+impl JsonlWriter {
+    async fn write_rollout_item(
+        &mut self,
+        rollout_item: &RolloutItem,
+        ordinal: Option<u64>,
+    ) -> std::io::Result<()> {
+        let line = RolloutLineRef::new(rollout_item, ordinal)?;
         self.write_line(&line).await
     }
     async fn write_line(&mut self, item: &impl serde::Serialize) -> std::io::Result<()> {
