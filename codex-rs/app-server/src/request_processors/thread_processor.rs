@@ -370,6 +370,15 @@ fn has_model_resume_override(
             .is_some_and(|overrides| overrides.contains_key("model_reasoning_effort"))
 }
 
+fn preserve_unset_persisted_reasoning_effort(
+    config: &mut Config,
+    persisted_metadata: Option<&ThreadMetadata>,
+) {
+    if persisted_metadata.is_some_and(|metadata| metadata.reasoning_effort.is_none()) {
+        config.model_reasoning_effort = None;
+    }
+}
+
 fn has_permission_override(
     request_overrides: Option<&HashMap<String, serde_json::Value>>,
     typesafe_overrides: &ConfigOverrides,
@@ -7122,6 +7131,8 @@ fn paginate_background_terminals(
     let next_cursor = (end < terminals.len()).then(|| terminals[end - 1].process_id.clone());
     Ok((terminals[start..end].to_vec(), next_cursor))
 }
+
+mod saffron_goal_scheduler;
 
 #[cfg(test)]
 #[path = "thread_processor_tests.rs"]
