@@ -405,13 +405,38 @@ async fn assert_thread_resume_rejects_writer_owned_by_another_process(
         .with_codex_home(codex_home.path())
         .build_initialized()
         .await?;
-    let ThreadStartResponse { thread, .. } = primary
-        .start_thread(ThreadStartParams {
-            model: Some("gpt-5.4".to_string()),
-            history_mode: Some(history_mode),
-            ..Default::default()
-        })
-        .await?;
+    let thread = match history_mode {
+        ThreadHistoryMode::Legacy => {
+            let saved = create_fake_rollout(
+                codex_home.path(),
+                "2025-01-03T10-00-00",
+                "2025-01-03T10:00:00Z",
+                "saved conversation",
+                Some("mock_provider"),
+                None,
+            )?;
+            let request = primary
+                .send_thread_resume_request(ThreadResumeParams {
+                    thread_id: saved,
+                    model: Some("gpt-5.4".to_string()),
+                    ..Default::default()
+                })
+                .await?;
+            let resumed: ThreadResumeResponse =
+                timeout(DEFAULT_READ_TIMEOUT, primary.read_response(request)).await??;
+            resumed.thread
+        }
+        ThreadHistoryMode::Paginated => {
+            primary
+                .start_thread(ThreadStartParams {
+                    model: Some("gpt-5.4".to_string()),
+                    history_mode: Some(history_mode),
+                    ..Default::default()
+                })
+                .await?
+                .thread
+        }
+    };
     timeout(
         DEFAULT_READ_TIMEOUT,
         primary.start_turn_and_wait_for_completion(TurnStartParams {
@@ -1509,7 +1534,7 @@ async fn thread_resume_preserves_goal_first_and_fork_approvals_reviewer() -> Res
             .send_thread_start_request_with_auto_env(ThreadStartParams {
                 model: Some("gpt-5.2-codex".to_string()),
                 approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
-                history_mode: Some(ThreadHistoryMode::Legacy),
+                history_mode: Some(ThreadHistoryMode::Paginated),
                 ..Default::default()
             })
             .await?;
@@ -1648,7 +1673,7 @@ async fn thread_resume_preserves_acknowledged_model_effort_and_approvals_reviewe
         let start_id = mcp
             .send_thread_start_request_with_auto_env(ThreadStartParams {
                 model: Some("gpt-5.4".to_string()),
-                history_mode: Some(ThreadHistoryMode::Legacy),
+                history_mode: Some(ThreadHistoryMode::Paginated),
                 approval_policy: Some(AskForApproval::Never),
                 approvals_reviewer: Some(ApprovalsReviewer::User),
                 permissions: Some(":workspace".to_string()),
