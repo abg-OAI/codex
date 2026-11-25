@@ -124,18 +124,36 @@ WHERE thread_id =
         );
         query.push_bind(segment.rollout_id().to_string());
         push_segment_range(&mut query, segment, ordinal_column)?;
-        for newer_segment in range.newer {
+        if !range.newer.is_empty() {
+            // Bind only the newer ranges the lazy walk already visited. A single
+            // anti-join shadows older turn rows without nesting an expression per file.
+            let ranges = range
+                .newer
+                .iter()
+                .map(|segment| {
+                    Ok((
+                        segment.rollout_id().to_string(),
+                        sqlite_integer(segment.start_ordinal())?,
+                        segment.end_ordinal().map(sqlite_integer).transpose()?,
+                    ))
+                })
+                .collect::<ThreadStoreResult<Vec<_>>>()?;
+            let ranges = serde_json::to_string(&ranges).map_err(thread_history_error)?;
             query
-                .push(" AND NOT EXISTS (SELECT 1 FROM thread_turns AS newer_turn WHERE newer_turn.thread_id = ")
-                .push_bind(newer_segment.rollout_id().to_string())
-                .push(" AND newer_turn.turn_id = thread_turns.turn_id AND newer_turn.rollout_ordinal >= ")
-                .push_bind(sqlite_integer(newer_segment.start_ordinal())?);
-            if let Some(end_ordinal) = newer_segment.end_ordinal() {
-                query
-                    .push(" AND newer_turn.rollout_ordinal < ")
-                    .push_bind(sqlite_integer(end_ordinal)?);
-            }
-            query.push(")");
+                .push(
+                    " AND NOT EXISTS (
+                SELECT 1 FROM json_each(",
+                )
+                .push_bind(ranges)
+                .push(
+                    ") AS span CROSS JOIN thread_turns AS newer_turn
+                WHERE newer_turn.thread_id = json_extract(span.value, '$[0]')
+                  AND newer_turn.turn_id = thread_turns.turn_id
+                  AND newer_turn.rollout_ordinal >= json_extract(span.value, '$[1]')
+                  AND (json_extract(span.value, '$[2]') IS NULL
+                       OR newer_turn.rollout_ordinal < json_extract(span.value, '$[2]'))
+            )",
+                );
         }
         push_cursor_clause(&mut query, direction, range.cursor.as_ref(), ordinal_column)?;
         push_order_and_limit(&mut query, direction, remaining, ordinal_column);
