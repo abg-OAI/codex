@@ -69,7 +69,7 @@ pub(super) async fn admit(
     let input = task.pending_initial_input.take().ok_or_else(|| {
         CodexErr::Fatal("initial input missing from the task awaiting host admission".into())
     })?;
-    task._agent_execution_guard = Some(guard);
+    task.agent_execution_guard = Some(guard);
     turn.admitted = true;
     Ok(input)
 }
@@ -130,6 +130,7 @@ impl Session {
             .remove::<SubmittedAdditionalContext>();
         for item in recordable_inputs(
             self,
+            context,
             &model_info,
             &input,
             &pending_input,
