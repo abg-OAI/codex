@@ -361,6 +361,17 @@ pub(super) async fn persist_thread(
     write_and_project(store, thread_id, RolloutWriteOp::Persist, writer).await
 }
 
+pub(super) async fn persist_thread_if_open(
+    store: &LocalThreadStore,
+    thread_id: ThreadId,
+) -> ThreadStoreResult<()> {
+    let writer = store.live_writer_locks.lock(thread_id).await;
+    if !store.live_recorders.lock().await.contains_key(&thread_id) {
+        return Ok(());
+    }
+    write_and_project(store, thread_id, RolloutWriteOp::Persist, writer).await
+}
+
 pub(super) async fn flush_thread(
     store: &LocalThreadStore,
     thread_id: ThreadId,
