@@ -95,13 +95,13 @@ index 7b538850cd50340298c8196975a503afd577eadd..028a5115f5cb94ec2ecf6c4bcfcd72ec
              codex_protocol::protocol::ThreadSettingsAppliedEvent {
                  thread_id: Some(self.thread_id),
 diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
-index fd9a1cdc3362ddce2fbd6a48e6e5abf3b95f5330..66073930e6fececd7266cdc40ea9c8ecc55da55b 100644
+index 139eaa3e0d78c312593b65c24e3b66b70c0c591a..c6d952cbb079f887cd90d32207b18647e8e16ec3 100644
 --- a/codex-rs/core/src/thread_manager_tests.rs
 +++ b/codex-rs/core/src/thread_manager_tests.rs
-@@ -183,6 +183,204 @@ async fn startup_fixture() -> (tempfile::TempDir, Config, ThreadManager) {
+@@ -191,6 +191,205 @@ async fn startup_fixture() -> (tempfile::TempDir, Config, ThreadManager) {
      (home, config, manager)
  }
-
+ 
 +#[tokio::test]
 +async fn referenced_fork_checkpoint_preserves_context_settings_and_interrupt() {
 +    assert_referenced_fork_checkpoint(false).await;
@@ -213,7 +213,7 @@ index fd9a1cdc3362ddce2fbd6a48e6e5abf3b95f5330..66073930e6fececd7266cdc40ea9c8ec
 +    ));
 +    if !completed {
 +        assert!(
-+            matches!(context.items.last(), Some(RolloutItem::EventMsg(EventMsg::TurnAborted(event)))
++            matches!(context.items.last(), Some(RolloutItem::EventMsg { event: EventMsg::TurnAborted(event), .. })
 +            if event.reason == TurnAbortReason::Interrupted)
 +        );
 +    }
@@ -258,9 +258,10 @@ index fd9a1cdc3362ddce2fbd6a48e6e5abf3b95f5330..66073930e6fececd7266cdc40ea9c8ec
 +        .iter()
 +        .rev()
 +        .find_map(|item| match item {
-+            RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event)) => {
-+                Some(&event.thread_settings)
-+            }
++            RolloutItem::EventMsg {
++                event: EventMsg::ThreadSettingsApplied(event),
++                ..
++            } => Some(&event.thread_settings),
 +            _ => None,
 +        })
 +        .unwrap();

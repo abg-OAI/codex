@@ -914,7 +914,7 @@ index 3c98fb3aaeec70e4d489e09a91fbaa23e4fc76bd..c992f7a8b82bf6c3a61c2b194aff9e9f
              && !response.thread.ephemeral
              && let Err(error) = self
 diff --git a/codex-rs/tui/src/app_server_session/rollout_history.rs b/codex-rs/tui/src/app_server_session/rollout_history.rs
-index ce014c5761b590dcc5ad4d8850109e36033c442f..ebf656e0b93c96aced2d436601a0624ee127b9ad 100644
+index 730440525de860e5c0ca611d7fe40ca4327d75fd..25beb08a71a5f7f9bde807095441f0db1adc79a8 100644
 --- a/codex-rs/tui/src/app_server_session/rollout_history.rs
 +++ b/codex-rs/tui/src/app_server_session/rollout_history.rs
 @@ -4,17 +4,14 @@ use super::AppServerSession;
@@ -935,7 +935,7 @@ index ce014c5761b590dcc5ad4d8850109e36033c442f..ebf656e0b93c96aced2d436601a0624e
  use codex_app_server_protocol::AskForApproval;
  use codex_app_server_protocol::ClientRequest;
  use codex_app_server_protocol::SortDirection;
-@@ -254,65 +251,34 @@ impl AppServerSession {
+@@ -258,31 +255,28 @@ impl AppServerSession {
              self.thread_tool_transport()
                  .configure_mcp(&mut params.config);
          }
@@ -973,6 +973,20 @@ index ce014c5761b590dcc5ad4d8850109e36033c442f..ebf656e0b93c96aced2d436601a0624e
 -        let metadata = Box::pin(self.thread_read(thread_id, /*include_turns*/ false))
 -            .await
 -            .ok();
+         // A fresh load applies managed rules. A loaded thread's sandbox summary
+         // cannot confirm its proxy rules or filesystem restrictions.
+         if permission_overrides.confirm_preset
+-            && metadata.as_ref().is_none_or(|thread| {
+-                thread.status != codex_app_server_protocol::ThreadStatus::NotLoaded
+-            })
++            && metadata.status != codex_app_server_protocol::ThreadStatus::NotLoaded
+         {
+             if config.managed_network_requirements_enabled() {
+                 color_eyre::eyre::bail!(
+@@ -302,47 +296,16 @@ impl AppServerSession {
+                 }
+             }
+         }
 -        let known_legacy = cached_legacy
 -            && (!self.uses_embedded_app_server()
 -                || (rollout_maintenance_guard.is_some()
@@ -982,23 +996,20 @@ index ce014c5761b590dcc5ad4d8850109e36033c442f..ebf656e0b93c96aced2d436601a0624e
 -        if params.exclude_turns {
 -            rollout_maintenance_guard = None;
 -        }
-+        params.exclude_turns = metadata.history_mode == ThreadHistoryMode::Paginated;
++        let exclude_turns = metadata.history_mode == ThreadHistoryMode::Paginated;
++        params.exclude_turns = exclude_turns;
          let request_id = self.next_request_id();
+-        let exclude_turns = params.exclude_turns;
 -        let resume_response = self
-+        let response: ThreadResumeResponse = self
++        let mut response: ThreadResumeResponse = self
              .request_handle
 -            .request_typed(ClientRequest::ThreadResume {
 -                request_id,
 -                params: params.clone(),
 -            })
 -            .await;
-+            .request_typed(ClientRequest::ThreadResume { request_id, params })
-+            .await
-+            .map_err(|err| {
-+                bootstrap_request_error("thread/resume failed during TUI bootstrap", err)
-+            })?;
-         drop(rollout_maintenance_guard);
--        let response: ThreadResumeResponse = match resume_response {
+-        drop(rollout_maintenance_guard);
+-        let mut response: ThreadResumeResponse = match resume_response {
 -            Ok(response) => response,
 -            Err(TypedRequestError::Server { source, .. })
 -                if params.exclude_turns && is_history_pagination_unsupported(&source) =>
@@ -1020,6 +1031,29 @@ index ce014c5761b590dcc5ad4d8850109e36033c442f..ebf656e0b93c96aced2d436601a0624e
 -                ));
 -            }
 -        };
++            .request_typed(ClientRequest::ThreadResume { request_id, params })
++            .await
++            .map_err(|err| {
++                bootstrap_request_error("thread/resume failed during TUI bootstrap", err)
++            })?;
+         if permission_overrides.confirm_preset
+             && let Some(settings) =
+                 crate::resume_permissions::initial_resume_update(&config, &response)?
+@@ -361,8 +324,7 @@ impl AppServerSession {
+                     request_id,
+                     params: ThreadResumeParams {
+                         thread_id: thread_id.to_string(),
+-                        exclude_turns: exclude_turns
+-                            && self.history_support == ThreadHistorySupport::Paginated,
++                        exclude_turns,
+                         ..Default::default()
+                     },
+                 })
+@@ -373,6 +335,7 @@ impl AppServerSession {
+                 );
+             }
+         }
++        drop(rollout_maintenance_guard);
          self.finish_thread_resume(
              local_settings,
              &config,

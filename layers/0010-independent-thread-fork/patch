@@ -71,10 +71,35 @@ index f726e9443116707d78584d344ef277ad6b28d1bc..7a2bd1fd95368be21d27a92d0f0a31f4
          let thread = self.state.get_thread(thread_id).await?;
          if !thread.has_persistence() && self.state.is_saved_target(thread_id) {
 diff --git a/codex-rs/core/src/tools/handlers/dynamic.rs b/codex-rs/core/src/tools/handlers/dynamic.rs
-index 0eac846e05187ab469d9ecc33f295b75e06f7a48..5e5beef1e477f4f265c82d9a2e9dae5986a8c6d1 100644
+index 8b115a3feacbdc9ccf1bc030c1b83d470bd99eea..50d62e4a4a0cf3bf370dcb41731df152cdf09500 100644
 --- a/codex-rs/core/src/tools/handlers/dynamic.rs
 +++ b/codex-rs/core/src/tools/handlers/dynamic.rs
-@@ -187,7 +187,7 @@ impl CoreToolRuntime for DynamicToolHandler {
+@@ -171,13 +171,23 @@ impl DynamicToolHandler {
+     }
+ }
+ 
+-enum DynamicToolOutput {
++pub(crate) enum DynamicToolOutput {
+     ContentItems(FunctionToolOutput),
+     /// The MCP-shaped value shared by optional observers and moved into Code Mode.
+     StructuredContent(Value),
+ }
+ 
+ impl DynamicToolOutput {
++    /// Returns the complete client response text and its success flag.
++    pub(crate) fn into_text_response(self) -> (String, bool) {
++        let success = self.success_for_logging();
++        let text = match self {
++            Self::ContentItems(output) => output.into_text(),
++            Self::StructuredContent(value) => Self::native_text(&value),
++        };
++        (text, success)
++    }
++
+     fn from_response(
+         response: DynamicToolCallResult,
+     ) -> (Self, Vec<DynamicToolCallOutputContentItem>) {
+@@ -323,7 +333,7 @@ impl CoreToolRuntime for DynamicToolHandler {
      clippy::await_holding_invalid_type,
      reason = "active turn checks and dynamic tool response registration must remain atomic"
  )]

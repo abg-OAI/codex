@@ -336,10 +336,10 @@ index 8ec5a6e0b57c1c1c28f74fb50b116b21dda97865..e9857f9a9aed9ea42c6232996f795158
              active_turn_id.clone(),
              active_task.turn_context.root_turn_id(),
 diff --git a/codex-rs/core/src/state/session.rs b/codex-rs/core/src/state/session.rs
-index e90bd010c66d8b26f5dce54ac3b92a82690803df..721faa6cadb0c84f60fd89ca55f6d2341acd10a6 100644
+index 62ed444935cc4f53fe51e9a18dbbfa68f520bba3..7856f1ca259aeaa32c426a61b54e6b923adbc377 100644
 --- a/codex-rs/core/src/state/session.rs
 +++ b/codex-rs/core/src/state/session.rs
-@@ -99,6 +99,8 @@ pub(crate) struct SessionState {
+@@ -103,6 +103,8 @@ pub(crate) struct SessionState {
      /// Latest task admitted in this runtime, retained across completion and history edits.
      /// Cleared by standalone settings changes to invalidate pending continuation.
      pub(crate) last_started_turn_id: Option<String>,
@@ -348,8 +348,8 @@ index e90bd010c66d8b26f5dce54ac3b92a82690803df..721faa6cadb0c84f60fd89ca55f6d234
      /// Latest regular turn, retained across completion, settings changes, and compaction.
      pub(crate) turn_attribution: Option<TurnAttribution>,
      /// Explicit namespaces from the recovered turn's own rollout record.
-@@ -158,6 +160,7 @@ impl SessionState {
-             additional_context: AdditionalContextStore::default(),
+@@ -161,6 +163,7 @@ impl SessionState {
+             mcp_dependency_prompted: HashSet::new(),
              previous_turn_settings: None,
              last_started_turn_id: None,
 +            last_completed_turn_id: None,

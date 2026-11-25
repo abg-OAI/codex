@@ -33,9 +33,14 @@ impl Session {
         // replacement history covers model items, but does not carry this lifecycle state.
         let latest_status = history.iter().rev().find(|item| {
             matches!(item,
-            RolloutItem::EventMsg(event) if agent_status_from_event(event).is_some())
+            RolloutItem::EventMsg { event, .. } if agent_status_from_event(event).is_some())
         });
-        if let Some(terminal @ RolloutItem::EventMsg(EventMsg::TurnAborted(event))) = latest_status
+        if let Some(
+            terminal @ RolloutItem::EventMsg {
+                event: EventMsg::TurnAborted(event),
+                ..
+            },
+        ) = latest_status
             && matches!(
                 event.reason,
                 TurnAbortReason::Interrupted | TurnAbortReason::BudgetLimited
@@ -166,7 +171,7 @@ mod tests {
             if interrupted {
                 assert_eq!(
                     context.items.iter().rev().find_map(|item| match item {
-                        RolloutItem::EventMsg(event) => agent_status_from_event(event),
+                        RolloutItem::EventMsg { event, .. } => agent_status_from_event(event),
                         _ => None,
                     }),
                     Some(AgentStatus::Interrupted),
@@ -343,7 +348,10 @@ mod tests {
         assert!(resume.dynamic_tools.as_ref().unwrap().tools.is_empty());
         assert!(matches!(
             persisted.last(),
-            Some(RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(_)))
+            Some(RolloutItem::EventMsg {
+                event: EventMsg::ThreadSettingsApplied(_),
+                ..
+            })
         ));
         assert_eq!(
             session.clone_history().await.annotated_items(),

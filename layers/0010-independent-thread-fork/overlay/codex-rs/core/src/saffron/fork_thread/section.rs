@@ -9,9 +9,8 @@
 use std::time::Duration;
 
 use codex_protocol::ThreadId;
-use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem;
+use codex_protocol::dynamic_tools::DynamicToolCallResult;
 use codex_protocol::dynamic_tools::DynamicToolNamespaceTool;
-use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_tools::ToolName;
 use serde::Deserialize;
@@ -222,33 +221,22 @@ async fn request<T: DeserializeOwned>(
         _ = tokio::time::sleep(REQUEST_TIMEOUT) => {
             // Resolve the existing pending request so the item has a terminal
             // event. A late client receipt cannot restart or duplicate the move.
-            invocation.session.notify_dynamic_tool_response(&call_id, DynamicToolResponse {
-                content_items: vec![DynamicToolCallOutputContentItem::InputText {
-                    text: "Desktop placement request timed out; its outcome is unconfirmed".to_string(),
-                }],
-                success: false,
+            invocation.session.notify_dynamic_tool_response(&call_id, DynamicToolCallResult::Error {
+                error_message: "Desktop placement request timed out; its outcome is unconfirmed".to_string(),
             }).await;
             future.await
         }
     }.ok_or_else(|| "Desktop placement request was cancelled".to_string())?;
-    decode(response)
+    let (text, success) = response.into_text_response();
+    decode(&text, success)
 }
 
 /// Decodes the app's JSON text without treating human error text as success.
-fn decode<T: DeserializeOwned>(response: DynamicToolResponse) -> Result<T, String> {
-    let text = response
-        .content_items
-        .into_iter()
-        .filter_map(|item| match item {
-            DynamicToolCallOutputContentItem::InputText { text } => Some(text),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    if !response.success {
+fn decode<T: DeserializeOwned>(text: &str, success: bool) -> Result<T, String> {
+    if !success {
         return Err(format!("Desktop placement request failed: {text}"));
     }
-    serde_json::from_str(&text)
+    serde_json::from_str(text)
         .map_err(|error| format!("Desktop placement response is invalid: {error}"))
 }
 
@@ -328,8 +316,10 @@ mod tests {
     use crate::tools::context::ToolCallSource;
     use crate::tools::context::ToolPayload;
     use crate::turn_diff_tracker::TurnDiffTracker;
+    use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem;
     use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
     use codex_protocol::dynamic_tools::DynamicToolNamespaceSpec;
+    use codex_protocol::dynamic_tools::DynamicToolResponse;
     use codex_protocol::items::TurnItem;
     use codex_protocol::protocol::EventMsg;
     use std::sync::Arc;
@@ -362,13 +352,7 @@ mod tests {
     /// Error text never becomes a placement confirmation.
     #[test]
     fn failed_tool_response_is_not_decoded_as_success() {
-        let response = DynamicToolResponse {
-            success: false,
-            content_items: vec![DynamicToolCallOutputContentItem::InputText {
-                text: "unavailable".to_string(),
-            }],
-        };
-        assert!(decode::<Listing>(response).is_err());
+        assert!(decode::<Listing>("unavailable", false).is_err());
     }
 
     /// Namespaced registrations retain client routing and move confirmation.
@@ -447,10 +431,8 @@ mod tests {
                 session
                     .notify_dynamic_tool_response(
                         &call.id,
-                        DynamicToolResponse {
-                            content_items: vec![DynamicToolCallOutputContentItem::InputText {
-                                text: value.to_string(),
-                            }],
+                        DynamicToolCallResult::StructuredContent {
+                            structured_content: value,
                             success,
                         },
                     )
@@ -756,12 +738,12 @@ mod tests {
                 .session
                 .notify_dynamic_tool_response(
                     &call.id,
-                    DynamicToolResponse {
+                    DynamicToolCallResult::ContentItems(DynamicToolResponse {
                         content_items: vec![DynamicToolCallOutputContentItem::InputText {
                             text: response.to_string(),
                         }],
                         success,
-                    },
+                    }),
                 )
                 .await;
             return;

@@ -2002,18 +2002,18 @@ index ad871395687a5a0d577ff978ceb5e8ce06b3c75b..f33041fa60c794385e49dc3e40152cbc
      .await;
      Ok(TurnInputSubmission::Accepted)
 diff --git a/codex-rs/core/src/state/turn.rs b/codex-rs/core/src/state/turn.rs
-index dc7d916b253cae2ab982ab5cbcc4fe2bc9403863..3cad33d0a78e9f16d2bda1e40618b8a48864fcd2 100644
+index d54ec6ef514c25bab003c77cda46e5d8c8321642..098e5eb1bc07fc0dc59c272dc6d0ecf6e414a24f 100644
 --- a/codex-rs/core/src/state/turn.rs
 +++ b/codex-rs/core/src/state/turn.rs
-@@ -22,6 +22,7 @@ use tokio::sync::oneshot;
-
+@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
+ 
  use super::TurnTokenUsage;
  use crate::agent::types::AgentExecutionGuard;
 +use crate::saffron::subagent_completion::AncestorTurnRetentionGuard;
+ use crate::session::PendingUserInput;
  use crate::session::SamplingInterrupt;
  use crate::session::TurnInput;
- use crate::session::TurnInputQueue;
-@@ -94,11 +95,12 @@ pub(crate) struct RunningTask {
+@@ -97,11 +98,12 @@ pub(crate) struct RunningTask {
      pub(crate) mcp_elicitation_cancellation: CancellationToken,
      pub(crate) handle: AbortOnDropHandle<()>,
      pub(crate) turn_context: Arc<TurnContext>,
@@ -2027,9 +2027,9 @@ index dc7d916b253cae2ab982ab5cbcc4fe2bc9403863..3cad33d0a78e9f16d2bda1e40618b8a4
      pub(crate) _diagnostics_guard: GaugeGuard,
      // Timer recorded when the task drops to capture the full turn duration.
      pub(crate) _timer: Option<codex_otel::Timer>,
-@@ -113,6 +115,9 @@ pub(crate) struct TurnState {
+@@ -116,6 +118,9 @@ pub(crate) struct TurnState {
      pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
-     pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
+     pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolCallResult>>,
      pub(crate) pending_input: TurnInputQueue,
 +    /// Leases transferred from triggering mailbox items stay with the active
 +    /// turn across the queued-to-running handoff and through its lifecycle.

@@ -547,13 +547,15 @@ index 42418e9b09b2c27aeb6e122013ccbe7151ee33fa..dd9de5b458e7447e2918ccb3ec2b64a8
              .replace_rollout_path_if_current(thread_id, source_path, next.rollout_path())
              .await
 diff --git a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
-index 0f4649fb88d0eee562a60c117c07d2c3c437b279..77ea445a4dbe91295bb95ac87077a50c4b5a9bfa 100644
+index aac96bcf78c65e8b7415e585be05758f1751b59c..6a99b679188b354bb208233e3b1eac55f8cc3d3f 100644
 --- a/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
 +++ b/codex-rs/thread-store/src/local/live_writer/segments/tests.rs
-@@ -304,6 +304,21 @@ async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dy
+@@ -446,7 +446,22 @@ async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dy
+         Some(RolloutItem::Compacted(_))
      ));
      let (items, _, _) = RolloutRecorder::load_rollout_items(&path).await?;
-     assert!(items.iter().any(|item| matches!(item, RolloutItem::EventMsg(EventMsg::TurnStarted(event)) if event.turn_id == "before")));
+-    assert!(items.iter().any(|item| matches!(item, RolloutItem::EventMsg(EventMsg::TurnStarted(event)) if event.turn_id == "before")));
++    assert!(items.iter().any(|item| matches!(item, RolloutItem::EventMsg { event: EventMsg::TurnStarted(event), .. } if event.turn_id == "before")));
 +    let fork = store
 +        .prepare_fork(crate::PrepareForkParams {
 +            thread_id: id,
@@ -572,7 +574,7 @@ index 0f4649fb88d0eee562a60c117c07d2c3c437b279..77ea445a4dbe91295bb95ac87077a50c
      store
          .append_items(AppendThreadItemsParams {
              thread_id: id,
-@@ -348,6 +363,34 @@ async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dy
+@@ -493,6 +508,34 @@ async fn active_turn_checkpoint_rotates_before_completion() -> Result<(), Box<dy
          })
          .await?;
      assert_native_turn_pages(&store, id).await?;
