@@ -202,6 +202,19 @@ async fn promote(
                     )
                 })?,
         );
+        if id == source_id
+            && thread
+                .session
+                .services
+                .thread_store
+                .as_any()
+                .is::<codex_thread_store::LocalThreadStore>()
+        {
+            anyhow::ensure!(
+                thread.config_snapshot().await.history_mode == ThreadHistoryMode::Paginated,
+                "Promoting a local subagent requires a paginated source thread"
+            );
+        }
         threads.push(thread);
     }
     let mut admission = Vec::new();

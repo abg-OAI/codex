@@ -709,13 +709,14 @@ async fn resumed_analytics_validates_openai_destination(
         .expect("unshared thread manager state")
         .analytics_events_client = Some(startup_analytics);
 
-    let original = manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let original = crate::test_support::start_saved_legacy_thread(
+        &manager,
+        StartThreadOptions {
             ..StartThreadOptions::new(config.clone())
-        })
-        .await
-        .expect("start original thread");
+        },
+    )
+    .await
+    .expect("start original thread");
     original.thread.ensure_rollout_materialized().await;
     original.thread.flush_rollout().await.unwrap();
     original.thread.shutdown_and_wait().await.unwrap();
@@ -980,18 +981,16 @@ async fn thread_id_generator_applies_to_roots_children_and_forks() {
         ThreadId::from_u128(/*value*/ 0x018f_0000_0000_7000_8000_0000_0000_0003),
     ];
     let next_id = std::sync::atomic::AtomicUsize::new(0);
-    let manager = ThreadManager::with_models_provider_and_home_for_tests(
+    let manager = ThreadManager::with_models_provider_home_and_state_for_tests(
         CodexAuth::from_api_key("dummy"),
         config.model_provider.clone(),
         config.codex_home.to_path_buf(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        init_state_db(&config).await,
     )
     .with_thread_id_generator(move || generated_ids[next_id.fetch_add(1, Ordering::Relaxed)]);
     let root = manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
-            ..StartThreadOptions::new(config.clone())
-        })
+        .start_thread(StartThreadOptions::new(config.clone()))
         .await
         .expect("start root thread");
     let child = root
@@ -1020,8 +1019,22 @@ async fn thread_id_generator_applies_to_roots_children_and_forks() {
         )
         .await
         .expect("spawn actual child agent");
+    root.thread.ensure_rollout_materialized().await;
+    root.thread.flush_rollout().await.unwrap();
+    let prepared = manager
+        .thread_store()
+        .prepare_fork(codex_thread_store::PrepareForkParams {
+            thread_id: root.thread_id,
+            boundary: codex_thread_store::ForkBoundary::Latest,
+        })
+        .await
+        .expect("prepare fork");
     let fork = manager
-        .spawn_legacy_subagent(root.thread_id, StartThreadOptions::new(config))
+        .fork_prepared_thread(
+            StartThreadOptions::new(config),
+            prepared,
+            codex_thread_store::InheritedHistoryVisibility::Full,
+        )
         .await
         .expect("fork root thread");
 
@@ -1054,13 +1067,14 @@ async fn thread_id_generator_does_not_replace_resumed_thread_id() {
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     )
     .with_thread_id_generator(move || original_thread_id);
-    let original = original_manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let original = crate::test_support::start_saved_legacy_thread(
+        &original_manager,
+        StartThreadOptions {
             ..StartThreadOptions::new(config.clone())
-        })
-        .await
-        .expect("start source thread");
+        },
+    )
+    .await
+    .expect("start source thread");
     original.thread.ensure_rollout_materialized().await;
     original
         .thread
@@ -1120,13 +1134,14 @@ async fn child_session_inherits_resumed_parent_auth(host_child: bool) {
         config.codex_home.to_path_buf(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     );
-    let original = manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let original = crate::test_support::start_saved_legacy_thread(
+        &manager,
+        StartThreadOptions {
             ..StartThreadOptions::new(config.clone())
-        })
-        .await
-        .expect("start original thread");
+        },
+    )
+    .await
+    .expect("start original thread");
     original.thread.ensure_rollout_materialized().await;
     original
         .thread
@@ -2948,6 +2963,7 @@ async fn selected_capability_roots_round_trip_through_fork() {
             initial_history: InitialHistory::Forked(vec![RolloutItem::SessionMeta(Box::new(
                 SessionMetaLine {
                     meta: SessionMeta {
+                        history_mode: ThreadHistoryMode::Paginated,
                         selected_capability_roots: selected_roots.clone(),
                         ..SessionMeta::default()
                     },
@@ -3043,6 +3059,7 @@ async fn selected_capability_roots_respect_startup_precedence_and_isolation() {
                 initial_history: InitialHistory::Forked(vec![RolloutItem::SessionMeta(Box::new(
                     SessionMetaLine {
                         meta: SessionMeta {
+                            history_mode: ThreadHistoryMode::Paginated,
                             selected_capability_roots: vec![root("saved")],
                             ..SessionMeta::default()
                         },
@@ -3124,9 +3141,9 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
     let default_cwd = config.cwd.clone();
     let mut source_config = config.clone();
     source_config.cwd = selected_cwd.clone();
-    let source = manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let source = crate::test_support::start_saved_legacy_thread(
+        &manager,
+        StartThreadOptions {
             environments: Some(
                 environments
                     .clone()
@@ -3135,9 +3152,10 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
                     .collect(),
             ),
             ..StartThreadOptions::new(source_config)
-        })
-        .await
-        .expect("start source thread");
+        },
+    )
+    .await
+    .expect("start source thread");
     source.thread.ensure_rollout_materialized().await;
     source
         .thread
@@ -3203,7 +3221,10 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
     let forked = manager
         .fork_legacy_thread(
             ForkSnapshot::Interrupted,
-            crate::StartThreadOptions::new(config),
+            crate::StartThreadOptions::new(crate::config::Config {
+                ephemeral: true,
+                ..config
+            }),
             rollout_path,
         )
         .await
@@ -3322,13 +3343,14 @@ async fn resume_active_thread_from_rollout_returns_running_thread() {
         /*external_time_provider*/ None,
     );
 
-    let source = manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let source = crate::test_support::start_saved_legacy_thread(
+        &manager,
+        StartThreadOptions {
             ..StartThreadOptions::new(config.clone())
-        })
-        .await
-        .expect("start source thread");
+        },
+    )
+    .await
+    .expect("start source thread");
     source.thread.ensure_rollout_materialized().await;
     source
         .thread
@@ -3391,13 +3413,14 @@ async fn resume_stopped_thread_from_rollout_spawns_new_thread() {
         /*external_time_provider*/ None,
     );
 
-    let source = manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let source = crate::test_support::start_saved_legacy_thread(
+        &manager,
+        StartThreadOptions {
             ..StartThreadOptions::new(config.clone())
-        })
-        .await
-        .expect("start source thread");
+        },
+    )
+    .await
+    .expect("start source thread");
     source.thread.ensure_rollout_materialized().await;
     source
         .thread
@@ -3467,15 +3490,16 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
         /*external_time_provider*/ None,
     );
 
-    let source = manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let source = crate::test_support::start_saved_legacy_thread(
+        &manager,
+        StartThreadOptions {
             thread_source: Some(ThreadSource::User),
             environments: Some(Vec::new()),
             ..StartThreadOptions::new(config.clone())
-        })
-        .await
-        .expect("start source thread");
+        },
+    )
+    .await
+    .expect("start source thread");
     source.thread.ensure_rollout_materialized().await;
     source
         .thread
@@ -3660,7 +3684,10 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
     let forked = manager
         .fork_legacy_thread(
             ForkSnapshot::Interrupted,
-            crate::StartThreadOptions::new(config),
+            crate::StartThreadOptions::new(crate::config::Config {
+                ephemeral: true,
+                ..config
+            }),
             rollout_path,
         )
         .await
@@ -4299,17 +4326,18 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
         /*external_time_provider*/ None,
     );
 
-    let source = manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let source = crate::test_support::start_saved_legacy_thread(
+        &manager,
+        StartThreadOptions {
             initial_history: InitialHistory::Forked(vec![
                 RolloutItem::ResponseItem(user_msg("hello").into()),
                 RolloutItem::ResponseItem(assistant_msg("partial").into()),
             ]),
             ..StartThreadOptions::new(config.clone())
-        })
-        .await
-        .expect("create source thread from completed history");
+        },
+    )
+    .await
+    .expect("create source thread from completed history");
     let source_path = source
         .thread
         .rollout_path()
@@ -4322,21 +4350,11 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
     let expected_turn_id = source_snapshot_state.active_turn_id.clone();
     assert_eq!(expected_turn_id, None);
 
-    let forked = manager
-        .fork_legacy_thread(
-            ForkSnapshot::Interrupted,
-            crate::StartThreadOptions::new(config.clone()),
-            source_path,
-        )
-        .await
-        .expect("fork interrupted snapshot");
-    let forked_path = forked
-        .thread
-        .rollout_path()
-        .expect("forked rollout path should exist");
-    let history = RolloutRecorder::get_rollout_history(&forked_path)
-        .await
-        .expect("read forked rollout history");
+    let history = fork_history_from_snapshot(
+        ForkSnapshot::Interrupted,
+        source_history,
+        InterruptedTurnHistoryMarker::ContextualUser,
+    );
     assert!(!snapshot_turn_state(&history).ends_mid_turn);
     let rollout_items: Vec<_> = history
         .get_rollout_items()
@@ -4414,9 +4432,9 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
         /*external_time_provider*/ None,
     );
 
-    let source = manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let source = crate::test_support::start_saved_legacy_thread(
+        &manager,
+        StartThreadOptions {
             initial_history: InitialHistory::Forked(vec![
                 RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                     turn_attribution: None,
@@ -4431,9 +4449,10 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
                 RolloutItem::ResponseItem(assistant_msg("partial").into()),
             ]),
             ..StartThreadOptions::new(config.clone())
-        })
-        .await
-        .expect("create source thread from explicit partial history");
+        },
+    )
+    .await
+    .expect("create source thread from explicit partial history");
     let source_path = source
         .thread
         .rollout_path()
@@ -4453,21 +4472,11 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
         },
     );
 
-    let forked = manager
-        .fork_legacy_thread(
-            ForkSnapshot::Interrupted,
-            crate::StartThreadOptions::new(config.clone()),
-            source_path,
-        )
-        .await
-        .expect("fork interrupted snapshot");
-    let forked_path = forked
-        .thread
-        .rollout_path()
-        .expect("forked rollout path should exist");
-    let history = RolloutRecorder::get_rollout_history(&forked_path)
-        .await
-        .expect("read forked rollout history");
+    let history = fork_history_from_snapshot(
+        ForkSnapshot::Interrupted,
+        source_history,
+        InterruptedTurnHistoryMarker::ContextualUser,
+    );
     let rollout_items: Vec<_> = history
         .get_rollout_items()
         .iter()
@@ -4522,42 +4531,34 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
         /*external_time_provider*/ None,
     );
 
-    let source = manager
-        .start_thread(StartThreadOptions {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let source = crate::test_support::start_saved_legacy_thread(
+        &manager,
+        StartThreadOptions {
             initial_history: InitialHistory::Forked(vec![
                 RolloutItem::ResponseItem(user_msg("hello").into()),
                 RolloutItem::ResponseItem(assistant_msg("partial").into()),
             ]),
             ..StartThreadOptions::new(config.clone())
-        })
-        .await
-        .expect("create source thread from partial history");
+        },
+    )
+    .await
+    .expect("create source thread from partial history");
     let source_path = source
         .thread
         .rollout_path()
         .expect("source rollout path should exist");
+    source.thread.shutdown_and_wait().await.unwrap();
+    manager.remove_thread(&source.thread_id).await;
     let source_history = RolloutRecorder::get_rollout_history(&source_path)
         .await
         .expect("read source rollout history");
     assert!(snapshot_turn_state(&source_history).ends_mid_turn);
-    manager.remove_thread(&source.thread_id).await;
 
-    let forked = manager
-        .fork_legacy_thread(
-            ForkSnapshot::Interrupted,
-            crate::StartThreadOptions::new(config.clone()),
-            source_path,
-        )
-        .await
-        .expect("fork interrupted snapshot");
-    let forked_path = forked
-        .thread
-        .rollout_path()
-        .expect("forked rollout path should exist");
-    let history = RolloutRecorder::get_rollout_history(&forked_path)
-        .await
-        .expect("read forked rollout history");
+    let history = fork_history_from_snapshot(
+        ForkSnapshot::Interrupted,
+        source_history,
+        InterruptedTurnHistoryMarker::ContextualUser,
+    );
     assert!(!snapshot_turn_state(&history).ends_mid_turn);
 
     let forked_rollout_items: Vec<_> = history
@@ -4581,22 +4582,11 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
         1,
     );
 
-    manager.remove_thread(&forked.thread_id).await;
-    let reforked = manager
-        .fork_legacy_thread(
-            ForkSnapshot::Interrupted,
-            crate::StartThreadOptions::new(config.clone()),
-            forked_path,
-        )
-        .await
-        .expect("re-fork interrupted snapshot");
-    let reforked_path = reforked
-        .thread
-        .rollout_path()
-        .expect("re-forked rollout path should exist");
-    let reforked_history = RolloutRecorder::get_rollout_history(&reforked_path)
-        .await
-        .expect("read re-forked rollout history");
+    let reforked_history = fork_history_from_snapshot(
+        ForkSnapshot::Interrupted,
+        history,
+        InterruptedTurnHistoryMarker::ContextualUser,
+    );
     let reforked_rollout_items: Vec<_> = reforked_history
         .get_rollout_items()
         .iter()
