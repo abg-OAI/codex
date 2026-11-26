@@ -113,7 +113,7 @@ pub(super) async fn delete_thread(
     let thread_id = params.thread_id;
     let _lifecycle_guard = store.live_writer_locks.lock_lifecycle(thread_id).await;
     let _live_writer_guard = store.live_writer_locks.lock(thread_id).await;
-    let mut writer_guards = store.acquire_writer_locks(&[thread_id]).await?;
+    let writer_guards = store.acquire_writer_locks(&[thread_id]).await?;
     let reference_index = scan_reference_index(store).await?;
     let thread_rollouts = ThreadRollouts::from_index(&reference_index, thread_id);
     check_attached_children(&reference_index, &[thread_id])?;
@@ -121,13 +121,17 @@ pub(super) async fn delete_thread(
     if let Some(cleanup) = &store.thread_data_cleanup {
         cleanup(vec![thread_id]).await?;
     }
-    let found_rollout =
-        match delete_thread_after_reference_check(store, thread_rollouts, &mut writer_guards).await
-        {
-            Ok(()) => true,
-            Err(ThreadStoreError::ThreadNotFound { .. }) => false,
-            Err(err) => return Err(err),
-        };
+    let found_rollout = match delete_thread_after_reference_check(
+        store,
+        thread_rollouts,
+        &writer_guards[&thread_id],
+    )
+    .await
+    {
+        Ok(()) => true,
+        Err(ThreadStoreError::ThreadNotFound { .. }) => false,
+        Err(err) => return Err(err),
+    };
     let deleted_state_rows = delete_state_rows(store, &[thread_id]).await?;
     if found_rollout || deleted_state_rows > 0 {
         Ok(())
@@ -158,7 +162,7 @@ pub(super) async fn delete_threads(
         _live_writer_guards.push(store.live_writer_locks.lock(thread_id).await);
     }
 
-    let mut writer_guards = store.acquire_writer_locks(&lock_thread_ids).await?;
+    let writer_guards = store.acquire_writer_locks(&lock_thread_ids).await?;
     let reference_index = scan_reference_index(store).await?;
     let thread_rollouts = thread_ids
         .iter()
@@ -170,8 +174,8 @@ pub(super) async fn delete_threads(
         cleanup(thread_ids.clone()).await?;
     }
     for thread_rollouts in thread_rollouts {
-        match delete_thread_after_reference_check(store, thread_rollouts, &mut writer_guards).await
-        {
+        let guard = &writer_guards[&thread_rollouts.thread_id];
+        match delete_thread_after_reference_check(store, thread_rollouts, guard).await {
             Ok(()) | Err(ThreadStoreError::ThreadNotFound { .. }) => {}
             Err(err) => return Err(err),
         }
@@ -248,7 +252,7 @@ fn referenced_thread_error(thread_id: codex_protocol::ThreadId) -> ThreadStoreEr
 async fn delete_thread_after_reference_check(
     store: &LocalThreadStore,
     mut thread_rollouts: ThreadRollouts,
-    writer_guards: &mut Vec<super::WriterLockGuard>,
+    writer: &super::WriterLockGuard,
 ) -> ThreadStoreResult<()> {
     let thread_id = thread_rollouts.thread_id;
     let thread_id_str = thread_id.to_string();
@@ -290,11 +294,11 @@ async fn delete_thread_after_reference_check(
     // Stop queued file work before removing files, retaining ownership until cleanup finishes.
     let live_entry = store.live_recorders.lock().await.remove(&thread_id);
     if let Some(entry) = live_entry {
-        writer_guards.push(entry.writer_lock.clone());
         super::live_writer::discard_recorders(entry).await?;
     }
     let found_rollout_path = !thread_rollouts.paths.is_empty();
     for rollout_path in thread_rollouts.paths {
+        super::helpers::recover_checkpoint(&rollout_path, writer).await?;
         delete_rollout_file(store, rollout_path.as_path())?;
     }
     // History readers can project while a thread is live. Unlink the rollouts before

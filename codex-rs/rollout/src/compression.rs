@@ -91,7 +91,6 @@ pub async fn open_rollout_line_reader(path: &Path) -> io::Result<RolloutLineRead
 }
 
 /// Returns the compressed `.jsonl.zst` path for a rollout path.
-#[cfg(test)]
 pub(crate) fn compressed_rollout_path(path: &Path) -> PathBuf {
     path::compressed_rollout_path(path)
 }
@@ -968,6 +967,18 @@ mod worker {
                 /*compressed_bytes*/ None,
             ));
         };
+        // A dead writer may have left a partial checkpoint. Its intent records
+        // the identity of the plain file and needs that inode for replay.
+        match crate::ensure_checkpoint_complete(path) {
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                return Ok(CompressionMeasurement::new(
+                    CompressionOutcome::SkippedBusy,
+                    source_bytes,
+                    /*compressed_bytes*/ None,
+                ));
+            }
+            result => result?,
+        }
         if !same_file_state(path, &before)
             .inspect_err(|err| FailureMetric::File(trigger).record("recheck_source", err))?
         {
