@@ -2002,7 +2002,7 @@ index ad871395687a5a0d577ff978ceb5e8ce06b3c75b..f33041fa60c794385e49dc3e40152cbc
      .await;
      Ok(TurnInputSubmission::Accepted)
 diff --git a/codex-rs/core/src/state/turn.rs b/codex-rs/core/src/state/turn.rs
-index d54ec6ef514c25bab003c77cda46e5d8c8321642..098e5eb1bc07fc0dc59c272dc6d0ecf6e414a24f 100644
+index 39b587c96bca682c37866498e523ac28c5d570b3..e7a8b4fac8a12d5126021c80a28ac2a35f286411 100644
 --- a/codex-rs/core/src/state/turn.rs
 +++ b/codex-rs/core/src/state/turn.rs
 @@ -21,6 +21,7 @@ use tokio::sync::oneshot;
@@ -2012,8 +2012,8 @@ index d54ec6ef514c25bab003c77cda46e5d8c8321642..098e5eb1bc07fc0dc59c272dc6d0ecf6
 +use crate::saffron::subagent_completion::AncestorTurnRetentionGuard;
  use crate::session::PendingUserInput;
  use crate::session::SamplingInterrupt;
- use crate::session::TurnInput;
-@@ -97,11 +98,12 @@ pub(crate) struct RunningTask {
+ use crate::session::TurnInputQueue;
+@@ -96,9 +97,10 @@ pub(crate) struct RunningTask {
      pub(crate) mcp_elicitation_cancellation: CancellationToken,
      pub(crate) handle: AbortOnDropHandle<()>,
      pub(crate) turn_context: Arc<TurnContext>,
@@ -2021,13 +2021,11 @@ index d54ec6ef514c25bab003c77cda46e5d8c8321642..098e5eb1bc07fc0dc59c272dc6d0ecf6
 +    pub(crate) agent_execution_guard: Option<AgentExecutionGuard>,
      /// Follows the task into whichever finalizer claims its terminal event.
      pub(crate) outcome_handoff: Option<TaskTrackerToken>,
-     /// Unrecorded input retained during host admission or preparation that can wait on the roster.
-     pub(crate) pending_initial_input: Option<Vec<TurnInput>>,
 +    pub(crate) ancestor_turn_retention_guard: Option<AncestorTurnRetentionGuard>,
      pub(crate) _diagnostics_guard: GaugeGuard,
      // Timer recorded when the task drops to capture the full turn duration.
      pub(crate) _timer: Option<codex_otel::Timer>,
-@@ -116,6 +118,9 @@ pub(crate) struct TurnState {
+@@ -113,6 +115,9 @@ pub(crate) struct TurnState {
      pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
      pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolCallResult>>,
      pub(crate) pending_input: TurnInputQueue,
@@ -2038,11 +2036,11 @@ index d54ec6ef514c25bab003c77cda46e5d8c8321642..098e5eb1bc07fc0dc59c272dc6d0ecf6
      pub(crate) tool_calls: u64,
      pub(crate) has_memory_citation: bool,
 diff --git a/codex-rs/core/src/tasks/admission.rs b/codex-rs/core/src/tasks/admission.rs
-index 14b91b39042ae4a7cd41ef6c76d82dac2992dbcc..df0061d472650471d5ea74135c3180180a41b2bf 100644
+index 75cffe6d5781afefddde6b64ae9194a772a47cd8..b5ddf11e0e2ec6a130be15897ab0231b3a605d7c 100644
 --- a/codex-rs/core/src/tasks/admission.rs
 +++ b/codex-rs/core/src/tasks/admission.rs
 @@ -69,7 +69,7 @@ pub(super) async fn admit(
-     let input = task.pending_initial_input.take().ok_or_else(|| {
+     let input = context.take_initial_input().ok_or_else(|| {
          CodexErr::Fatal("initial input missing from the task awaiting host admission".into())
      })?;
 -    task._agent_execution_guard = Some(guard);
@@ -2050,7 +2048,7 @@ index 14b91b39042ae4a7cd41ef6c76d82dac2992dbcc..df0061d472650471d5ea74135c318018
      turn.admitted = true;
      Ok(input)
  }
-@@ -130,6 +130,7 @@ impl Session {
+@@ -129,6 +129,7 @@ impl Session {
              .remove::<SubmittedAdditionalContext>();
          for item in recordable_inputs(
              self,
@@ -2059,7 +2057,7 @@ index 14b91b39042ae4a7cd41ef6c76d82dac2992dbcc..df0061d472650471d5ea74135c318018
              &input,
              &pending_input,
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a42d8f1f36 100644
+index f37c6e54ba2e707f3a58b02e0c76f19d0e880d03..41d5a2097b8022c12992d9e82a8ec5a14e1f6749 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
 @@ -1,5 +1,7 @@
@@ -2070,7 +2068,7 @@ index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a4
  mod lifecycle;
  mod regular;
  mod review;
-@@ -104,6 +106,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
+@@ -102,6 +104,12 @@ pub(crate) enum InterruptedTurnHistoryMarker {
      Developer,
  }
  
@@ -2083,7 +2081,7 @@ index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a4
  impl InterruptedTurnHistoryMarker {
      pub(crate) fn from_config_and_version(
          config: &Config,
-@@ -299,6 +307,9 @@ where
+@@ -297,6 +305,9 @@ where
      }
  }
  
@@ -2093,7 +2091,7 @@ index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a4
  impl Session {
      pub async fn spawn_task<T: SessionTask>(
          self: &Arc<Self>,
-@@ -417,8 +428,28 @@ impl Session {
+@@ -403,8 +414,28 @@ impl Session {
              };
          };
          debug_assert!(turn.task.is_none());
@@ -2123,7 +2121,7 @@ index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a4
          self.input_queue
              .extend_pending_input_for_turn_state(&turn_state, pending_items)
              .await;
-@@ -445,6 +476,12 @@ impl Session {
+@@ -433,6 +464,12 @@ impl Session {
          };
          // Native admission is synchronous, including unrestricted turns that have no guard.
          turn.admitted = host_admission.is_none();
@@ -2136,19 +2134,18 @@ index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a4
          let done_clone = Arc::clone(&done);
          let session = Arc::clone(self);
          let ctx = Arc::clone(&turn_context);
-@@ -564,9 +601,10 @@ impl Session {
+@@ -552,8 +589,9 @@ impl Session {
              },
              cancellation_token,
              turn_context: Arc::clone(&turn_context),
 -            _agent_execution_guard: agent_execution_guard,
 +            agent_execution_guard,
              outcome_handoff,
-             pending_initial_input,
 +            ancestor_turn_retention_guard,
              _diagnostics_guard: ACTIVE_TURNS.track(),
              _timer: timer,
          };
-@@ -701,7 +739,11 @@ impl Session {
+@@ -685,7 +723,11 @@ impl Session {
          async move {
              let had_active_turn = turn.is_some();
              session
@@ -2161,7 +2158,7 @@ index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a4
                  .await;
              if !had_active_turn {
                  session.cancel_mcp_startup();
-@@ -710,14 +752,33 @@ impl Session {
+@@ -694,14 +736,33 @@ impl Session {
      }
  
      pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {
@@ -2196,7 +2193,7 @@ index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a4
      ) {
          let mut aborted_turn = false;
          let mut active_turn_to_clear = None;
-@@ -743,8 +804,16 @@ impl Session {
+@@ -727,8 +788,16 @@ impl Session {
              // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
              self.input_queue.clear_pending(&active_turn).await;
          }
@@ -2215,7 +2212,7 @@ index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a4
          }
      }
  
-@@ -829,7 +898,15 @@ impl Session {
+@@ -813,7 +882,15 @@ impl Session {
              && !self.work_budget().is_exhausted();
          let finishing = CancellationToken::new();
          let finish_recording = finishing.clone().drop_guard();
@@ -2232,14 +2229,14 @@ index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a4
              let mut active = self.active_turn.lock().await;
              let active_turn = active.as_mut()?;
              if !Arc::ptr_eq(&active_turn.task.as_ref()?.turn_context, &turn_context) {
-@@ -852,11 +929,13 @@ impl Session {
-             active_turn.finishing = Some(finishing);
+@@ -837,11 +914,13 @@ impl Session {
+             let initial_input = turn_context.take_initial_input();
              (
                  Arc::clone(&active_turn.turn_state),
--                (task._agent_execution_guard.is_none() && task.pending_initial_input.is_some())
-+                (task.agent_execution_guard.is_none() && task.pending_initial_input.is_some())
+-                (task._agent_execution_guard.is_none() && initial_input.is_some())
++                (task.agent_execution_guard.is_none() && initial_input.is_some())
                      .then_some(task.task),
-                 task.pending_initial_input,
+                 initial_input,
                  task.outcome_handoff,
                  sampling_interrupted,
 +                task.agent_execution_guard,
@@ -2247,7 +2244,7 @@ index b1c4e80f2d619743910e58eea9a0df89f8f060ef..1aa545045cc7f80dbbc7be0420bd51a4
              )
          };
          turn_context
-@@ -1127,6 +1206,8 @@ impl Session {
+@@ -1112,6 +1191,8 @@ impl Session {
              self.send_event(turn_context.as_ref(), event).await;
          }
          drop(outcome_handoff);
@@ -2459,11 +2456,31 @@ index 277f32cce21da4ad4c50815cc70dda7644ccb73b..e27632ea6d751eb2bfc4b1e833e4e872
                  })
                  .await?;
          }
+diff --git a/codex-rs/core/tests/suite/guardian_review.rs b/codex-rs/core/tests/suite/guardian_review.rs
+index f0d47b600b350403df0c77e8c19471188d236002..157d2a5a435b43eaf5f6b6fe2e9c8944dc5cddaf 100644
+--- a/codex-rs/core/tests/suite/guardian_review.rs
++++ b/codex-rs/core/tests/suite/guardian_review.rs
+@@ -805,6 +805,7 @@ async fn guardian_review_recovers_after_compaction(
+                     /*trigger_turn*/ false,
+                 ),
+                 start_options: Default::default(),
++                accepted: None,
+             })
+             .await?;
+     }
 diff --git a/codex-rs/core/tests/suite/scenarios_guardian_agent_messages_tests.rs b/codex-rs/core/tests/suite/scenarios_guardian_agent_messages_tests.rs
-index 514b9145044ece404255cf328f5590ca6d0b9aac..18d8404909df3cdc14574d2771f226b908851fc6 100644
+index 6e4786fcc328c264e2f87ae1030e09f1411bba49..b593ad2d1e768740d2e701d88ace780c36520cd0 100644
 --- a/codex-rs/core/tests/suite/scenarios_guardian_agent_messages_tests.rs
 +++ b/codex-rs/core/tests/suite/scenarios_guardian_agent_messages_tests.rs
-@@ -275,6 +275,7 @@ async fn encrypted_parent_reply_survives_incremental_guardian_reviews(
+@@ -287,6 +287,7 @@ async fn encrypted_parent_reply_survives_incremental_guardian_reviews(
+             .submit(Op::InterAgentCommunication {
+                 communication: child,
+                 start_options: Default::default(),
++                accepted: None,
+             })
+             .await?;
+     }
+@@ -306,6 +307,7 @@ async fn encrypted_parent_reply_survives_incremental_guardian_reviews(
          .submit(Op::InterAgentCommunication {
              communication,
              start_options: Default::default(),

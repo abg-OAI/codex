@@ -554,7 +554,7 @@ index 0372bf0b84c815aed2cb28275992e438e0171e76..3ef627516007b4ebdae46f858bb05768
          startup_prewarm.abort().await;
      }
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7ffa384ec 100644
+index 8ee2dab8dfd41bff2b64e11ad1b4f53a7bfaf5e7..fcdeee1e890bb12f228f188de96cdbf8696ff334 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -282,6 +282,7 @@ mod mcp_refresh;
@@ -565,7 +565,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
  mod plugin_selection;
  mod realtime_handoff;
  mod realtime_history;
-@@ -1674,7 +1675,12 @@ impl Session {
+@@ -1673,7 +1674,12 @@ impl Session {
      }
  
      pub(crate) fn state_db(&self) -> Option<state_db::StateDbHandle> {
@@ -579,7 +579,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
      }
  
      pub(crate) fn live_thread_for_persistence(
-@@ -1686,7 +1692,12 @@ impl Session {
+@@ -1685,7 +1691,12 @@ impl Session {
      }
  
      pub(crate) fn live_thread(&self) -> Option<&LiveThread> {
@@ -593,13 +593,13 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
      }
  
      pub(crate) async fn set_thread_memory_mode(
-@@ -4238,18 +4249,15 @@ impl Session {
+@@ -4249,18 +4260,15 @@ impl Session {
          let has_user_turn_boundary = items
              .iter()
              .any(|envelope| crate::context_manager::is_user_turn_boundary(&envelope.item));
--        // Prepare settings before publishing tracked evidence so there is no await
+-        // Prepare settings before publishing review evidence so there is no await
 -        // between recording the revision and handing the append to the session.
--        let prepare_before_recording = realtime.is_some() || self.pending_review_writes.is_some();
+-        let prepare_before_recording = realtime.is_some() || self.preserve_review_writes;
 -        let mut early_guard = if prepare_before_recording
 -            && has_user_turn_boundary
 -            && self.reference_context_item().await.is_none()
@@ -621,7 +621,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
              && self.reference_context_item().await.is_none()
              && self.state.lock().await.initial_settings_pending();
          let mut early_settings = if initial_settings_pending {
-@@ -4262,8 +4270,13 @@ impl Session {
+@@ -4273,8 +4281,13 @@ impl Session {
              .map(|envelope| envelope.item.clone())
              .collect::<Vec<_>>();
          let mut review_write = None;
@@ -636,7 +636,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
              let pending_orders = turn_context
                  .extension_data
                  .get::<retained_context::PendingAssistantMessageOrders>();
-@@ -4352,7 +4365,8 @@ impl Session {
+@@ -4361,7 +4374,8 @@ impl Session {
              state
                  .current_time_reminder
                  .note_recorded_items(&response_items);
@@ -646,7 +646,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
          let recorded_through = items
              .iter()
              .filter_map(|item| item.metadata.as_ref()?.history_sequence)
-@@ -4369,39 +4383,23 @@ impl Session {
+@@ -4378,39 +4392,23 @@ impl Session {
          if let Some(RealtimeRecord::Handoff(prepared)) = &realtime {
              self.finish_realtime_handoff(prepared, &items[0]).await;
          } else if !matches!(&realtime, Some(RealtimeRecord::Chunk)) {
@@ -691,7 +691,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
          if turn_context.config.memories.disable_on_external_context
              && let Some(item) = response_items
                  .iter()
-@@ -4944,8 +4942,9 @@ impl Session {
+@@ -4953,8 +4951,9 @@ impl Session {
          }
          let mut delivery = communication.delivery.as_ref();
          let mut result_write = None;
@@ -702,7 +702,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
              state.current_time_reminder.note_recorded_items(&items);
              state.history.record_annotated_items(
                  std::slice::from_mut(&mut response_item),
-@@ -4962,12 +4961,13 @@ impl Session {
+@@ -4971,12 +4970,13 @@ impl Session {
                          .as_ref()
                          .and_then(|d| d.source_tool_call_id.as_ref()),
                  );
@@ -718,7 +718,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
                  RolloutItem::InterAgentCommunicationMetadata {
                      trigger_turn: communication.trigger_turn,
                  },
-@@ -4980,6 +4980,7 @@ impl Session {
+@@ -4989,6 +4989,7 @@ impl Session {
          {
              write.confirm();
          }
@@ -726,7 +726,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
          drop(boundary);
          let [item] = items;
          self.send_event(
-@@ -5093,8 +5094,10 @@ impl Session {
+@@ -5102,8 +5103,10 @@ impl Session {
              Some(history) => history.lock().await.observation_clock.floor_ms(),
              None => None,
          };
@@ -738,7 +738,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
              let complete_replacement =
                  matches!(&installation, CompactedHistoryInstallation::Complete(..));
              let replacement = match installation {
-@@ -5204,7 +5207,7 @@ impl Session {
+@@ -5213,7 +5216,7 @@ impl Session {
                  latest_token_usage_record: state.latest_token_usage_record.clone(),
                  resume_metadata: Some(resume_metadata),
              };
@@ -747,7 +747,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
          };
  
          // Use the replacement captured under the state lock, including goal edits retained
-@@ -5218,19 +5221,20 @@ impl Session {
+@@ -5227,19 +5230,20 @@ impl Session {
              );
          }
  
@@ -774,7 +774,7 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
          {
              let mut state = self.state.lock().await;
              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
-@@ -5620,6 +5624,11 @@ impl Session {
+@@ -5629,6 +5633,11 @@ impl Session {
      }
  
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
@@ -783,10 +783,10 @@ index 0314f75d7b4e31d5257a69281045b8a0ed670a0a..52b5fcb4bed06d86d51e030d48d0b5f7
 +    }
 +
 +    async fn persist_rollout_items_locked(&self, items: &[RolloutItem]) -> bool {
-         self.persist_rollout_items_with_ack(items, /*write*/ None)
-             .await
-     }
-@@ -5927,11 +5936,12 @@ impl Session {
+         Self::append_rollout_items(
+             self.live_thread(),
+             &self.services.local_agent_runtime,
+@@ -5919,11 +5928,12 @@ impl Session {
                  thread_settings::applied_event(self).await,
              ));
          }
