@@ -160,6 +160,7 @@ async fn spawn_publication_child(
                 agent_role: None,
             })),
             options,
+            AgentListingVisibility::Listed,
         )
         .await
         .map(|(agent, _)| agent.thread_id)

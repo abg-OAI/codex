@@ -3174,6 +3174,7 @@ dependencies = [
  "sha1 0.10.6",
  "shlex",
  "similar",
+ "sqlx",
  "sys-locale",
  "tempfile",
  "test-case",
