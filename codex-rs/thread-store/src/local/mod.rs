@@ -330,6 +330,30 @@ impl LocalThreadStore {
         self.state_db.clone()
     }
 
+    /// Finds candidate turns already present in a paginated thread's visible history.
+    pub async fn existing_history_turns(
+        &self,
+        thread_id: ThreadId,
+        turn_ids: &HashSet<String>,
+    ) -> ThreadStoreResult<HashSet<String>> {
+        let lineage = self
+            .resolve_rollout_lineage(thread_id, /*initial_path*/ None)
+            .await?;
+        let pool = self.thread_history_db().await?;
+        let mut existing = HashSet::new();
+        for turn_id in turn_ids {
+            match thread_history::find_visible_turn(pool, &lineage, turn_id).await {
+                Ok(_) => {
+                    existing.insert(turn_id.clone());
+                }
+                Err(ThreadStoreError::InvalidRequest { message })
+                    if message == format!("turn not found: {turn_id}") => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(existing)
+    }
+
     async fn thread_history_db(&self) -> ThreadStoreResult<&sqlx::SqlitePool> {
         if self.state_db.is_none() {
             return Err(ThreadStoreError::Unsupported {
