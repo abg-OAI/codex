@@ -1,4 +1,5 @@
 mod archive_thread;
+mod cold_split;
 mod create_thread;
 mod delete_thread;
 mod helpers;
@@ -132,6 +133,7 @@ use crate::UpdateProjectParams;
 use crate::UpdateThreadMetadataParams;
 use crate::UpdatedProject;
 
+pub use cold_split::ColdSplitOutcome;
 pub use rollout_migration::RolloutMigrationFailureReason;
 pub use rollout_migration::RolloutMigrationMode;
 pub use rollout_migration::RolloutMigrationOptions;
