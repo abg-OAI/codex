@@ -354,6 +354,7 @@ fn startup(
                 permission_profile: PermissionProfileSnapshot::legacy(PermissionProfile::Disabled),
                 shell_environment_policy: Default::default(),
                 exec_policy: None,
+                plugins: Default::default(),
                 mcp_policy: None,
                 network_policy: None,
                 selected_capability_roots: Vec::new(),

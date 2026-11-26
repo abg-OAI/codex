@@ -1,15 +1,15 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 8b8bad583ab12cb0f6d7985dbfc92d3e660f29bc..af5182b9465b1472555c45898525bb04e1ff5c7f 100644
+index 573091edf6a2c1b00495ae3865b8ddddbab210f2..b7df7bd1ededd97babbd46a809cb006c825536c1 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -3145,6 +3145,7 @@ dependencies = [
+@@ -3174,6 +3174,7 @@ dependencies = [
   "sha1 0.10.6",
   "shlex",
   "similar",
 + "sqlx",
+  "sys-locale",
   "tempfile",
   "test-case",
-  "test-log",
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
 index caa9b4da77c8ae870e08b573d90ffad14c0450d0..14a266fafd1902a792fe51c4c246cb15a87e1e55 100644
 --- a/codex-rs/app-server/src/extensions.rs
@@ -1214,10 +1214,10 @@ index a21c2c95c932e6c15d169167b38e043fa02e8755..41fb97a037c9645fb87d744bb6db0d72
      #[instrument(name = "turn_context.make", level = "trace", skip_all)]
      pub(crate) fn make_turn_context(
 diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
-index c87b40f1112123dc83e111536ee8c37a676e1b6c..b1c4e80f2d619743910e58eea9a0df89f8f060ef 100644
+index ca955a3cae74f79ec39ba60e6a68d34ca0955813..f37c6e54ba2e707f3a58b02e0c76f19d0e880d03 100644
 --- a/codex-rs/core/src/tasks/mod.rs
 +++ b/codex-rs/core/src/tasks/mod.rs
-@@ -306,6 +306,11 @@ impl Session {
+@@ -304,6 +304,11 @@ impl Session {
          input: Vec<TurnInput>,
          task: T,
      ) -> TurnInputSubmission {
@@ -1229,15 +1229,15 @@ index c87b40f1112123dc83e111536ee8c37a676e1b6c..b1c4e80f2d619743910e58eea9a0df89
          self.abort_all_tasks(TurnAbortReason::Replaced).await;
          self.clear_connector_selection().await;
          self.start_task(turn_context, input, task).await
-@@ -430,6 +435,7 @@ impl Session {
-             Some(_) => (None, Vec::new(), Some(input)),
+@@ -419,6 +424,7 @@ impl Session {
+             }
              None => (
                  self.services.agent_control.admit_turn(
 +                    self.thread_id,
                      turn_context.multi_agent_version,
                      &turn_context.session_source,
                  ),
-@@ -613,6 +619,11 @@ impl Session {
+@@ -596,6 +602,11 @@ impl Session {
          let _admission = reservation.admission;
          let turn_state = reservation.turn_state;
          let previous_options = reservation.previous_options;
@@ -1249,7 +1249,7 @@ index c87b40f1112123dc83e111536ee8c37a676e1b6c..b1c4e80f2d619743910e58eea9a0df89
  
          let helper_admission = HelperTurnAdmission::capture(self);
          self.services
-@@ -625,7 +636,11 @@ impl Session {
+@@ -608,7 +619,11 @@ impl Session {
          // Read the routing options now and leave the mail queued until task registration.
          let wake_options = self.input_queue.pending_wake_options().await;
          let triggered = wake_options.is_some();
@@ -1295,10 +1295,10 @@ index 36ae27736d181f6b50b67584f2e35da1c1dbd262..5cf9e5f8ccff8e8c17676debdde9f1dc
          _source: &SessionSource,
      ) -> Option<AgentExecutionGuard> {
 diff --git a/codex-rs/ext/goal/src/runtime.rs b/codex-rs/ext/goal/src/runtime.rs
-index e966119be6f4f14326b0c88dcd1ad2e3e048a0e9..6bb87441ad075edc5c1f77f742cd4dcf5c1f494c 100644
+index 193bded1c461d3e97454e0aa6c2ac86c9836bf81..b4298510c6b0d97640d3ffa2911cf75c4152071a 100644
 --- a/codex-rs/ext/goal/src/runtime.rs
 +++ b/codex-rs/ext/goal/src/runtime.rs
-@@ -469,21 +469,32 @@ impl GoalRuntimeHandle {
+@@ -551,12 +551,25 @@ impl GoalRuntimeHandle {
              .map_err(|err| err.to_string())?
          else {
              self.inner.accounting_state.clear_active_goal();
@@ -1321,20 +1321,9 @@ index e966119be6f4f14326b0c88dcd1ad2e3e048a0e9..6bb87441ad075edc5c1f77f742cd4dcf
 +                );
 +            }
 +        }
-+        let goal = protocol_goal_from_state(goal);
-         let start_options = thread
+         let mut start_options = thread
              .thread_extension_data()
              .get::<TurnStartOptions>()
-             .map(|options| options.as_ref().clone())
-             .unwrap_or_default();
--        let request = continuation_request(
--            &protocol_goal_from_state(goal),
--            thread.config().await.update_plan_enabled,
--        );
-+        let request = continuation_request(&goal, thread.config().await.update_plan_enabled);
-
-         match thread
-             .start_turn_if_idle(request.on_start(TurnStartOptions {
 diff --git a/codex-rs/state/src/runtime/goals.rs b/codex-rs/state/src/runtime/goals.rs
 index 9f5855431444216525c145f6c889e740ecbf56f0..c8824f7e8da99c4869fd172b606e139ca32ba9bd 100644
 --- a/codex-rs/state/src/runtime/goals.rs
