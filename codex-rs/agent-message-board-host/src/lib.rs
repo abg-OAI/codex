@@ -289,6 +289,7 @@ impl MessageBoardHost for LocalBoardHost {
                         .submit(Op::InterAgentCommunication {
                             communication,
                             start_options: Default::default(),
+                            accepted: None,
                         })
                         .await?;
                 }

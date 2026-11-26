@@ -131,6 +131,7 @@ async fn mailbox_preemption_preserves_response_when_deferred(
                     /*trigger_turn*/ false,
                 ),
                 start_options: Default::default(),
+                accepted: None,
             })
             .await?;
     }
@@ -659,6 +660,7 @@ async fn start_mailbox_preemption(
                     /*trigger_turn*/ false,
                 ),
                 start_options: Default::default(),
+                accepted: None,
             })
             .await?;
     }

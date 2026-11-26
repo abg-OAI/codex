@@ -256,6 +256,7 @@ async fn interrupt_during_wake_context_construction_does_not_start_turn() -> any
                 /*trigger_turn*/ false,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await?;
     codex.submit(Op::RealtimeConversationListVoices).await?;
@@ -339,6 +340,7 @@ async fn guardian_policy_refresh_blocks_turns_and_resumes_queued_work() -> anyho
                 /*trigger_turn*/ true,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await?;
     // This acknowledgement is processed after the blocked wake attempt.
