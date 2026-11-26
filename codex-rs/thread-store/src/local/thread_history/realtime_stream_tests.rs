@@ -14,8 +14,10 @@ async fn single_segment_page(
     start: u64,
     projected_end: u64,
 ) -> ThreadStoreResult<RealtimePage> {
+    let home = TempDir::new().unwrap();
     read_page(
         pool,
+        home.path(),
         params,
         &RealtimeSnapshot {
             head,

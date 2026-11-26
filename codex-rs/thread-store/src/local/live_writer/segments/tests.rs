@@ -1,5 +1,7 @@
 //! Exercise rollover through native readers, physical identities and append cursors.
 
+mod archive;
+
 use super::*;
 use crate::CreateThreadParams;
 use crate::LoadThreadHistoryParams;

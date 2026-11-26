@@ -123,6 +123,15 @@ pub fn rollout_id_from_path(rollout_path: &Path) -> Option<RolloutId> {
     Some(RolloutFileName::parse(file_name)?.rollout_id())
 }
 
+/// Names another physical rollout of the same logical thread beside the selected file.
+pub fn sibling_rollout_path(path: &Path, id: RolloutId) -> Option<PathBuf> {
+    let source = RolloutFileName::parse(path.file_name()?.to_str()?)?;
+    let name = RolloutFileName::new(source.timestamp(), source.thread_id(), id)
+        .render()
+        .ok()?;
+    Some(path.with_file_name(name))
+}
+
 /// Reads the logical fork cutoff without mistaking a revert's history base for its parent.
 ///
 /// Older rollouts lack the explicit cutoff. Their history base is safe to use only when it
