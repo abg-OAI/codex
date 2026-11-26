@@ -291,6 +291,13 @@ pub fn normalize_cwd_for_state_db(cwd: &Path) -> PathBuf {
     normalize_for_path_comparison(cwd).unwrap_or_else(|_| cwd.to_path_buf())
 }
 
+/// Whether the caller will verify the selected physical rollout as it consumes each row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RolloutPathCheck {
+    DuringListing,
+    WhenOpening,
+}
+
 /// List thread metadata from SQLite without rollout directory traversal.
 #[allow(clippy::too_many_arguments)]
 pub async fn list_threads_db(
@@ -309,6 +316,7 @@ pub async fn list_threads_db(
     section: Option<Option<&str>>,
     project_id: Option<Option<&str>>,
     search_term: Option<&str>,
+    path_check: RolloutPathCheck,
 ) -> Option<codex_state::ThreadsPage> {
     let ctx = context?;
     if ctx.sqlite() != sqlite {
@@ -373,30 +381,40 @@ pub async fn list_threads_db(
         .inspect_err(|err| warn!("state db list_threads failed: {err}"))
         .ok()?;
         // Parent-scoped listings include empty threads whose rollout may still be pending.
-        if relation_filter
-            .is_some_and(|relation| relation != codex_state::ThreadRelationFilter::IncludeAttached)
+        if path_check == RolloutPathCheck::WhenOpening
+            || relation_filter.is_some_and(|relation| {
+                relation != codex_state::ThreadRelationFilter::IncludeAttached
+            })
         {
             return Some(page);
         }
         num_scanned_rows = num_scanned_rows.saturating_add(page.num_scanned_rows);
         next_anchor = page.next_anchor;
 
-        for item in page.items {
-            if let Some(existing_path) =
-                crate::compression::existing_rollout_path(item.rollout_path.as_path()).await
-            {
-                let mut item = item;
-                item.rollout_path = existing_path;
-                items.push(item);
-            } else {
+        // Probe the paths in one blocking task for the page.
+        let selected = tokio::task::spawn_blocking(move || {
+            let mut selected = page.items;
+            selected.retain_mut(|item| {
+                if let Some((path, _)) =
+                    crate::compression::existing_rollout_with_metadata_sync(&item.rollout_path)
+                {
+                    item.rollout_path = path;
+                    return true;
+                }
                 warn!(
                     "state db list_threads returned stale rollout path for thread {}: {}",
                     item.id,
                     item.rollout_path.display()
                 );
                 warn!("state db discrepancy during list_threads_db: stale_db_path_retained");
-            }
-        }
+                false
+            });
+            selected
+        })
+        .await
+        .inspect_err(|err| warn!("state db list_threads path checks failed: {err}"))
+        .ok()?;
+        items.extend(selected);
 
         if items.len() == page_size || next_anchor.is_none() {
             break;
