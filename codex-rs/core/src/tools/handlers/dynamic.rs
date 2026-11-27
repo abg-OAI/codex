@@ -168,13 +168,23 @@ impl DynamicToolHandler {
     }
 }
 
-enum DynamicToolOutput {
+pub(crate) enum DynamicToolOutput {
     ContentItems(FunctionToolOutput),
     /// The MCP-shaped value shared by optional observers and moved into Code Mode.
     StructuredContent(Value),
 }
 
 impl DynamicToolOutput {
+    /// Returns the complete client response text and its success flag.
+    pub(crate) fn into_text_response(self) -> (String, bool) {
+        let success = self.success_for_logging();
+        let text = match self {
+            Self::ContentItems(output) => output.into_text(),
+            Self::StructuredContent(value) => Self::native_text(&value),
+        };
+        (text, success)
+    }
+
     fn from_response(
         response: DynamicToolCallResult,
     ) -> (Self, Vec<DynamicToolCallOutputContentItem>) {
@@ -320,7 +330,7 @@ impl CoreToolRuntime for DynamicToolHandler {
     clippy::await_holding_invalid_type,
     reason = "active turn checks and dynamic tool response registration must remain atomic"
 )]
-async fn request_dynamic_tool(
+pub(crate) async fn request_dynamic_tool(
     session: &Session,
     turn_context: &TurnContext,
     call_id: String,
