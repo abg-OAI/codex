@@ -358,6 +358,13 @@ fn delete_rollout_path(store: &LocalThreadStore, rollout_path: &Path) -> ThreadS
         Ok(true) | Err(_) => Err(err),
     })?;
     validated_rollout_file_name(&canonical_rollout_path, rollout_path)?;
+    if canonical_rollout_path.is_file() {
+        super::cold_split::cache::remove(&canonical_rollout_path).map_err(|err| {
+            ThreadStoreError::Internal {
+                message: format!("could not remove rollout checkpoint copy: {err}"),
+            }
+        })?;
+    }
     match std::fs::remove_file(&canonical_rollout_path) {
         Ok(()) => Ok(true),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
