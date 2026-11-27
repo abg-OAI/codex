@@ -1079,7 +1079,7 @@ async fn assigned_forks_inherit_projects_for_persistent_and_ephemeral_children()
     let started = server
         .start_thread(ThreadStartParams {
             project_id: Some(project.project.id.clone()),
-            history_mode: Some(ThreadHistoryMode::Legacy),
+            history_mode: Some(ThreadHistoryMode::Paginated),
             ..Default::default()
         })
         .await?;
@@ -1099,6 +1099,7 @@ async fn assigned_forks_inherit_projects_for_persistent_and_ephemeral_children()
     let fork_id = server
         .send_thread_fork_request(ThreadForkParams {
             thread_id: started.thread.id.clone(),
+            exclude_turns: true,
             ..Default::default()
         })
         .await?;
@@ -1114,6 +1115,7 @@ async fn assigned_forks_inherit_projects_for_persistent_and_ephemeral_children()
     let ephemeral_id = server
         .send_thread_fork_request(ThreadForkParams {
             thread_id: started.thread.id,
+            exclude_turns: true,
             ephemeral: true,
             ..Default::default()
         })

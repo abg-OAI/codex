@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
+use app_test_support::create_fake_rollout;
 use codex_app_server_protocol::ExperimentalFeatureEnablementSetParams;
 use codex_app_server_protocol::ExperimentalFeatureEnablementSetResponse;
 use codex_app_server_protocol::ThreadHistoryMode;
@@ -10,8 +11,6 @@ use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::UserInput;
 use core_test_support::responses;
@@ -47,14 +46,23 @@ async fn runtime_enabled_legacy_migration_preserves_cold_resume_model_context() 
         .with_codex_home(codex_home.path())
         .build_initialized()
         .await?;
-    let start_id = primary
-        .send_thread_start_request_with_auto_env(ThreadStartParams {
-            history_mode: Some(ThreadHistoryMode::Legacy),
+    let saved = create_fake_rollout(
+        codex_home.path(),
+        "2025-01-05T12-00-00",
+        "2025-01-05T12:00:00Z",
+        "old conversation",
+        Some("mock_provider"),
+        None,
+    )?;
+    let resume_id = primary
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: saved,
             ..Default::default()
         })
         .await?;
-    let ThreadStartResponse { thread, .. } =
-        timeout(DEFAULT_READ_TIMEOUT, primary.read_response(start_id)).await??;
+    let ThreadResumeResponse { thread, .. } =
+        timeout(DEFAULT_READ_TIMEOUT, primary.read_response(resume_id)).await??;
+    assert_eq!(thread.history_mode, ThreadHistoryMode::Legacy);
     timeout(
         DEFAULT_READ_TIMEOUT,
         primary.start_turn_and_wait_for_completion(TurnStartParams {

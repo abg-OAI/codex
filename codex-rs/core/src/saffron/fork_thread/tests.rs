@@ -139,11 +139,10 @@ async fn blank_section_is_rejected_before_creation() {
     assert!(error.to_string().contains("section must not be empty"));
 }
 
-/// Both persistence formats must exclude the unfinished turn and keep root identity.
+/// A persistent fork excludes the unfinished turn and keeps root identity.
 #[test_case::test_case(ThreadHistoryMode::Legacy, false, None; "legacy")]
 #[test_case::test_case(ThreadHistoryMode::Paginated, false, None; "paginated")]
-#[test_case::test_case(ThreadHistoryMode::Legacy, true, None; "failed_placement")]
-#[test_case::test_case(ThreadHistoryMode::Legacy, false, Some(ReasoningEffort::Low); "legacy_effort_override")]
+#[test_case::test_case(ThreadHistoryMode::Paginated, true, None; "failed_placement")]
 #[test_case::test_case(ThreadHistoryMode::Paginated, false, Some(ReasoningEffort::Low); "paginated_effort_override")]
 fn fork_runs_from_completed_history_without_a_goal(
     history_mode: ThreadHistoryMode,
@@ -198,12 +197,12 @@ fn fork_runs_from_completed_history_without_a_goal(
             None,
             None,
         ));
-        let source = manager
-            .start_thread(StartThreadOptions {
-                history_mode: Some(history_mode),
-                ..StartThreadOptions::new(config)
-            })
-            .await?;
+        let options = StartThreadOptions::new(config);
+        let source = if history_mode == ThreadHistoryMode::Legacy {
+            crate::test_support::start_saved_legacy_thread(&manager, options).await?
+        } else {
+            manager.start_thread(options).await?
+        };
         source
             .thread
             .append_rollout_items(&[
@@ -241,6 +240,24 @@ fn fork_runs_from_completed_history_without_a_goal(
             arguments["reasoning_effort"] = json!(effort);
         }
         let invocation = tool_invocation(&source, turn, arguments);
+        if history_mode == ThreadHistoryMode::Legacy {
+            let handler = Handler {
+                host: Arc::new(ForkHost {
+                    manager: Arc::downgrade(&manager),
+                }),
+            };
+            let Err(error) = handler.handle_call(invocation).await else {
+                panic!("accepted legacy source")
+            };
+            assert!(error.to_string().contains("paginated source"));
+            assert!(matches!(
+                created.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ));
+            assert!(source.thread.is_running());
+            source.thread.shutdown_and_wait().await?;
+            return Ok(());
+        }
         assert!(invocation.session.dynamic_tools().await.is_empty());
         let inherited_effort = invocation
             .step_context
@@ -423,12 +440,13 @@ fn rejected_start_returns_the_created_thread() -> anyhow::Result<()> {
         let mut config = turn.config.as_ref().clone();
         config.ephemeral = false;
         turn.config = Arc::new(config.clone());
-        turn.history_mode = ThreadHistoryMode::Legacy;
+        turn.history_mode = ThreadHistoryMode::Paginated;
         turn.sub_id = "unfinished".to_string();
         let gate = Arc::new(Admission(AtomicBool::new(false)));
         let mut extensions = ExtensionRegistryBuilder::default();
         extensions.turn_start_admission(gate);
         let auth = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
+        let state = init_state_db(&config).await.expect("test state database");
         let manager = Arc::new(ThreadManager::new(
             &config,
             build_startup_models(
@@ -444,14 +462,14 @@ fn rejected_start_returns_the_created_thread() -> anyhow::Result<()> {
             Arc::new(crate::test_support::EmptyUserInstructionsProvider),
             None,
             crate::passthrough_image_store(),
-            ThreadStoreBuilder::from_config(&config, None).build(),
+            ThreadStoreBuilder::from_config(&config, Some(state)).build(),
             None,
             None,
             None,
         ));
         let source = manager
             .start_thread(StartThreadOptions {
-                history_mode: Some(ThreadHistoryMode::Legacy),
+                history_mode: Some(ThreadHistoryMode::Paginated),
                 ..StartThreadOptions::new(config)
             })
             .await?;

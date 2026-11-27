@@ -441,7 +441,7 @@ async fn tool_call_metadata_stays_out_of_raw_response_item_notifications(
         .start_thread(ThreadStartParams {
             model: Some("mock-model".to_string()),
             experimental_raw_events: true,
-            history_mode: Some(ThreadHistoryMode::Legacy),
+            history_mode: Some(ThreadHistoryMode::Paginated),
             ..Default::default()
         })
         .await?;

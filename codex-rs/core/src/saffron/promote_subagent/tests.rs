@@ -1,9 +1,8 @@
-//! Native creation and persistence are exercised in both supported history modes.
+//! Promotion exercises native paginated history and durable retry receipts.
 
 use super::*;
 use crate::CodexAppsToolsCache;
 use crate::ThreadStoreBuilder;
-use crate::agent::types::SpawnAgentForkMode;
 use crate::agent::types::SpawnAgentOptions;
 use crate::build_startup_models;
 use crate::init_state_db;
@@ -45,7 +44,7 @@ struct Fixture {
 
 impl Fixture {
     /// Runs a child to completion using the requested native history format.
-    async fn completed(mode: ThreadHistoryMode) -> anyhow::Result<Self> {
+    async fn completed() -> anyhow::Result<Self> {
         let server = MockServer::start().await;
         mount_sse_once(
             &server,
@@ -90,7 +89,7 @@ impl Fixture {
         ));
         let root = manager
             .start_thread(StartThreadOptions {
-                history_mode: Some(mode),
+                history_mode: Some(ThreadHistoryMode::Paginated),
                 ..StartThreadOptions::new(config.clone())
             })
             .await?;
@@ -111,10 +110,6 @@ impl Fixture {
                 }),
                 SpawnAgentOptions {
                     parent_thread_id: Some(root.thread_id),
-                    fork_mode: (mode == ThreadHistoryMode::Legacy)
-                        .then_some(SpawnAgentForkMode::FullHistory),
-                    fork_parent_spawn_call_id: (mode == ThreadHistoryMode::Legacy)
-                        .then(|| "promotion-fixture-spawn".into()),
                     ..Default::default()
                 },
             )
@@ -156,15 +151,12 @@ impl Fixture {
 }
 
 /// A promoted copy keeps all conversation items and settings and outlives its former parent.
-#[test_case::test_case(ThreadHistoryMode::Legacy; "legacy")]
-#[test_case::test_case(ThreadHistoryMode::Paginated; "paginated")]
-fn promotion_preserves_completed_history_settings_and_independence(
-    mode: ThreadHistoryMode,
-) -> anyhow::Result<()> {
+#[test]
+fn promotion_preserves_completed_history_settings_and_independence() -> anyhow::Result<()> {
     run_test_with_large_stack("promotion", move || async move {
-        let fixture = Fixture::completed(mode).await?;
+        let fixture = Fixture::completed().await?;
         let before = fixture.child.config_snapshot().await;
-        assert_eq!(before.history_mode, mode);
+        assert_eq!(before.history_mode, ThreadHistoryMode::Paginated);
         let original_messages = saved_conversation(&fixture.child).await?;
         let output = fixture.promote().await?;
         assert_eq!(output["status"], "promoted");
@@ -233,20 +225,51 @@ fn promotion_preserves_completed_history_settings_and_independence(
     })
 }
 
-/// Reads every saved conversation item through the history format's supported API.
+/// A saved legacy child stays loaded and acquires no promotion receipt.
+#[test]
+fn legacy_source_rejected_before_destination_reservation() -> anyhow::Result<()> {
+    run_test_with_large_stack("legacy promotion", || async {
+        let fixture = Fixture::completed().await?;
+        let config = fixture.root.session.get_config().await.as_ref().clone();
+        let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: fixture.root.session.thread_id(),
+            depth: 1,
+            agent_path: Some(AgentPath::root().join("legacy_worker").unwrap()),
+            agent_nickname: None,
+            agent_role: None,
+        });
+        let saved = crate::test_support::start_saved_legacy_thread(
+            &fixture.manager,
+            StartThreadOptions {
+                session_source: Some(source.clone()),
+                ..StartThreadOptions::new(config.clone())
+            },
+        )
+        .await?;
+        let id = saved.thread_id;
+        saved.thread.shutdown_and_wait().await?;
+        fixture.manager.remove_thread(&id).await;
+        let control = local_control(&fixture.root.session);
+        control
+            .resume_agent_from_rollout(config.clone(), id, source)
+            .await?;
+        let result = promote(
+            fixture.manager.clone(),
+            fixture.root.session.clone(),
+            SessionSource::Exec,
+            id,
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("paginated source"));
+        let store = SaffronStore::open(config.sqlite_config()).await?;
+        assert!(store.promotion(id).await?.is_none());
+        assert!(control.get_live_thread(id).await?.is_running());
+        Ok(())
+    })
+}
+
+/// Reads every saved display item through the paginated history API.
 async fn saved_conversation(thread: &CodexThread) -> anyhow::Result<Vec<serde_json::Value>> {
-    if thread.config_snapshot().await.history_mode == ThreadHistoryMode::Legacy {
-        return thread
-            .read_thread(true, true)
-            .await?
-            .history
-            .unwrap()
-            .items
-            .iter()
-            .filter(|item| matches!(item, codex_history::RolloutItem::ResponseItem(_)))
-            .map(|item| serde_json::to_value(item).map_err(Into::into))
-            .collect();
-    }
     let mut cursor = None;
     let mut items = Vec::new();
     loop {
@@ -322,7 +345,7 @@ async fn promotion_receipt_survives_reopen_and_has_one_reservation_winner() -> a
 #[test]
 fn promotion_refuses_unfinished_work_before_reserving_destination() -> anyhow::Result<()> {
     run_test_with_large_stack("promotion refusal", || async {
-        let fixture = Fixture::completed(ThreadHistoryMode::Legacy).await?;
+        let fixture = Fixture::completed().await?;
         let slot = fixture.child.session.active_turn.lock().await;
         let error = fixture.promote().await.unwrap_err();
         assert!(error.to_string().contains("accepting work"), "{error:#}");
@@ -341,7 +364,7 @@ fn promotion_refuses_unfinished_work_before_reserving_destination() -> anyhow::R
 fn retry_of_uncertain_creation_returns_reserved_identity_without_retirement() -> anyhow::Result<()>
 {
     run_test_with_large_stack("promotion recovery", || async {
-        let fixture = Fixture::completed(ThreadHistoryMode::Legacy).await?;
+        let fixture = Fixture::completed().await?;
         let store =
             SaffronStore::open(fixture.root.session.get_config().await.sqlite_config()).await?;
         let receipt = Promotion {
@@ -373,7 +396,7 @@ fn retry_of_uncertain_creation_returns_reserved_identity_without_retirement() ->
 #[test]
 fn unfinished_descendant_keeps_the_original_tree() -> anyhow::Result<()> {
     run_test_with_large_stack("promotion descendant refusal", || async {
-        let fixture = Fixture::completed(ThreadHistoryMode::Legacy).await?;
+        let fixture = Fixture::completed().await?;
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/responses"))
             .respond_with(
@@ -440,7 +463,7 @@ fn unfinished_descendant_keeps_the_original_tree() -> anyhow::Result<()> {
 #[test]
 fn ready_retry_preserves_newer_completed_work_and_the_existing_copy() -> anyhow::Result<()> {
     run_test_with_large_stack("promotion changed original", || async {
-        let fixture = Fixture::completed(ThreadHistoryMode::Legacy).await?;
+        let fixture = Fixture::completed().await?;
         let store =
             SaffronStore::open(fixture.root.session.get_config().await.sqlite_config()).await?;
         let slot = fixture.child.session.active_turn.lock().await;
@@ -505,8 +528,7 @@ fn ready_retry_preserves_newer_completed_work_and_the_existing_copy() -> anyhow:
         assert!(fixture.child.is_running());
         let copied = fixture.manager.get_thread(receipt.destination_id).await?;
         assert!(copied.is_running());
-        let copied_history =
-            serde_json::to_string(&copied.read_thread(true, true).await?.history.unwrap().items)?;
+        let copied_history = serde_json::to_string(&saved_conversation(&copied).await?)?;
         assert!(!copied_history.contains("new-work-after-copy"));
         let retry = fixture.promote().await?;
         assert_eq!(retry["thread_id"], result["thread_id"]);
