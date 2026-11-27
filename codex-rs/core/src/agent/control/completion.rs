@@ -1,11 +1,12 @@
 //! Delivers terminal child results and completion activity to the agent tree.
 //!
-//! Sessions capture terminal state; the controller owns routing and queue-only delivery.
+//! Sessions capture terminal state; the controller owns routing and triggering delivery.
 //! Unconsumed results remain available to the source writer through graceful suspension.
 
 use super::LocalAgentControl;
 use crate::TurnStartOptions;
 use crate::agent::api::AgentTurnOutcome;
+use crate::agent::types::MessageDeliveryMode;
 use crate::agent_communication::AgentCommunicationContext;
 use crate::agent_communication::AgentCommunicationKind;
 use crate::session_prefix::format_guardian_interruption_message;
@@ -108,16 +109,17 @@ impl LocalAgentControl {
             return;
         };
         let trace_message = trace.is_enabled().then(|| message.clone());
+        let trigger_turn = outcome.completion_delivery_mode == MessageDeliveryMode::TriggerTurn;
         let mut communication = InterAgentCommunication::new(
             child_agent_path.clone(),
             parent_agent_path,
             Vec::new(),
             message,
-            /*trigger_turn*/ false,
+            trigger_turn,
         );
         communication.id = Some(ResponseItemId::with_suffix("amsg", uuid::Uuid::now_v7()));
         let delivery = self
-            .send_inter_agent_communication(
+            .send_terminal_inter_agent_communication(
                 parent_thread_id,
                 communication,
                 AgentCommunicationContext::new(AgentCommunicationKind::Result, outcome.thread_id),
