@@ -9,6 +9,7 @@ pub(crate) mod archive_self;
 pub(crate) mod await_exec;
 pub(crate) mod child_delegation;
 pub(crate) mod compaction_requests;
+pub(crate) mod executor_startup;
 pub(crate) mod fork_thread;
 mod goal_edit;
 pub(crate) mod goal_resume;
