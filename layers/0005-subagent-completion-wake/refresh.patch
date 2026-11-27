@@ -1,20 +1,24 @@
 diff --git a/codex-rs/core/tests/suite/host_turn_admission.rs b/codex-rs/core/tests/suite/host_turn_admission.rs
-index 4f2a3ae90df0fe99018317930413261cd27eeff2..10167a5bf59f90b98994c2eb1ad7b364dec91740 100644
+index 7de16c5f37680aba34a0ad7d32b3ffc8d30a5d4b..92b2cebcf000e6400d079a102e4be4cc144e1a24 100644
 --- a/codex-rs/core/tests/suite/host_turn_admission.rs
 +++ b/codex-rs/core/tests/suite/host_turn_admission.rs
-@@ -17,9 +17,11 @@ use codex_core::SuspendTurnOutcome;
+@@ -17,6 +17,7 @@ use codex_core::SuspendTurnOutcome;
  use codex_core::TurnAdmissionState;
  use codex_core::TurnInputRequest;
  use codex_core::TurnInputSubmission;
 +use codex_core::TurnStartOptions;
+ use codex_extension_api::ExtensionData;
  use codex_extension_api::ExtensionRegistryBuilder;
+ use codex_extension_api::TurnLifecycleContributor;
+@@ -24,6 +25,7 @@ use codex_extension_api::TurnStartInput;
+ use codex_extension_api::TurnStartPhase;
  use codex_features::Feature;
  use codex_history::RolloutItem;
 +use codex_protocol::AgentPath;
  use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
  use codex_protocol::dynamic_tools::DynamicToolResponse;
  use codex_protocol::dynamic_tools::DynamicToolSpec;
-@@ -27,11 +29,13 @@ use codex_protocol::error::CodexErr;
+@@ -31,11 +33,13 @@ use codex_protocol::error::CodexErr;
  use codex_protocol::error::CodexErrorDetails;
  use codex_protocol::error::Result as CodexResult;
  use codex_protocol::items::TurnItem;
@@ -28,7 +32,7 @@ index 4f2a3ae90df0fe99018317930413261cd27eeff2..10167a5bf59f90b98994c2eb1ad7b364
  use codex_protocol::protocol::MultiAgentVersion;
  use codex_protocol::protocol::Op;
  use codex_protocol::protocol::ReviewRequest;
-@@ -579,6 +583,78 @@ async fn suspending_root_during_roster_read_preserves_the_recoverable_prompt() -
+@@ -633,6 +637,82 @@ async fn suspending_root_with_host_roster_preserves_the_recoverable_prompt(
      suspend_and_check_recoverable_prompt(&test, &server, turn_id, prompt).await
  }
 
@@ -61,7 +65,11 @@ index 4f2a3ae90df0fe99018317930413261cd27eeff2..10167a5bf59f90b98994c2eb1ad7b364
 +    let prompt = "Continue from the worker result.";
 +    let (turn_id, grant) = start(&test, &mut attempts, prompt).await?;
 +    assert!(grant.send(Ok(AgentExecutionGuard::new(()))).is_ok());
-+    tokio::time::timeout(Duration::from_secs(10), roster.0.notified()).await?;
++    tokio::time::timeout(
++        Duration::from_secs(10),
++        roster.roster_read_entered.notified(),
++    )
++    .await?;
 +    assert_eq!(
 +        test.codex.suspend_turn_and_shutdown().await?,
 +        SuspendTurnOutcome::Suspended { turn_id }
