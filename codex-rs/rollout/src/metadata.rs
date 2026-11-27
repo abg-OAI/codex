@@ -147,23 +147,43 @@ pub async fn extract_metadata_from_rollout(
     rollout_path: &Path,
     default_provider: &str,
 ) -> anyhow::Result<ExtractionOutcome> {
-    let (items, _thread_id, parse_errors) =
-        RolloutRecorder::load_rollout_items(rollout_path).await?;
-    if items.is_empty() {
-        return Err(anyhow::anyhow!(
-            "empty session file: {}",
-            rollout_path.display()
-        ));
-    }
-    let builder = builder_from_items(items.as_slice(), rollout_path).ok_or_else(|| {
-        anyhow::anyhow!(
-            "rollout missing metadata builder: {}",
-            rollout_path.display()
+    let builder_path = rollout_path.to_owned();
+    let (builder, _, _) =
+        RolloutRecorder::visit_rollout_items(rollout_path, None, move |builder, item| {
+            if let RolloutItem::SessionMeta(meta) = item {
+                *builder = builder_from_session_meta(&meta, &builder_path);
+                return std::ops::ControlFlow::Break(());
+            }
+            std::ops::ControlFlow::Continue(())
+        })
+        .await?;
+    let builder = builder
+        .or_else(|| builder_from_items(&[], rollout_path))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "rollout missing metadata builder: {}",
+                rollout_path.display()
+            )
+        })?;
+    let provider = default_provider.to_owned();
+    let ((mut metadata, memory_mode, saw_item), _, parse_errors) =
+        RolloutRecorder::visit_rollout_items(
+            rollout_path,
+            (builder.build(default_provider), None, false),
+            move |(metadata, memory_mode, saw_item), item| {
+                *saw_item = true;
+                apply_rollout_item(metadata, &item, &provider);
+                if let RolloutItem::SessionMeta(line) = item
+                    && let Some(mode) = line.meta.memory_mode
+                {
+                    *memory_mode = Some(mode);
+                }
+                std::ops::ControlFlow::Continue(())
+            },
         )
-    })?;
-    let mut metadata = builder.build(default_provider);
-    for item in &items {
-        apply_rollout_item(&mut metadata, item, default_provider);
+        .await?;
+    if !saw_item {
+        anyhow::bail!("empty session file: {}", rollout_path.display());
     }
     if let Some(updated_at) = file_modified_time_utc(rollout_path).await {
         metadata.updated_at = updated_at;
@@ -171,21 +191,7 @@ pub async fn extract_metadata_from_rollout(
     }
     Ok(ExtractionOutcome {
         metadata,
-        memory_mode: items.iter().rev().find_map(|item| match item {
-            RolloutItem::SessionMeta(meta_line) => meta_line.meta.memory_mode.clone(),
-            RolloutItem::ResponseItem(_)
-            | RolloutItem::InterAgentCommunication(_)
-            | RolloutItem::InterAgentCommunicationMetadata { .. }
-            | RolloutItem::Compacted(_)
-            | RolloutItem::TurnContext(_)
-            | RolloutItem::WorldState(_)
-            | RolloutItem::RealtimeItem(_)
-            | RolloutItem::TokenUsageRecord(_)
-            | RolloutItem::RetainedContext(_)
-            | RolloutItem::DynamicToolsUpdated { .. }
-            | RolloutItem::SecurityRiskScore(_)
-            | RolloutItem::EventMsg { .. } => None,
-        }),
+        memory_mode,
         parse_errors,
     })
 }
