@@ -1,10 +1,17 @@
 use super::*;
+use crate::outgoing_message::OutgoingEnvelope;
+use crate::outgoing_message::OutgoingMessage;
+use codex_app_server_protocol::ServerNotification;
+use codex_app_server_protocol::ThreadArchiveParams;
+use codex_app_server_protocol::ThreadArchiveResponse;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadItemPayload;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
+use codex_app_server_protocol::ThreadSectionMoveParams;
+use codex_app_server_protocol::ThreadSectionMoveResponse;
 use codex_core::StartThreadOptions;
 use codex_protocol::ResponseItemId;
 use codex_protocol::models::ContentItem;
@@ -13,6 +20,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_rollout::RolloutItem;
+use codex_state::PINNED_THREAD_SECTION_ID;
 use codex_thread_store::LiveThread;
 use codex_thread_store::LoadThreadHistoryParams;
 use codex_thread_store::ResumeThreadParams;
@@ -166,30 +174,47 @@ async fn exercise_saved_thread_repair(history_mode: ThreadHistoryMode) -> Result
         None,
     )
     .await?;
-    let request_id = RequestId::Integer(10);
-    harness
-        .processor
-        .process_request(
-            TEST_CONNECTION_ID,
-            request_from_client_request(ClientRequest::ThreadRead {
-                request_id: request_id.clone(),
-                params: ThreadReadParams {
-                    thread_id: thread_id.to_string(),
-                    include_turns: true,
-                },
-            }),
-            &AppServerTransport::Stdio,
-            Arc::clone(&harness.session),
-        )
-        .await;
-    let error = read_repair_error(&mut harness.outgoing_rx, request_id).await?;
-    assert_eq!(error.code, crate::error_code::INTERNAL_ERROR_CODE);
-    assert!(error.message.contains("failed to access loaded thread"));
-    assert!(
-        error
-            .message
-            .contains("failed to restore saved thread persistence")
-    );
+    for request in [
+        ClientRequest::ThreadRead {
+            request_id: RequestId::Integer(10),
+            params: ThreadReadParams {
+                thread_id: thread_id.to_string(),
+                include_turns: true,
+            },
+        },
+        ClientRequest::ThreadSectionMove {
+            request_id: RequestId::Integer(14),
+            params: ThreadSectionMoveParams {
+                thread_id: thread_id.to_string(),
+                section_id: Some(PINNED_THREAD_SECTION_ID.to_owned()),
+                before_thread_id: None,
+            },
+        },
+        ClientRequest::ThreadArchive {
+            request_id: RequestId::Integer(15),
+            params: ThreadArchiveParams {
+                thread_id: thread_id.to_string(),
+            },
+        },
+    ] {
+        let request_id = request.id().clone();
+        harness
+            .processor
+            .process_request(
+                TEST_CONNECTION_ID,
+                request_from_client_request(request),
+                &AppServerTransport::Stdio,
+                Arc::clone(&harness.session),
+            )
+            .await;
+        let error = read_repair_error(&mut harness.outgoing_rx, request_id).await?;
+        assert_eq!(error.code, crate::error_code::INTERNAL_ERROR_CODE);
+        assert!(
+            error
+                .message
+                .contains("failed to restore saved thread persistence")
+        );
+    }
     assert!(!broken.has_persistence());
     blocker.shutdown().await?;
 
@@ -257,6 +282,138 @@ async fn exercise_saved_thread_repair(history_mode: ThreadHistoryMode) -> Result
     ephemeral.shutdown_and_wait().await?;
     harness.shutdown().await;
     Ok(())
+}
+
+#[test]
+#[serial(app_server_tracing)]
+fn saved_paginated_thread_operations_after_writer_shutdown() -> Result<()> {
+    run_current_thread_test_with_stack("saved-thread-after-shutdown", async {
+        let mut harness = TracingHarness::new_with_sqlite().await?;
+        harness
+            .processor
+            .connection_initialized(TEST_CONNECTION_ID, harness.session.request_attestation())
+            .await;
+        let (manager, store) = harness
+            .processor
+            .thread_processor
+            .saved_thread_persistence_test_resources();
+        let started: ThreadStartResponse = harness
+            .request(
+                ClientRequest::ThreadStart {
+                    request_id: RequestId::Integer(20),
+                    params: ThreadStartParams {
+                        history_mode: Some(codex_app_server_protocol::ThreadHistoryMode::Paginated),
+                        ..Default::default()
+                    },
+                },
+                None,
+            )
+            .await;
+        let saved_id = started.thread.id;
+        let thread_id = codex_protocol::ThreadId::from_string(&saved_id)?;
+        let loaded = manager.get_thread(thread_id).await?;
+        let turn: TurnStartResponse = harness
+            .request(
+                ClientRequest::TurnStart {
+                    request_id: RequestId::Integer(21),
+                    params: TurnStartParams {
+                        thread_id: saved_id.clone(),
+                        input: vec![UserInput::Text {
+                            text: "Save this turn".to_owned(),
+                            text_elements: Vec::new(),
+                        }],
+                        ..Default::default()
+                    },
+                },
+                None,
+            )
+            .await;
+        let turn_id = turn.turn.id;
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let envelope = harness.outgoing_rx.recv().await.expect("outgoing channel");
+                if let OutgoingEnvelope::ToConnection {
+                    message: OutgoingMessage::AppServerNotification(notification),
+                    ..
+                } = envelope
+                    && let ServerNotification::TurnCompleted(completion) = notification.notification
+                    && completion.turn.id == turn_id
+                {
+                    break;
+                }
+            }
+        })
+        .await?;
+        loaded.flush_rollout().await?;
+        store.shutdown_thread(thread_id).await?;
+        assert!(Arc::ptr_eq(&loaded, &manager.get_thread(thread_id).await?));
+        assert!(loaded.has_persistence());
+
+        let _: ThreadSectionMoveResponse = harness
+            .request(
+                ClientRequest::ThreadSectionMove {
+                    request_id: RequestId::Integer(22),
+                    params: ThreadSectionMoveParams {
+                        thread_id: saved_id.clone(),
+                        section_id: Some(PINNED_THREAD_SECTION_ID.to_owned()),
+                        before_thread_id: None,
+                    },
+                },
+                None,
+            )
+            .await;
+        let read_stored = |include_archived| {
+            store.read_thread(codex_thread_store::ReadThreadParams {
+                thread_id,
+                include_archived,
+                include_history: false,
+            })
+        };
+        let moved = read_stored(false).await?;
+        assert_eq!(
+            moved.section.expect("persisted section").id,
+            PINNED_THREAD_SECTION_ID
+        );
+        assert!(moved.archived_at.is_none());
+
+        let read: ThreadReadResponse = harness
+            .request(
+                ClientRequest::ThreadRead {
+                    request_id: RequestId::Integer(23),
+                    params: ThreadReadParams {
+                        thread_id: saved_id.clone(),
+                        include_turns: true,
+                    },
+                },
+                None,
+            )
+            .await;
+        let turn = read
+            .thread
+            .turns
+            .iter()
+            .find(|turn| turn.id == turn_id)
+            .expect("saved turn");
+        assert!(turn.items.iter().any(|item| {
+            matches!(&item.payload, ThreadItemPayload::AgentMessage { text, .. } if text == "Done")
+        }));
+
+        let _: ThreadArchiveResponse = harness
+            .request(
+                ClientRequest::ThreadArchive {
+                    request_id: RequestId::Integer(24),
+                    params: ThreadArchiveParams {
+                        thread_id: saved_id,
+                    },
+                },
+                None,
+            )
+            .await;
+        assert!(read_stored(true).await?.archived_at.is_some());
+        assert!(read_stored(false).await.is_err());
+        harness.shutdown().await;
+        Ok(())
+    })
 }
 
 async fn read_repair_error(
