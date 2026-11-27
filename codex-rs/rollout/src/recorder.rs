@@ -577,6 +577,7 @@ impl RolloutRecorder {
                 /*section*/ None,
                 /*project_id*/ None,
                 search_term,
+                crate::state_db::RolloutPathCheck::DuringListing,
             )
             .await
             .map(Into::into)
@@ -700,6 +701,7 @@ impl RolloutRecorder {
             /*section*/ None,
             /*project_id*/ None,
             search_term,
+            crate::state_db::RolloutPathCheck::DuringListing,
         )
         .await;
         if let Some(db_page) = db_page {
@@ -732,6 +734,7 @@ impl RolloutRecorder {
                     /*section*/ None,
                     /*project_id*/ None,
                     search_term,
+                    crate::state_db::RolloutPathCheck::DuringListing,
                 )
                 .await
                 {
@@ -775,6 +778,7 @@ impl RolloutRecorder {
                         /*section*/ None,
                         /*project_id*/ None,
                         search_term,
+                        crate::state_db::RolloutPathCheck::DuringListing,
                     )
                     .await
                     {
@@ -857,6 +861,7 @@ impl RolloutRecorder {
                     /*section*/ None,
                     /*project_id*/ None,
                     /*search_term*/ None,
+                    crate::state_db::RolloutPathCheck::DuringListing,
                 )
                 .await
                 else {
