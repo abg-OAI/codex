@@ -1203,9 +1203,29 @@ impl RolloutRecorder {
         path: &Path,
     ) -> std::io::Result<(Vec<RolloutItem>, Option<ThreadId>, usize)> {
         trace!("Resuming rollout from {path:?}");
+        let (items, thread_id, parse_errors) =
+            Self::visit_rollout_items(path, Vec::new(), |items, item| {
+                items.push(item);
+                std::ops::ControlFlow::Continue(())
+            })
+            .await?;
+        tracing::debug!(
+            "Resumed rollout with {} items, thread ID: {:?}, parse errors: {}",
+            items.len(),
+            thread_id,
+            parse_errors,
+        );
+        Ok((items, thread_id, parse_errors))
+    }
+
+    /// Stops after the visitor breaks. Parse errors count only the visited prefix.
+    pub(crate) async fn visit_rollout_items<T: Send + 'static>(
+        path: &Path,
+        mut state: T,
+        mut visit: impl FnMut(&mut T, RolloutItem) -> std::ops::ControlFlow<()> + Send + 'static,
+    ) -> std::io::Result<(T, Option<ThreadId>, usize)> {
         ensure_checkpoint_complete(path)?;
-        let result = compression::read_rollout_lines(path, |reader| {
-            let mut items: Vec<RolloutItem> = Vec::new();
+        let result = compression::read_rollout_lines(path, move |reader| {
             let mut thread_id: Option<ThreadId> = None;
             let mut parse_errors = 0usize;
             let mut saw_non_empty_line = false;
@@ -1218,7 +1238,10 @@ impl RolloutRecorder {
                 let mut value: Value = match serde_json::from_str(&line) {
                     Ok(value) => value,
                     Err(e) => {
-                        warn!("failed to parse line as JSON: {line:?}, error: {e}");
+                        warn!(
+                            bytes = line.len(),
+                            "failed to parse rollout line as JSON: {e}"
+                        );
                         parse_errors = parse_errors.saturating_add(1);
                         continue;
                     }
@@ -1251,19 +1274,15 @@ impl RolloutRecorder {
                 {
                     thread_id = Some(session_meta_line.meta.id);
                 }
-                items.push(item);
+                if visit(&mut state, item).is_break() {
+                    break;
+                }
             }
             if !saw_non_empty_line {
                 return Err(IoError::other("empty session file"));
             }
 
-            tracing::debug!(
-                "Resumed rollout with {} items, thread ID: {:?}, parse errors: {}",
-                items.len(),
-                thread_id,
-                parse_errors,
-            );
-            Ok((items, thread_id, parse_errors))
+            Ok((state, thread_id, parse_errors))
         })
         .await?;
         ensure_checkpoint_complete(path)?;
@@ -2344,24 +2363,15 @@ async fn resume_candidate_matches_cwd(
         return true;
     }
 
-    if let Ok((items, _, _)) = RolloutRecorder::load_rollout_items(rollout_path).await
-        && let Some(latest_turn_context_cwd) = items.iter().rev().find_map(|item| match item {
-            RolloutItem::TurnContext(turn_context) => Some(&turn_context.cwd),
-            RolloutItem::DynamicToolsUpdated { .. }
-            | RolloutItem::SessionMeta(_)
-            | RolloutItem::ResponseItem(_)
-            | RolloutItem::InterAgentCommunication(_)
-            | RolloutItem::InterAgentCommunicationMetadata { .. }
-            | RolloutItem::Compacted(_)
-            | RolloutItem::WorldState(_)
-            | RolloutItem::RealtimeItem(_)
-            | RolloutItem::TokenUsageRecord(_)
-            | RolloutItem::RetainedContext(_)
-            | RolloutItem::SecurityRiskScore(_)
-            | RolloutItem::EventMsg { .. } => None,
-        })
-    {
-        return cwd_matches(latest_turn_context_cwd.as_path(), cwd);
+    let latest_cwd = RolloutRecorder::visit_rollout_items(rollout_path, None, |cwd, item| {
+        if let RolloutItem::TurnContext(context) = item {
+            *cwd = Some(context.cwd);
+        }
+        std::ops::ControlFlow::Continue(())
+    })
+    .await;
+    if let Ok((Some(latest_cwd), _, _)) = latest_cwd {
+        return cwd_matches(latest_cwd.as_path(), cwd);
     }
 
     metadata::extract_metadata_from_rollout(rollout_path, default_provider)
