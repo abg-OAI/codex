@@ -1476,8 +1476,8 @@ impl CodexThread {
             })
     }
 
-    /// Returns whether this runtime owns a writer, including one repaired in
-    /// place after startup.
+    /// Returns whether this runtime has a persistence handle, including one restored
+    /// after startup. The store can close the writer before the runtime is unregistered.
     pub fn has_persistence(&self) -> bool {
         self.session.live_thread().is_some()
     }

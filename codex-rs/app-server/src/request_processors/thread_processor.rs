@@ -1909,11 +1909,12 @@ impl ThreadRequestProcessor {
 
         // Fresh threads have no rollout until their first turn. Materialize the
         // loaded persistent thread before looking it up for archival.
-        if let Ok(thread) = self.thread_manager.get_thread(thread_id).await
+        if let Some(thread) =
+            get_loaded_thread_for_persistence(&self.thread_manager, thread_id).await?
             && !thread.config_snapshot().await.ephemeral
         {
             self.thread_store
-                .persist_thread(thread_id, PersistContext::Standard)
+                .persist_thread(thread_id, PersistContext::StoredThreadAccess)
                 .await
                 .map_err(|err| thread_store_mutation_error("archive", err))?;
         }
@@ -3458,7 +3459,7 @@ impl ThreadRequestProcessor {
             thread.turns = match thread.history_mode {
                 ApiThreadHistoryMode::Paginated => {
                     self.thread_store
-                        .persist_thread(thread_id, PersistContext::Standard)
+                        .persist_thread(thread_id, PersistContext::StoredThreadAccess)
                         .await
                         .map_err(|err| thread_read_history_load_error(thread_id, err))?;
                     self.paginated_thread_full_turns(thread_id)
