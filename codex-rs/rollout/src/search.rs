@@ -26,6 +26,7 @@ use crate::ResponseItemEnvelope;
 use crate::RolloutItem;
 
 mod compressed;
+pub(crate) mod read_budget;
 mod snippet_matcher;
 use compressed::scan_compressed_rollout_matches;
 pub use snippet_matcher::RolloutSnippetMatcher;
