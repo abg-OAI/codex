@@ -52,8 +52,10 @@ pub(in crate::local) async fn scan_checkpoint(
             let ScanOutcome::Parsed(line) = outcome else {
                 continue;
             };
-            if matches!(line.item, RolloutItem::SessionMeta(_)) {
-                break;
+            if let RolloutItem::SessionMeta(meta) = line.item {
+                return Ok(meta.meta.history_base.and_then(|base| {
+                    crate::local::cold_split::cache::complete_scan(&path, meta.meta.id, base, scan)
+                }));
             }
             if scan.push(line.item) == ModelContextScanProgress::Complete {
                 return Ok(Some(scan.finish()));

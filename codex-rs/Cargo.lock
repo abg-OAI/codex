@@ -5318,6 +5318,7 @@ dependencies = [
 name = "codex-thread-store"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "caseless",
  "chrono",
  "codex-app-server-protocol",
