@@ -30,49 +30,20 @@ impl ThreadRequestProcessor {
         let Some(path) = thread.rollout_path() else {
             return;
         };
-        let history = match codex_rollout::RolloutRecorder::load_rollout_items(&path).await {
-            Ok((history, _, _)) => history,
+        let previous_context = match codex_rollout::unfinished_turn_context(
+            self.config.codex_home.as_path(),
+            path,
+            thread_id,
+            &saved.turn_id,
+        )
+        .await
+        {
+            Ok(Some(context)) => context,
+            Ok(None) => return,
             Err(err) => {
                 tracing::warn!(%thread_id, %err, "failed to read interrupted turn history");
                 return;
             }
-        };
-        // The snapshot has complete recorded input, but the old process may have
-        // completed or replaced its turn during the shutdown grace period.
-        let Some(start) = history.iter().rposition(|item| {
-            matches!(
-                item,
-                RolloutItem::EventMsg {
-                    event: EventMsg::TurnStarted(_),
-                    ..
-                }
-            )
-        }) else {
-            return;
-        };
-        if !matches!(&history[start], RolloutItem::EventMsg { event: EventMsg::TurnStarted(event), .. }
-            if event.turn_id == saved.turn_id)
-            || history[start..].iter().any(|item| match item.event_msg() {
-                Some(EventMsg::TurnComplete(event)) => event.turn_id == saved.turn_id,
-                Some(EventMsg::TurnAborted(event)) => event
-                    .turn_id
-                    .as_ref()
-                    .is_none_or(|turn_id| turn_id == &saved.turn_id),
-                _ => false,
-            })
-        {
-            return;
-        }
-        let previous_context = history.iter().rev().find_map(|item| match item {
-            RolloutItem::TurnContext(context)
-                if context.turn_id.as_ref() == Some(&saved.turn_id) =>
-            {
-                Some(context)
-            }
-            _ => None,
-        });
-        let Some(previous_context) = previous_context else {
-            return;
         };
         let config = thread.config_snapshot().await;
         let [environment] = config.environment_selections() else {

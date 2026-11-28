@@ -114,7 +114,10 @@ async fn attached_history_start(path: &Path, start: u64) -> std::io::Result<u64>
 
 // Resume can retain either a logical or canonical path. Validate both against the same
 // canonical managed roots so a nested symlink cannot escape this home.
-async fn managed_rollout_path(store: &LocalThreadStore, rollout_path: &Path) -> Option<PathBuf> {
+pub(super) async fn managed_rollout_path(
+    store: &LocalThreadStore,
+    rollout_path: &Path,
+) -> Option<PathBuf> {
     let path = tokio::fs::canonicalize(rollout_path).await.ok()?;
     for subdir in [
         codex_rollout::SESSIONS_SUBDIR,
