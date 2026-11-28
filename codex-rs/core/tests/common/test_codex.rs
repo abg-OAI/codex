@@ -978,14 +978,39 @@ impl TestCodexBuilder {
             }
             (Some(path), None) => {
                 let auth_manager = self.auth.manager_for_home(config.codex_home.as_path());
-                Box::pin(thread_manager.resume_legacy_thread_from_rollout(
-                    config.clone(),
-                    path,
-                    auth_manager,
-                    /*parent_trace*/ None,
-                    client_mcp_extensions(),
-                ))
-                .await?
+                let meta = codex_core::read_session_meta_line(&path).await?.meta;
+                if meta.history_mode == ThreadHistoryMode::Paginated {
+                    let context = thread_store
+                        .load_latest_model_context(codex_thread_store::LoadThreadHistoryParams {
+                            thread_id: meta.id,
+                            include_archived: false,
+                        })
+                        .await?;
+                    let history =
+                        codex_history::InitialHistory::Resumed(codex_history::ResumedHistory {
+                            conversation_id: context.thread_id,
+                            history_revision: context.revision,
+                            history: Arc::new(context.items),
+                            rollout_path: Some(path),
+                        });
+                    Box::pin(thread_manager.resume_thread_with_history(
+                        config.clone(),
+                        history,
+                        auth_manager,
+                        /*parent_trace*/ None,
+                        client_mcp_extensions(),
+                    ))
+                    .await?
+                } else {
+                    Box::pin(thread_manager.resume_legacy_thread_from_rollout(
+                        config.clone(),
+                        path,
+                        auth_manager,
+                        /*parent_trace*/ None,
+                        client_mcp_extensions(),
+                    ))
+                    .await?
+                }
             }
             (None, Some(user_shell_override)) => {
                 Box::pin(
@@ -1012,15 +1037,28 @@ impl TestCodexBuilder {
                 } else {
                     None
                 };
-                Box::pin(thread_manager.start_thread(StartThreadOptions {
+                let options = StartThreadOptions {
                     request_country: self.request_country.clone(),
                     history_mode: self.history_mode,
                     thread_extension_init: std::mem::take(&mut self.thread_extension_init),
                     client_mcp_extensions: client_mcp_extensions(),
                     environments: environment_requests,
                     ..StartThreadOptions::new(config.clone())
-                }))
-                .await?
+                };
+                if self.history_mode == Some(ThreadHistoryMode::Legacy)
+                    && !config.ephemeral
+                    && thread_store
+                        .as_any()
+                        .is::<codex_thread_store::LocalThreadStore>()
+                {
+                    Box::pin(codex_core::test_support::start_saved_legacy_thread(
+                        &thread_manager,
+                        options,
+                    ))
+                    .await?
+                } else {
+                    Box::pin(thread_manager.start_thread(options)).await?
+                }
             }
         };
 

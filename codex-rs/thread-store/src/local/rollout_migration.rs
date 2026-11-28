@@ -49,6 +49,7 @@ use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
 
 mod canonicalizer;
+mod imported_messages;
 mod legacy_event;
 mod line_parser;
 mod publish;

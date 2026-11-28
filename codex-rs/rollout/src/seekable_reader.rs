@@ -20,6 +20,13 @@ enum RolloutReader {
 }
 
 impl RolloutReader {
+    fn into_stream(self) -> io::Result<Box<dyn Read>> {
+        match self {
+            Self::Plain(file) => Ok(Box::new(file)),
+            Self::Compressed(file) => Ok(Box::new(zstd::stream::read::Decoder::new(file)?)),
+        }
+    }
+
     fn open(path: &Path) -> io::Result<Self> {
         let plain_path = plain_rollout_path(path);
         let compressed_path = plain_path.with_extension("jsonl.zst");
@@ -41,6 +48,11 @@ impl RolloutReader {
     }
 }
 
+/// Opens decoded JSONL bytes for a sequential scan of either rollout representation.
+pub fn open_rollout_stream(path: &Path) -> io::Result<Box<dyn Read>> {
+    RolloutReader::open(path)?.into_stream()
+}
+
 /// Reads at most `max_bytes` decoded rollout bytes without materializing the durable file.
 ///
 /// Returns `None` for nonregular files. This retains an open representation while reading, so
@@ -56,10 +68,7 @@ pub fn read_rollout_prefix(path: &Path, max_bytes: usize) -> io::Result<Option<V
     if !file.metadata()?.is_file() {
         return Ok(None);
     }
-    let reader: Box<dyn Read> = match source {
-        RolloutReader::Plain(file) => Box::new(file),
-        RolloutReader::Compressed(file) => Box::new(zstd::stream::read::Decoder::new(file)?),
-    };
+    let reader = source.into_stream()?;
     let mut bytes = Vec::new();
     reader.take(max_bytes as u64).read_to_end(&mut bytes)?;
     Ok(Some(bytes))

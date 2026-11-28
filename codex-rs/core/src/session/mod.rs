@@ -967,6 +967,15 @@ impl Session {
         let history_mode = conversation_history.get_history_mode(
             requested_history_mode.unwrap_or_else(|| thread_store.default_history_mode()),
         );
+        if !config.ephemeral
+            && thread_store.as_any().is::<LocalThreadStore>()
+            && history_mode == ThreadHistoryMode::Legacy
+            && !matches!(conversation_history, InitialHistory::Resumed(_))
+        {
+            return Err(CodexErr::InvalidRequest(
+                "A new persistent local thread needs paginated history. Migrate a legacy thread before forking it.".into(),
+            ));
+        }
         let base_instructions = config
             .base_instructions
             .clone()

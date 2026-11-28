@@ -6,9 +6,11 @@ use codex_core::ThreadManager;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_rollout::RolloutItem;
 use codex_thread_store::AppendThreadItemsParams;
+use codex_thread_store::LocalThreadStore;
 use codex_thread_store::ReadThreadParams;
 use codex_thread_store::ResumeThreadParams;
 use codex_thread_store::ThreadPersistenceMetadata;
@@ -21,7 +23,7 @@ pub struct ExistingSessionAppend<'a> {
     pub source_content_sha256: &'a str,
     pub expected_source_content_sha256: &'a str,
     pub thread_id: ThreadId,
-    pub source_items: &'a [RolloutItem],
+    pub source_items: Vec<RolloutItem>,
 }
 
 /// Appends an exact missing suffix to one cold imported thread and checkpoints the source.
@@ -41,6 +43,37 @@ pub async fn append_existing_session(
         thread_id,
         source_items,
     } = request;
+    if let Some(local) = thread_store.as_any().downcast_ref::<LocalThreadStore>() {
+        let Ok(thread) = local
+            .read_thread(ReadThreadParams {
+                thread_id,
+                include_archived: false,
+                include_history: false,
+            })
+            .await
+        else {
+            return false;
+        };
+        if thread.history_mode == ThreadHistoryMode::Paginated {
+            if !matches!(
+                local.extend_paginated_import(thread_id, source_items).await,
+                Ok(true)
+            ) {
+                return false;
+            }
+            let Ok(_permit) = checkpoint_permits.acquire().await else {
+                return false;
+            };
+            return checkpoint(
+                codex_home,
+                source_path,
+                thread_id,
+                expected_source_content_sha256,
+                source_content_sha256,
+            )
+            .await;
+        }
+    }
     let Ok(mut thread) = thread_store
         .read_thread(ReadThreadParams {
             thread_id,
@@ -66,7 +99,7 @@ pub async fn append_existing_session(
     let Some(rollout_path) = thread.rollout_path else {
         return false;
     };
-    if plan_append(source_items, &history.items).is_none() {
+    if plan_append(&source_items, &history.items).is_none() {
         return false;
     }
     if thread_store
@@ -97,7 +130,7 @@ pub async fn append_existing_session(
             .take()
             .filter(|history| history.thread_id == thread_id)
             .filter(|history| persistence_metadata(&history.items, thread_id).is_some())
-            .and_then(|history| plan_append(source_items, &history.items)),
+            .and_then(|history| plan_append(&source_items, &history.items)),
         Ok(_) | Err(_) => None,
     };
     let Some(items) = fresh_items else {
@@ -133,13 +166,30 @@ pub async fn append_existing_session(
             .take()
             .filter(|history| history.thread_id == thread_id)
             .filter(|history| persistence_metadata(&history.items, thread_id).is_some())
-            .is_some_and(|history| model_transcripts_match(source_items, &history.items)),
+            .is_some_and(|history| model_transcripts_match(&source_items, &history.items)),
         Ok(_) | Err(_) => false,
     };
     if !target_matches_source {
         return false;
     }
 
+    checkpoint(
+        codex_home,
+        source_path,
+        thread_id,
+        expected_source_content_sha256,
+        source_content_sha256,
+    )
+    .await
+}
+
+async fn checkpoint(
+    codex_home: &Path,
+    source_path: &Path,
+    thread_id: ThreadId,
+    expected_source_content_sha256: &str,
+    source_content_sha256: &str,
+) -> bool {
     let codex_home = codex_home.to_path_buf();
     let source_path = source_path.to_path_buf();
     let expected_source_content_sha256 = expected_source_content_sha256.to_string();

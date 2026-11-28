@@ -6342,6 +6342,7 @@ dependencies = [
  "codex-features",
  "codex-guardian-context",
  "codex-guardian-v2",
+ "codex-history",
  "codex-home",
  "codex-hooks",
  "codex-http-client",

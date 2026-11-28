@@ -4175,21 +4175,23 @@ async fn session_configured_reports_permission_profile_for_external_sandbox() ->
         network: NetworkSandboxPolicy::Restricted,
     };
     let expected_permission_profile = permission_profile.clone();
-    let mut builder = test_codex().with_config(move |config| {
-        config.workspace_roots_explicit = false;
-        config
-            .permissions
-            .can_set_permission_profile(&permission_profile)
-            .expect("set permission profile");
-        config
-            .permissions
-            .set_workspace_roots(vec![config.cwd.clone()]);
-        config
-            .permissions
-            .set_permission_profile(permission_profile)
-            .expect("set permission profile");
-        config.workspace_roots = config.permissions.workspace_roots().to_vec();
-    });
+    let mut builder = test_codex()
+        .with_history_mode(None)
+        .with_config(move |config| {
+            config.workspace_roots_explicit = false;
+            config
+                .permissions
+                .can_set_permission_profile(&permission_profile)
+                .expect("set permission profile");
+            config
+                .permissions
+                .set_workspace_roots(vec![config.cwd.clone()]);
+            config
+                .permissions
+                .set_permission_profile(permission_profile)
+                .expect("set permission profile");
+            config.workspace_roots = config.permissions.workspace_roots().to_vec();
+        });
 
     let test = builder.build(&server).await?;
 
@@ -4214,18 +4216,12 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
     )
     .await;
 
-    let mut builder = test_codex().with_config(|config| {
+    let mut builder = test_codex().with_history_mode(None).with_config(|config| {
         config.update_plan_enabled = true;
         config.permissions.approval_policy =
             codex_config::Constrained::allow_any(AskForApproval::OnRequest);
     });
     let initial = builder.build(&server).await?;
-    let rollout_path = initial
-        .session_configured
-        .rollout_path
-        .clone()
-        .expect("rollout path");
-
     initial
         .codex
         .start_or_steer_turn(ExternalTurnInputRequest::user_input(vec![
@@ -4248,12 +4244,19 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
     let mut fork_config = initial.config.clone();
     fork_config.permissions.approval_policy =
         codex_config::Constrained::allow_any(AskForApproval::UnlessTrusted);
+    let prepared = initial
+        .thread_store
+        .prepare_fork(codex_thread_store::PrepareForkParams {
+            thread_id: initial.session_configured.thread_id,
+            boundary: codex_thread_store::ForkBoundary::Latest,
+        })
+        .await?;
     let forked = initial
         .thread_manager
-        .fork_legacy_thread(
-            usize::MAX,
+        .fork_prepared_thread(
             core_test_support::test_codex::StartThreadOptions::new(fork_config.clone()),
-            rollout_path,
+            prepared,
+            codex_thread_store::InheritedHistoryVisibility::Full,
         )
         .await?;
 

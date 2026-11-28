@@ -37,6 +37,7 @@ use codex_rollout::RolloutItem;
 use codex_rollout::into_persisted_rollout_items;
 use codex_thread_store::AppendThreadItemsParams;
 use codex_thread_store::CreateThreadParams;
+use codex_thread_store::LocalThreadStore;
 use codex_thread_store::PersistContext;
 use codex_thread_store::ThreadMetadataPatch;
 use codex_thread_store::ThreadPersistenceMetadata;
@@ -310,7 +311,7 @@ impl ExternalAgentSessionImporter {
                         source_content_sha256: &source_content_sha256,
                         expected_source_content_sha256: &expected_source_content_sha256,
                         thread_id,
-                        source_items: &session.rollout_items,
+                        source_items: session.rollout_items,
                     },
                 )
                 .await;
@@ -465,6 +466,19 @@ impl ExternalAgentSessionImporter {
             ThreadMemoryMode::Disabled
         };
         let now = Utc::now();
+        let history_mode = if self.thread_store.as_any().is::<LocalThreadStore>() {
+            if !self.thread_store.supports_paginated_history_lists() {
+                return Err(SessionImportStepFailure::new(
+                    "history_unavailable",
+                    "Local import requires the thread history index".into(),
+                ));
+            }
+            rollout_items = LocalThreadStore::paginate_import_messages(thread_id, rollout_items)
+                .map_err(|err| SessionImportStepFailure::new("invalid_session", err.to_string()))?;
+            ThreadHistoryMode::Paginated
+        } else {
+            ThreadHistoryMode::Legacy
+        };
         let create_params = CreateThreadParams {
             attached_thread: false,
             creator_user_id: None,
@@ -498,7 +512,7 @@ impl ExternalAgentSessionImporter {
             selected_capability_roots: Vec::new(),
             runtime_workspace_roots: None,
             multi_agent_version: Some(MultiAgentVersion::V1),
-            history_mode: ThreadHistoryMode::Legacy,
+            history_mode,
             history_base: None,
             inherited_history_visibility: Default::default(),
             subagent_history_start_ordinal: None,
@@ -509,7 +523,7 @@ impl ExternalAgentSessionImporter {
                 memory_mode,
             },
         };
-        rollout_items = into_persisted_rollout_items(rollout_items, ThreadHistoryMode::Legacy);
+        rollout_items = into_persisted_rollout_items(rollout_items, history_mode);
         let (created_at, updated_at) = rollout_items
             .iter()
             .filter_map(|item| match item {
