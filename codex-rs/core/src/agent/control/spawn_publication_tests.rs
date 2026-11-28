@@ -160,6 +160,7 @@ async fn spawn_publication_child(
                 agent_role: None,
             })),
             options,
+            AgentListingVisibility::Listed,
         )
         .await
         .map(|(agent, _)| agent.thread_id)
@@ -250,6 +251,45 @@ async fn cancelled_spawn_edge_publication_cleanup(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn failed_spawn_edge_publication_cleanup() {
+    // Isolate the fallback dispatcher from other tests in the same libtest process.
+    const CHILD_PROCESS: &str = "CODEX_TEST_SPAWN_PUBLICATION_TRACING";
+    if std::env::var_os(CHILD_PROCESS).is_none() {
+        let test_name = std::thread::current()
+            .name()
+            .expect("libtest thread")
+            .to_owned();
+        let output =
+            tokio::process::Command::new(std::env::current_exe().expect("test executable"))
+                .args(["--exact", &test_name, "--nocapture"])
+                .env(CHILD_PROCESS, "1")
+                .output()
+                .await
+                .expect("run isolated spawn publication test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed;"),
+            "expected one passing spawn publication test\nstdout:\n{stdout}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let subscriber = Arc::new(
+        tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("spawn-publication"))),
+    );
+    // SQLite workers can drop the last handle to a span. The registry closes its parent
+    // through that worker's default dispatcher. Share the registry for close notifications,
+    // while requiring Core to propagate the caller's subscriber to create spans on a worker.
+    tracing::subscriber::set_global_default(
+        Arc::clone(&subscriber).with(tracing_subscriber::filter::LevelFilter::OFF),
+    )
+    .expect("isolated fallback dispatcher");
+
     let (harness, graph) =
         publication_harness(SpawnEdgeFailure::ErrorAfterCommit, ThreadId::new).await;
     let (parent, thread) = harness.start_paginated_thread().await;
@@ -264,18 +304,7 @@ async fn failed_spawn_edge_publication_cleanup() {
         )
         .await;
 
-    let exporter = InMemorySpanExporter::default();
-    let provider = SdkTracerProvider::builder()
-        .with_simple_exporter(exporter.clone())
-        .build();
-    let subscriber = tracing_subscriber::registry()
-        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("spawn-publication")));
-    // The test driver owns the subscriber. The separate Tokio worker must receive it from Core.
     let _subscriber = tracing::subscriber::set_default(subscriber);
-    // Keep parallel tests from caching disabled interest when a callsite is first registered.
-    let _parallel_dispatch = tracing::Dispatch::new(
-        tracing_subscriber::registry().with(tracing_subscriber::filter::LevelFilter::OFF),
-    );
     let error = spawn_publication_child(
         &harness,
         parent,

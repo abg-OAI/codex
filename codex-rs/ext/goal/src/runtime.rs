@@ -551,11 +551,24 @@ impl GoalRuntimeHandle {
             .map_err(|err| err.to_string())?
         else {
             self.inner.accounting_state.clear_active_goal();
+            thread.stop_saffron_goal_supervisor().await;
             return Ok(());
         };
         if goal.status != codex_state::ThreadGoalStatus::Active {
             self.inner.accounting_state.clear_active_goal();
+            thread.stop_saffron_goal_supervisor().await;
             return Ok(());
+        }
+        match thread.start_saffron_goal_supervisor_checkin(&goal).await {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(
+                    thread_id = %self.thread_id(),
+                    %error,
+                    "Saffron supervision could not claim the idle goal; using ordinary continuation"
+                );
+            }
         }
         let mut start_options = thread
             .thread_extension_data()
