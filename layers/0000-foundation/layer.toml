@@ -8,6 +8,6 @@ Prepare pinned Codex release trees for the Saffrodex product layers.
 [[operation]]
 [operation.git-clone]
 url = "https://github.com/openai/codex.git"
-ref = "refs/tags/rust-v0.174.0-alpha.8"
-commit = "1088aa76e2b5839defc2a26ca365ea0f766b1b64"
+ref = "refs/tags/rust-v0.174.0-alpha.9"
+commit = "8ff9ca844c06750a426000e81dcf21d7355263f2"
 depth = 1
