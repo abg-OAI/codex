@@ -484,6 +484,7 @@ async fn guardian_history_uses_deltas_between_eviction_batches(
                 /*trigger_turn*/ true,
             ),
             start_options: Default::default(),
+            accepted: None,
         })
         .await?;
     wait_for_event(&test.codex, |event| {

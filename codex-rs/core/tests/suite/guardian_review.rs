@@ -805,6 +805,7 @@ async fn guardian_review_recovers_after_compaction(
                     /*trigger_turn*/ false,
                 ),
                 start_options: Default::default(),
+                accepted: None,
             })
             .await?;
     }

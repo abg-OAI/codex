@@ -17,6 +17,7 @@ use codex_core::SuspendTurnOutcome;
 use codex_core::TurnAdmissionState;
 use codex_core::TurnInputRequest;
 use codex_core::TurnInputSubmission;
+use codex_core::TurnStartOptions;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionRegistryBuilder;
 use codex_extension_api::TurnLifecycleContributor;
@@ -24,6 +25,7 @@ use codex_extension_api::TurnStartInput;
 use codex_extension_api::TurnStartPhase;
 use codex_features::Feature;
 use codex_history::RolloutItem;
+use codex_protocol::AgentPath;
 use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
@@ -31,11 +33,13 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::TurnItem;
+use codex_protocol::models::AgentMessageInputContent;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::input_text;
 use codex_protocol::protocol::AdditionalContextEntry;
 use codex_protocol::protocol::AdditionalContextKind;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ReviewRequest;
@@ -631,6 +635,82 @@ async fn suspending_root_with_host_roster_preserves_the_recoverable_prompt(
     assert!(grant.send(Ok(AgentExecutionGuard::new(()))).is_ok());
     tokio::time::timeout(Duration::from_secs(10), entered.notified()).await?;
     suspend_and_check_recoverable_prompt(&test, &server, turn_id, prompt).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn suspension_during_roster_read_saves_deferred_mail_before_the_user_prompt() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = responses::start_mock_server().await;
+    let roster = Arc::new(PendingRosterRead::default());
+    let builder = test_codex().with_config(|config| {
+        config.features.enable(Feature::MultiAgentV2).unwrap();
+    });
+    let (test, mut attempts) = root_with_admission(&server, builder, Some(roster.clone())).await?;
+    let mail = "Deferred worker result.";
+    let (accepted, queued) = oneshot::channel();
+    test.codex
+        .submit(Op::InterAgentCommunication {
+            communication: InterAgentCommunication::new(
+                AgentPath::root().join("worker").unwrap(),
+                AgentPath::root(),
+                Vec::new(),
+                mail.to_owned(),
+                /*trigger_turn*/ false,
+            ),
+            start_options: TurnStartOptions::default(),
+            accepted: Some(accepted),
+        })
+        .await?;
+    queued.await?;
+
+    let prompt = "Continue from the worker result.";
+    let (turn_id, grant) = start(&test, &mut attempts, prompt).await?;
+    assert!(grant.send(Ok(AgentExecutionGuard::new(()))).is_ok());
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        roster.roster_read_entered.notified(),
+    )
+    .await?;
+    assert_eq!(
+        test.codex.suspend_turn_and_shutdown().await?,
+        SuspendTurnOutcome::Suspended { turn_id }
+    );
+
+    let history = test
+        .thread_store
+        .load_latest_model_context(LoadThreadHistoryParams {
+            thread_id: test.session_configured.thread_id,
+            include_archived: false,
+        })
+        .await?;
+    let expected_mail = [AgentMessageInputContent::InputText {
+        text: mail.to_owned(),
+    }];
+    let expected_prompt = [input_text(prompt)];
+    let saved_inputs: Vec<_> = history
+        .items
+        .iter()
+        .filter_map(|entry| {
+            let RolloutItem::ResponseItem(envelope) = entry else {
+                return None;
+            };
+            match &envelope.item {
+                ResponseItem::AgentMessage { content, .. }
+                    if content.as_slice() == expected_mail =>
+                {
+                    Some(mail)
+                }
+                ResponseItem::Message { role, content, .. }
+                    if role == "user" && content.as_slice() == expected_prompt =>
+                {
+                    Some(prompt)
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    assert_eq!(saved_inputs, [mail, prompt]);
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
