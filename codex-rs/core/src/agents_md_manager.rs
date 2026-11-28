@@ -2,8 +2,10 @@
 //! Refreshes are serialized; the state lock is never held while calling providers.
 //! Isolated reviewers can pin a captured repository snapshot without executor discovery.
 
+use crate::agents_md::DiscoveredProjectInstructions;
 use crate::agents_md::LoadedAgentsMd;
 use crate::agents_md::load_project_instructions;
+use crate::agents_md::load_project_instructions_with_discovery;
 use crate::config::Config;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use codex_extension_api::Instructions;
@@ -39,6 +41,7 @@ pub(crate) struct SessionInstructions {
 struct AgentsMdState {
     instructions: SessionInstructions,
     cache: AgentsMdCache,
+    startup_discovery: Vec<DiscoveredProjectInstructions>,
 }
 
 #[derive(Default)]
@@ -58,8 +61,18 @@ impl AgentsMdManager {
             state: Mutex::new(AgentsMdState {
                 instructions,
                 cache: AgentsMdCache::default(),
+                startup_discovery: Vec::new(),
             }),
         }
+    }
+
+    /// Reuses admission reads once; later repository refreshes discover instructions normally.
+    pub(crate) fn with_startup_discovery(
+        mut self,
+        startup_discovery: Vec<DiscoveredProjectInstructions>,
+    ) -> Self {
+        self.state.get_mut().startup_discovery = startup_discovery;
+        self
     }
 
     /// Resolves and validates one coherent snapshot for startup or a request boundary.
@@ -85,7 +98,7 @@ impl AgentsMdManager {
             .map(|environment| environment.selection.clone())
             .collect::<Vec<_>>();
         let active_project_trust_level = config.active_project.trust_level;
-        let (mut instructions, cached, refresh_repository) = {
+        let (mut instructions, cached, refresh_repository, startup_discovery) = {
             let mut state = self.state.lock().await;
             let refresh_repository = state.cache.selections.as_ref() != Some(&selections)
                 || state.cache.active_project_trust_level != active_project_trust_level
@@ -99,6 +112,7 @@ impl AgentsMdManager {
                 state.instructions.clone(),
                 state.cache.loaded.clone(),
                 refresh_repository,
+                std::mem::take(&mut state.startup_discovery),
             )
         };
         let mut warnings = Vec::new();
@@ -129,7 +143,17 @@ impl AgentsMdManager {
             let loaded = if let Some(project) = &instructions.project_snapshot {
                 project.as_ref().clone()
             } else if refresh_repository {
-                load_project_instructions(config, environments, &mut warnings).await?
+                if startup_discovery.is_empty() {
+                    load_project_instructions(config, environments, &mut warnings).await?
+                } else {
+                    load_project_instructions_with_discovery(
+                        config,
+                        environments,
+                        &mut warnings,
+                        &startup_discovery,
+                    )
+                    .await?
+                }
             } else {
                 cached.as_deref().cloned().unwrap_or_default()
             }
