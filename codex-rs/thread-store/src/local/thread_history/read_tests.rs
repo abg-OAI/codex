@@ -32,6 +32,59 @@ use crate::StoredTurnStatus;
 use crate::local::test_support::test_config;
 
 #[tokio::test]
+async fn oldest_first_cursor_pages_across_1024_rollouts() {
+    let (home, store, leaf) = store_with_mode(ThreadHistoryMode::Paginated).await;
+    let db = history_db(&store).await;
+    let root = ThreadId::new();
+    let mut parent = None;
+    for index in 0..1024 {
+        let id = match index {
+            0 => root,
+            1023 => leaf,
+            _ => ThreadId::new(),
+        };
+        let path = rollout_path(home.path(), id);
+        write_rollout_with_end(&path, id, parent, 5);
+        parent = Some(HistoryPosition {
+            thread_id: id,
+            end_ordinal_exclusive: (index + 1) * 5,
+            end_byte_offset: fs::metadata(path).unwrap().len(),
+        });
+    }
+    for (id, turn, ordinal) in [
+        (root, "shadowed", 1),
+        (root, "first", 2),
+        (root, "second", 3),
+        (root, "third", 4),
+        (leaf, "near-head", 5116),
+        (leaf, "shadowed", 5117),
+        (leaf, "last", 5118),
+    ] {
+        insert_turn(db, id, turn, ordinal, "completed", None, None, None).await;
+    }
+    for (direction, expected) in [
+        (SortDirection::Asc, ["first", "second"]),
+        (SortDirection::Desc, ["last", "shadowed"]),
+    ] {
+        let mut cursor = None;
+        for wanted in expected {
+            let page = store
+                .list_turns(turn_params(
+                    leaf,
+                    cursor,
+                    1,
+                    direction,
+                    StoredTurnItemsView::NotLoaded,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(turn_ids(&page), [wanted]);
+            cursor = Some(page.next_cursor.expect("another turn follows"));
+        }
+    }
+}
+
+#[tokio::test]
 async fn newest_indexed_pages_do_not_read_unused_ancestors() {
     let (home, store, child_id) = store_with_mode(ThreadHistoryMode::Paginated).await;
     let parent_id = ThreadId::default();
